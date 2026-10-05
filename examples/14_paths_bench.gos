@@ -1,30 +1,69 @@
 // 14 - paths_bench        upstream: tools/upstream/examples/paths_bench.rs (92 lines)
 //
-// NOT PORTED YET. A benchmark that repaints thousands of path vertices per frame.
+// Faithful port. One star path — upstream's eleven vertices — painted 2000
+// times per frame through an Oklab linear gradient. `gpui::animate()` keeps
+// the window repainting, which is what upstream's
+// `window.request_animation_frame()` asks for.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// Deviations:
 //
-//   ./tools/upstream-examples.sh run paths_bench
-//
-// and compare the two windows side by side.
+//   * Upstream builds 2000 identical `Path<Pixels>` values and paints each of
+//     them. Paths live in a persistent pool addressed by `i64` handle, and
+//     `paint_paths` takes a `Vec<i64>` of handles, so the one built star is
+//     listed 2000 times instead: the same 2000 `paint_path` calls per frame,
+//     the same pixels, one pool entry rather than 2000.
+//   * Upstream asks for the next frame explicitly
+//     (`window.request_animation_frame()`); the binding's equivalent is
+//     `gpui::animate()`.
+//   * The window is 1024x768 as upstream asks, but upstream also titles it
+//     "Vulkan" and centres it itself with
+//     `WindowBounds::Windowed(Bounds::centered(..))`; `gpui::run` takes a
+//     title and size and lets the platform place the window.
+//   * As in every port here, a Gossamer frame rebuilds the tree rather than
+//     re-rendering a retained `Entity<PaintingViewer>`.
 
 use gpui
 use std::process
-use status
 use ui
 
+const COUNT: i64 = 2000
+
+/// Upstream's star: `move_to(350, 100)` then ten `line_to`s back to the
+/// starting vertex. It is not `close()`d upstream, and it is not `close()`d
+/// here either — the fill closes it implicitly.
+fn star() -> i64 {
+    let handle = gpui::path_fill()
+    gpui::path_move_to(handle, 350.0, 100.0)
+    gpui::path_line_to(handle, 370.0, 160.0)
+    gpui::path_line_to(handle, 430.0, 160.0)
+    gpui::path_line_to(handle, 380.0, 200.0)
+    gpui::path_line_to(handle, 400.0, 260.0)
+    gpui::path_line_to(handle, 350.0, 220.0)
+    gpui::path_line_to(handle, 300.0, 260.0)
+    gpui::path_line_to(handle, 320.0, 200.0)
+    gpui::path_line_to(handle, 270.0, 160.0)
+    gpui::path_line_to(handle, 330.0, 160.0)
+    gpui::path_line_to(handle, 350.0, 100.0)
+    gpui::path_build(handle).unwrap_or(-1)
+}
+
 fn main() {
-    let outcome = gpui::run("14 - paths_bench", 620.0, 480.0, || {
-        status::missing(
-            "14 - paths_bench",
-            "upstream: examples/paths_bench.rs (92 lines)",
-            #[
-            "a custom Element impl (request_layout / prepaint / paint)",
-            "paint_path over a large polyline built in the program",
-            ],
-        )
-        |> ui::root
+    // Built once, before the event loop: the pool outlives the frames, so the
+    // handle stays valid for every repaint and nothing is rebuilt or leaked.
+    let handle = star()
+    if handle < 0 {
+        eprintln("the star path would not build")
+        process::exit(1)
+    }
+
+    let outcome = gpui::run("14 - paths_bench", 1024.0, 768.0, || {
+        gpui::animate()
+
+        // Upstream's `linear_gradient(180., linear_color_stop(rgb(0xFACC15),
+        // 0.7), linear_color_stop(rgb(0xD56D0C), 1.)).color_space(Oklab)`.
+        let background = "grad=180,#facc15,0.7,#d56d0c,1,oklab"
+
+        ui::paths(#[handle; COUNT], #[background; COUNT], "size=full") |> ui::root
     })
 
     if let Err(problem) = outcome {

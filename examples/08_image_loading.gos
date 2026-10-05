@@ -1,31 +1,291 @@
 // 08 - image_loading        upstream: tools/upstream/examples/image_loading.rs (213 lines)
 //
-// NOT PORTED YET. Loading several images asynchronously, with a cache and an intentional failure.
+// Upstream is about the *asset pipeline*, not about pictures. It defines its
+// own asset type —
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+//     struct LoadImageWithParameters {}
+//     impl Asset for LoadImageWithParameters {
+//         type Source = LoadImageParameters { timeout: Duration, fail: bool };
+//         ...
+//     }
 //
-//   ./tools/upstream-examples.sh run image_loading
+// — loads one image at 175ms (`LOADING_DELAY - 25ms`) so the loading subtree is
+// never due, a second after 5s, a third after 5s with `fail: true` returning
+// `Err(anyhow!("Failed to load image"))`, and a fourth from a path that does
+// not exist, to show that the normal loader does not spam logs. Each `img`
+// carries `.with_loading(|| loading_element())` (a black box pulsating between
+// 4% and 24% opacity every 3s) and `.with_fallback(|| fallback_element())` (a
+// grey "?" in a 1px box), and each cell's `on_click` calls
+// `cx.remove_asset::<LoadImageWithParameters>(&image_source)` to evict the cache
+// entry and force a reload. The window is 300x300 with a white 300x300 box
+// holding four 48px cells; `size_12()` is `rems(3.)` = 48px
+// (gpui-macros-0.2.2/src/styles.rs) and `p_0p5()` is `rems(0.125)` = 2px.
 //
-// and compare the two windows side by side.
+// WHAT THE BINDING HAS. `ui::image(path, style)` names a filesystem path;
+// `PathBuf -> ImageSource` is `Resource::Path` (gpui-0.2.2
+// src/elements/img.rs:100-104) and `ImageAssetLoader` reads it with `fs::read`
+// (src/elements/img.rs:601) — so the *bytes* arrive the same way, and none of
+// this example's asset plumbing is involved: upstream's own `Assets` /
+// `AssetSource` impl is not what loads any of its four cells either
+// (`AssetSource` is consulted only for `Resource::Embedded`,
+// src/elements/img.rs:618). What the binding cannot do is everything else the
+// example demonstrates, and the port does not pretend otherwise.
+//
+// Deviations — the list is the point of this file:
+//
+//   * No custom asset type, and so no timeouts and no deliberate failure.
+//     `Asset<Source = LoadImageParameters>` and `ImageCacheError` are not
+//     expressible, `window.use_asset::<LoadImageWithParameters>` is not exposed,
+//     and an element cannot be asked for a custom asset. The 5s cells below are
+//     `gpui::task` timers this port starts — its own staging, not a load
+//     signal — and `"<id>.result"` is the summary `gpui::task` leaves.
+//   * No `Img::with_loading` / `Img::with_fallback`. `Img`'s `loading` and
+//     `fallback` fields are `None` unless those two methods set them
+//     (src/elements/img.rs:131-141, 164-173), and the binding calls neither, so
+//     through `ui::image` a still-loading image and an errored one are both
+//     *blank*: the `Some(_err)` arm draws `self.style.fallback` only if
+//     present, and the `None` arm draws `self.style.loading` only if present
+//     and only once `LOADING_DELAY` (200ms, src/elements/img.rs:31) has passed
+//     (src/elements/img.rs:366-401). The loading and fallback subtrees below
+//     are therefore drawn by *this port* as ordinary elements, staged on the
+//     cells it decides are still loading or have failed. They reproduce
+//     upstream's two subtrees, including `pulsating_between(0.04, 0.24)`
+//     field-for-field (src/elements/animation.rs:249-261), and the 200ms
+//     `LOADING_DELAY` grace before a loading subtree is due is taken from the
+//     frame clock as well — so the two 5s cells sit blank for their first 200ms
+//     exactly as upstream's do. What they are not is the loader's own state.
+//   * No failure signal. Nothing in the binding reports that an image failed —
+//     cell 3's fallback appears because the port marked it failed when its 5s
+//     task landed, standing in for upstream's `Err(..)` return.
+//   * No `cx.remove_asset::<..>(..)`. A click on cell 1-3 restarts the port's
+//     staging; it does not evict anything from GPUI's image cache, so a clicked
+//     cell shows its loading subtree again and then the same decoded image.
+//     Cell 4's upstream click (`remove_asset::<ImgResourceLoader>`) has no
+//     equivalent at all, so that cell is not clickable here.
+//   * Cell 4 itself *is* faithful, which is why it is worth pointing at: the
+//     normal loader on a nonexistent path draws nothing because no fallback is
+//     installed (above), and it logs one `Failed to load asset` line
+//     (src/asset_cache.rs:75). Upstream's `?` there sits in a subtree the
+//     binding cannot attach.
+//   * Upstream never sets a title and lets GPUI centre its 300x300 default;
+//     `gpui::run` takes explicit dimensions and a title, and this port asks for
+//     a larger window because the legend and the "absent" panel below are its
+//     own additions, as is the `justify=center` of the outer column where
+//     upstream spreads one child with `justify_around`.
 
 use gpui
+use std::math
 use std::process
-use status
 use ui
 
+/// Upstream's `IMAGE`: the crate's own `examples/image/app-icon.png`. The
+/// binding takes a filesystem path, so this is the copy in `examples/assets/`.
+///
+/// Both paths are passed to the free `ui::image` as `*APP_ICON` / `*MISSING`:
+/// under gos 0.66.0 a `&str` const is a reference and that call wants the value
+/// it names, while the chained `.image(..)` of 04 and 11 takes the const as it
+/// stands.
+const APP_ICON: &str = "examples/assets/app-icon.png"
+
+/// Upstream's fourth cell, verbatim — the normal loader on a path that is not
+/// there.
+const MISSING: &str = "this/file/really/shouldn't/exist/or/won't/be/an/image/I/hope"
+
+/// `LOADING_DELAY - Duration::from_millis(25)`, with `LOADING_DELAY` = 200ms
+/// (gpui-0.2.2 src/elements/img.rs:31): the cell that resolves before the
+/// loading subtree is due.
+const QUICK_MS: i64 = 175
+
+/// The deliberate 5s of upstream's second and third cells.
+const SLOW_MS: i64 = 5000
+
+/// `LOADING_DELAY` in seconds. GPUI shows an `Img`'s loading subtree only once
+/// this long has passed since the load started (src/elements/img.rs:380-395),
+/// so the 5s cells are blank for their first 200ms. The port reproduces that
+/// from the frame clock — see `since_armed`.
+const LOADING_DELAY_S: f64 = 0.2
+
+/// Upstream's `Animation::new(Duration::from_secs(3)).repeat()`.
+const PULSE_PERIOD: f64 = 3.0
+const PULSE_MIN: f64 = 0.04
+const PULSE_MAX: f64 = 0.24
+const PI: f64 = 3.141592653589793
+
+// ---- upstream's two subtrees, drawn by this port ----------------------
+
+/// GPUI's `pulsating_between(0.04, 0.24)`, reproduced exactly
+/// (gpui-0.2.2 src/elements/animation.rs:249-261):
+///
+///     t = sin(delta * 2pi); breath = (t*t*t + t) / 2; alpha = min + ((breath + 1) / 2) * range
+///
+/// Upstream hands it to `with_animation("loading-bg", ..)`, which feeds it a
+/// fresh 0..1 delta every 3s cycle; here the same delta comes from
+/// `gpui::now()` and a frame that asks for itself with `gpui::animate()`.
+fn pulsating(delta: f64) -> f64 {
+    let t = math::sin(delta * 2.0 * PI)
+    let breath = (t * t * t + t) / 2.0
+    PULSE_MIN + ((breath + 1.0) / 2.0) * (PULSE_MAX - PULSE_MIN)
+}
+
+/// Upstream's `loading_element()`: `size_full().flex_none().p_0p5().rounded_xs()`
+/// around a `size_full` black box whose opacity is the pulse above. Upstream's
+/// inner box is animated with `with_animation(..)`; here the opacity is passed
+/// in from the frame clock.
+fn loading(alpha: f64) -> ui::El {
+    ui::panel("size=full flex=none p=2 rounded=xs")
+        .child(ui::rect(f"size=full bg=black rounded=xs opacity={alpha}"))
+}
+
+/// Upstream's `fallback_element()`: `p_0p5()` around a centred, `text_sm`,
+/// `rounded_xs` box with a 1px border and a "?", both the colour of
+/// `black().opacity(0.5)` = `#00000080`.
+fn fallback() -> ui::El {
+    ui::panel("size=full flex=none p=2")
+        .child(ui::panel("size=full flex items=center justify=center rounded=xs font=sm color=#00000080 border=1 bordercolor=#00000080")
+            .text("?", ""))
+}
+
+/// Upstream's cell: `img(..).size_12().border_1().border_color(red())`, holding
+/// whichever subtree should be showing.
+fn cell(body: ui::El) -> ui::El {
+    ui::panel("size=48 border=1 bordercolor=red").child(body)
+}
+
+// ---- the port's staging ----------------------------------------------
+
+/// Start one cell's staged arrival: clear its flag, stamp the frame clock, and
+/// ask `gpui::task` for the event that sets the flag again. This is a timer the
+/// port owns — see the first deviation — and it must only be called once per
+/// arrival, since each `gpui::task` spawns a fresh worker.
+fn arm(id: String, ms: i64) {
+    gpui::set_bool(f"{id}.arrived", false)
+    gpui::set_float(f"{id}.armed", gpui::now())
+    gpui::task(id, ms)
+}
+
+/// How long ago this cell was armed, for the `LOADING_DELAY` grace above.
+fn since_armed(id: String, now: f64) -> f64 {
+    now - gpui::state_float(f"{id}.armed", 0.0)
+}
+
+/// Cell 1 — upstream's `img(..)` at 175ms, no failure. Before its task lands
+/// the port draws the bare cell, which is what upstream shows too: the loading
+/// subtree is not due until `LOADING_DELAY`, 200ms, so the 175ms asset beats it.
+fn quick_cell(arrived: bool) -> ui::El {
+    let body = if arrived {
+        ui::image(*APP_ICON, "size=full")
+    } else {
+        ui::rect("size=full")
+    }
+    cell(body).on_mouse("click", "reload.quick")
+}
+
+/// Cell 2 — upstream's 5s, no failure: blank for GPUI's `LOADING_DELAY`, the
+/// loading subtree after that, then the image.
+fn slow_cell(arrived: bool, since: f64, alpha: f64) -> ui::El {
+    let body = if arrived {
+        ui::image(*APP_ICON, "size=full")
+    } else if since < LOADING_DELAY_S {
+        ui::rect("size=full")
+    } else {
+        loading(alpha)
+    }
+    cell(body).on_mouse("click", "reload.slow")
+}
+
+/// Cell 3 — upstream's 5s with `fail: true`: the same delay and loading
+/// subtree, then the fallback subtree. Nothing reports a failure to this port;
+/// the fallback is what its own staging decides to draw once the task lands.
+fn failing_cell(arrived: bool, since: f64, alpha: f64) -> ui::El {
+    let body = if arrived {
+        fallback()
+    } else if since < LOADING_DELAY_S {
+        ui::rect("size=full")
+    } else {
+        loading(alpha)
+    }
+    cell(body).on_mouse("click", "reload.fail")
+}
+
+/// Cell 4 — upstream's path that does not exist, through the binding's own
+/// `ui::image`. Blank, and not clickable: upstream's click evicts
+/// `ImgResourceLoader`'s cache entry, and the binding exposes no `remove_asset`.
+fn missing_cell() -> ui::El {
+    cell(ui::image(*MISSING, "size=full"))
+}
+
 fn main() {
-    let outcome = gpui::run("08 - image_loading", 700.0, 520.0, || {
-        status::missing(
-            "08 - image_loading",
-            "upstream: examples/image_loading.rs (213 lines)",
-            #[
-            "cx.background_executor() image decoding",
-            "img(ImageSource::Custom(..)) / an image cache handle",
-            "log + env_logger wiring",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("08 - image_loading", 840.0, 800.0, || {
+        // Upstream asks its asset system for all four images once, as the tree
+        // is built. The port asks `gpui::task` for three staged arrivals on its
+        // first frame — cell 4 has no staging, it is a real load that fails —
+        // and after that only a click re-arms one.
+        if !gpui::state_bool("started", false) {
+            gpui::set_bool("started", true)
+            arm("quick", QUICK_MS)
+            arm("slow", SLOW_MS)
+            arm("fail", SLOW_MS)
+        }
+
+        for event in gpui::take_events() {
+            let id, _result = gpui::event_parts(event)
+            if id == "reload.quick" {
+                arm("quick", QUICK_MS)
+            } else if id == "reload.slow" {
+                // Only from a settled cell: two workers for one id would race to
+                // set one flag.
+                if gpui::state_bool("slow.arrived", false) {
+                    arm("slow", SLOW_MS)
+                }
+            } else if id == "reload.fail" {
+                if gpui::state_bool("fail.arrived", false) {
+                    arm("fail", SLOW_MS)
+                }
+            } else if id == "quick" || id == "slow" || id == "fail" {
+                gpui::set_bool(f"{id}.arrived", true)
+            }
+        }
+
+        let quick = gpui::state_bool("quick.arrived", false)
+        let slow = gpui::state_bool("slow.arrived", false)
+        let fail = gpui::state_bool("fail.arrived", false)
+        let now = gpui::now()
+        let alpha = pulsating((now % PULSE_PERIOD) / PULSE_PERIOD)
+
+        // The pulse needs a frame per step, as upstream's animation driver would
+        // ask for while `with_animation(..)` is live.
+        if !slow || !fail {
+            gpui::animate()
+        }
+
+        let quick_result = gpui::state_text("quick.result", "pending")
+        let slow_result = gpui::state_text("slow.result", "pending")
+        let fail_result = gpui::state_text("fail.result", "pending")
+
+        // Upstream's tree: `div().flex().flex_col().size_full().justify_around()`
+        // holding a row with a white `size(px(300))` box of four 48px cells.
+        ui::column("flex col size=full bg=#1e1e2e p=20 gap=14 justify=center items=center")
+            .text("08 - image_loading", "font=2xl bold color=#f9e2af")
+            .text("four images through a custom asset type, with loading and fallback subtrees and one deliberate failure", "font=sm color=#9399b2")
+            .child(ui::row("size=300 bg=white justify=center items=center")
+                .child(quick_cell(quick))
+                .child(slow_cell(slow, since_armed("slow", now), alpha))
+                .child(failing_cell(fail, since_armed("fail", now), alpha))
+                .child(missing_cell()))
+            .child(ui::column("gap=3 p=12 bg=#181825 rounded=8 w=full")
+                .text("the four cells", "font=xs semibold color=#6c7086")
+                .text("image-1  175ms, no failure — the image; the loading subtree is never due, here or upstream (click to run again)", "font=xs color=#cdd6f4")
+                .text("image-2  5s, no failure — blank for 200ms, the loading subtree, then the image (click to run again)", "font=xs color=#cdd6f4")
+                .text("image-3  5s, fail: true — blank for 200ms, the loading subtree, then upstream's fallback subtree (click again)", "font=xs color=#cdd6f4")
+                .text("image-4  the normal loader on a path that does not exist — blank: it errors, and no fallback is installed", "font=xs color=#cdd6f4"))
+            .child(ui::column("gap=3 p=12 bg=#181825 rounded=8 w=full")
+                .text("absent, not emulated", "font=xs semibold color=#f38ba8")
+                .text("AssetSource / Asset<Source = LoadImageParameters> / ImageCacheError — no custom asset type, so no timeout and no deliberate Err", "font=xs color=#cdd6f4")
+                .text("window.use_asset::<LoadImageWithParameters> — an element cannot ask GPUI for a custom asset", "font=xs color=#cdd6f4")
+                .text("Img::with_loading / with_fallback — Img's fields are set only there (img.rs:131-176), so a loading or errored image is blank (img.rs:366-401)", "font=xs color=#cdd6f4")
+                .text("cx.remove_asset::<..>(..) — a click restarts this port's staging, not GPUI's image cache", "font=xs color=#cdd6f4")
+                .text(f"gpui::task summaries: {quick_result} · {slow_result} · {fail_result}", "font=xs color=#6c7086"))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

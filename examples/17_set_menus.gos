@@ -1,30 +1,60 @@
 // 17 - set_menus        upstream: tools/upstream/examples/set_menus.rs (49 lines)
 //
-// NOT PORTED YET. The macOS application menu bar, with a Quit item wired to an action.
+// The macOS application menu bar, with a Quit item wired to an action, over a
+// green window holding one line of text. `gpui::set_menus(name, items)` takes a
+// flat list of entries — `"separator"`, `"quits:<label>"` or
+// `"events:<label>"` — so upstream's one `Menu` named `set_menus` with a
+// separator and `MenuItem::action("Quit", Quit)` is a two-entry list.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// Upstream also registers the action itself (`actions!(set_menus, [Quit])`,
+// `cx.on_action(quit)`) and quits from its own handler. Menu items carry a
+// boxed action that no ABI can pass, so the binding owns the action and its
+// slot: `"quits:Quit"` is a binding-side action whose handler calls `cx.quit()`.
+// Nothing has to be registered from Gossamer, and the Quit item appears with
+// exactly the label upstream gives it.
 //
-//   ./tools/upstream-examples.sh run set_menus
+// The menu is installed once, from the view callback, guarded by a state flag;
+// `set_menus` is a request the binding runs after the frame, so it cannot be
+// called before `gpui::run`, and a Gossamer view callback would otherwise
+// rebuild the menu bar on every frame.
 //
-// and compare the two windows side by side.
+// Deviations, all on the binding's side:
+//   * `MenuItem::os_submenu("Services", SystemMenuType::Services)` has no
+//     equivalent — the binding has no submenu entry — so the menu is a
+//     separator and Quit, with the Services submenu dropped.
+//   * upstream's quit handler prints "Gracefully quitting the application . . ."
+//     before `cx.quit()`. `"quits:Quit"` runs the binding's own handler, which
+//     only quits, so that line is not printed.
+//   * upstream calls `cx.activate(true)` to bring the menu bar forward; the
+//     binding activates the app itself when it opens the window, and no example
+//     can call it.
+//   * upstream leaves the window size to GPUI — `WindowOptions::default()` gives
+//     the centred default, 1536x864 clipped to the display. `gpui::run` takes
+//     explicit dimensions, so this asks for 800x600. The element is `size_full`
+//     either way, so only the window's size differs.
+//   * `WindowOptions::default()` passes no titlebar options, which on macOS
+//     means no explicit title; the binding always attaches one, and `gpui::run`
+//     requires a title, so the window is titled `17 - set_menus`.
+//   * the application menu bar is a macOS feature; on Linux `set_menus` stores
+//     the menu but shows no bar, which is upstream's behaviour there too.
 
 use gpui
 use std::process
-use status
 use ui
 
 fn main() {
-    let outcome = gpui::run("17 - set_menus", 420.0, 300.0, || {
-        status::missing(
-            "17 - set_menus",
-            "upstream: examples/set_menus.rs (49 lines)",
-            #[
-            "cx.set_menus(..) — the application menu",
-            "an action type registered through actions!(..)",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("17 - set_menus", 800.0, 600.0, || {
+        // Upstream installs the menu once from `Application::run`'s closure,
+        // before opening its window. `gpui::set_menus` is applied after the
+        // frame that asked for it, so the first frame is where it belongs.
+        if !gpui::state_bool("menus", false) {
+            gpui::set_bool("menus", true)
+            gpui::set_menus("set_menus", #["separator", "quits:Quit"])
+        }
+
+        ui::panel("flex size=full justify=center items=center bg=#2e7d32 font=xl color=#ffffff")
+            .text("Set Menus Example", "")
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

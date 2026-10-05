@@ -1,31 +1,385 @@
 // 02 - data_table        upstream: tools/upstream/examples/data_table.rs (473 lines)
 //
-// NOT PORTED YET. A resizable data table: columns, drag-resize, selection, header cells.
+// Ten thousand generated stock quotes in one table: 24 fixed-width columns
+// under a header of the same widths, every row tinted up-green or down-red by
+// its own change, and a virtualised body that builds the rows on screen only.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// This revision of the upstream example resizes no columns and selects no row —
+// the columns are fixed `Pixels` fields — so neither is ported. What it does
+// have, and what is here:
 //
-//   ./tools/upstream-examples.sh run data_table
+//   * `uniform_list("items", 10_000, ..)` — the visible window of rows only;
+//   * one generated quote per row, its 24 fields under a header of the same
+//     fixed widths, the row tinted green or red by its own change;
+//   * a header line naming the visible row range;
+//   * a grey scrollbar thumb over the body, 8x100 with a hover refinement.
 //
-// and compare the two windows side by side.
+// Two of the binding's limits meet in this example — there is no scroll handle,
+// and pointer events cannot be captured window-wide — so read the deviations
+// before comparing the two windows.
+//
+// Deviations:
+//
+//   * No scroll handle exists. Upstream's thumb is *positioned* from the list's
+//     scroll state (`-scroll_top / scroll_height`) and *drags* through
+//     `UniformListScrollHandle::set_offset`. The binding exposes no such
+//     handle: a program can neither read the offset nor set it. The thumb is
+//     therefore drawn where upstream puts it when the list is at the top —
+//     `top=4 right=4`, 8x100, `#c0c0c0`, `rounded_lg`, hover `#a0a0a0` — and
+//     is otherwise inert: it does not track the list, and dragging it cannot
+//     scroll the list. The body still scrolls with the wheel, because
+//     `uniform_list` owns that itself.
+//   * Pointer events cannot be captured window-wide. Upstream registers
+//     `window.on_mouse_event` handlers on a canvas filling the thumb, so a
+//     drag keeps tracking after the pointer leaves it. The binding's
+//     `gpui::on_mouse` reports only while the pointer is over the element, so
+//     even with the thumb wired for `down up move`, tracking would stop at its
+//     edge. Nothing here is wired — for the reason above there is no offset to
+//     carry it to — but the difference is stated so it is not read as a bug.
+//   * `cx.processor` does not exist. The row builder that `ui::list(..)` takes
+//     is the same hook: it is handed a row index instead of a whole range, and
+//     is called only for the rows on screen.
+//   * The quote data is derived, not stored. Upstream fills a
+//     `Vec<Rc<Quote>>` once from `rand::rng()`. Here each value is drawn from a
+//     SplitMix64 stream seeded by the row and the field, so a row is identical
+//     every time it is built and nothing has to be kept between frames. The
+//     ranges are upstream's exactly; the values are reproducible run to run,
+//     which upstream's are not.
+//   * The visible range comes out of the row builder. GPUI calls the builder
+//     once to measure row 0 and then once for the rows on screen, so the port
+//     keeps the last run of consecutive rows — the range a processor would have
+//     been handed. Upstream reads the same range out of its own processor, which
+//     also runs during layout, so in both the header is one frame behind.
+//   * `ui::list` takes an explicit row height; upstream's `uniform_list`
+//     measures the first row. 22.0 is this port's reading of the natural
+//     height — the same figure `24_uniform_list` settled on.
+//   * As in every port here, a Gossamer frame describes the whole tree again
+//     rather than re-rendering a retained `Entity<DataTable>`.
+//
+// Nothing else in the binding is missing for this example.
 
 use gpui
+use std::math::rand
 use std::process
-use status
 use ui
 
+// ---- the table's shape ------------------------------------------------
+
+/// Upstream's `TOTAL_ITEMS`.
+const TOTAL_ITEMS: i64 = 10_000
+
+/// The thumb's height, and its width, in pixels.
+const THUMB_HEIGHT: i64 = 100
+const THUMB_WIDTH: i64 = 8
+
+/// Upstream's `FIELDS`: every column, in order, with its fixed width in pixels.
+/// The header and the body both read it, which is what keeps them aligned.
+const FIELDS: Vec<(String, i64)> = #[
+    ("id", 64),
+    ("symbol", 64),
+    ("name", 180),
+    ("last_done", 80),
+    ("prev_close", 80),
+    ("open", 80),
+    ("low", 80),
+    ("high", 80),
+    ("ttm", 50),
+    ("market_cap", 96),
+    ("float_cap", 96),
+    ("turnover", 120),
+    ("volume", 100),
+    ("turnover_ratio", 96),
+    ("pe", 64),
+    ("pb", 64),
+    ("eps", 64),
+    ("shares", 96),
+    ("dividend", 64),
+    ("yield", 64),
+    ("dividend_per_share", 64),
+    ("dividend_date", 96),
+    ("dividend_payment", 64),
+    ("timestamp", 120),
+]
+
+// ---- the quote's draws ------------------------------------------------
+//
+// Upstream's `Quote::random()` draws every field of a quote from one
+// `rand::rng()` stream, in the order listed below. This port draws each of them
+// from its own stream, seeded from the row and the slot, so a row's values are
+// the same every time the row builder runs — which is what a stored
+// `Rc<Quote>` gave upstream.
+//
+//   prev_close 0    open offset 2   timestamp 5   volume 6
+//   change     1    high offset 3   low offset 4
+//   symbol: numeric? 7, code 8, market 9, letters 10 11, suffix 12
+//   name: number 13, serial 14      ttm 15        market_cap 16
+//   float_cap extra 17   shares 18  dividend 19   dividend_yield 20
+//   dividend_per_share 21   dividend_date 22 23 24   dividend_payment 25
+
+/// One draw from the stream for `row` and `slot`, in `0.0 .. 1.0`.
+fn draw(row: i64, slot: i64) -> f64 {
+    rand::Rng::new(row * 1_000_003 + slot * 7_919 + 1).next_f64()
+}
+
+/// `rng.random_range(lo..hi)`, for floats.
+fn uniform(row: i64, slot: i64, lo: f64, hi: f64) -> f64 {
+    lo + (hi - lo) * draw(row, slot)
+}
+
+/// `rng.random_range(lo..hi)`, for integers.
+fn uniform_int(row: i64, slot: i64, lo: i64, hi: i64) -> i64 {
+    lo + ((hi - lo) as f64 * draw(row, slot)) as i64
+}
+
+// ---- one quote --------------------------------------------------------
+
+/// `prev_close = rng.random_range(100.0..200.0)`.
+fn prev_close(row: i64) -> f64 { uniform(row, 0, 100.0, 200.0) }
+
+/// `change = rng.random_range(-5.0..5.0)`.
+fn change_delta(row: i64) -> f64 { uniform(row, 1, -5.0, 5.0) }
+
+fn last_done(row: i64) -> f64 { prev_close(row) + change_delta(row) }
+
+/// `Quote::change()` — the percentage the row's colour keys off.
+fn change(row: i64) -> f64 {
+    (last_done(row) - prev_close(row)) / prev_close(row) * 100.0
+}
+
+/// `Quote::change_color()` — `green()` up, `red()` down. Upstream answers an
+/// `Hsla`; the style language takes the colour's name.
+fn change_colour(row: i64) -> String {
+    if change(row) > 0.0 { "green" } else { "red" }
+}
+
+/// `open = prev_close + rng.random_range(-3.0..3.0)`.
+fn open(row: i64) -> f64 { prev_close(row) + uniform(row, 2, -3.0, 3.0) }
+
+/// `high = (prev_close + 0..10).max(open)`.
+fn high(row: i64) -> f64 {
+    let band = prev_close(row) + uniform(row, 3, 0.0, 10.0)
+    let opened = open(row)
+    if band > opened { band } else { opened }
+}
+
+/// `low = (prev_close - 0..10).min(open)`.
+fn low(row: i64) -> f64 {
+    let band = prev_close(row) - uniform(row, 4, 0.0, 10.0)
+    let opened = open(row)
+    if band < opened { band } else { opened }
+}
+
+/// The timestamp, in seconds — upstream keeps a `Duration` and prints its
+/// `as_secs()`.
+fn timestamp(row: i64) -> i64 { uniform_int(row, 5, 0, 86_400) }
+
+fn volume(row: i64) -> i64 { uniform_int(row, 6, 1_000_000, 100_000_000) }
+
+/// `turnover = last_done * volume`.
+fn turnover(row: i64) -> f64 { last_done(row) * (volume(row) as f64) }
+
+/// `Quote::turnover_ratio()`.
+fn turnover_ratio(row: i64) -> f64 { (volume(row) as f64) / turnover(row) * 100.0 }
+
+fn ttm(row: i64) -> f64 { uniform(row, 15, 0.0, 10.0) }
+
+fn market_cap(row: i64) -> f64 { uniform(row, 16, 1_000_000.0, 10_000_000.0) }
+
+fn float_cap(row: i64) -> f64 { market_cap(row) + uniform(row, 17, 1_000.0, 10_000.0) }
+
+fn shares(row: i64) -> f64 { uniform(row, 18, 100.0, 1000.0) }
+
+/// Upstream sets `pb`, `pe` and `eps` to the same quotient, `market_cap /
+/// shares`. Reproduced as written rather than corrected.
+fn book_value(row: i64) -> f64 { market_cap(row) / shares(row) }
+
+fn dividend(row: i64) -> f64 { uniform(row, 19, 0.0, 10.0) }
+
+fn dividend_yield(row: i64) -> f64 { uniform(row, 20, 0.0, 10.0) }
+
+fn dividend_per_share(row: i64) -> f64 { uniform(row, 21, 0.0, 10.0) }
+
+/// `"{year}-{month}-{day}"`.
+fn dividend_date(row: i64) -> String {
+    let year = uniform_int(row, 22, 2000, 2023)
+    let month = uniform_int(row, 23, 1, 12)
+    let day = uniform_int(row, 24, 1, 28)
+    f"{year}-{month}-{day}"
+}
+
+fn dividend_payment(row: i64) -> f64 { uniform(row, 25, 0.0, 10.0) }
+
+/// The ticker: half the time `"{:03}.{}"` of a code and a market, otherwise two
+/// letters — then `".{A..Z}"` either way. The letters come from an array, which
+/// is what upstream's `rng.random_range('A'..='Z')` means.
+fn symbol(row: i64) -> String {
+    let letters = #[
+        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+        "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    ]
+    let head = if draw(row, 7) < 0.5 {
+        let code = uniform_int(row, 8, 100, 1000)
+        let market = uniform_int(row, 9, 0, 10)
+        f"{code}.{market}"
+    } else {
+        let first = letters[uniform_int(row, 10, 0, 26)]
+        let second = letters[uniform_int(row, 11, 0, 26)]
+        f"{first}{second}"
+    }
+    let suffix = letters[uniform_int(row, 12, 0, 26)]
+    f"{head}.{suffix}"
+}
+
+/// `"{symbol} {1..100} - #{10000..100000}"`.
+fn name(row: i64) -> String {
+    let number = uniform_int(row, 13, 1, 100)
+    let serial = uniform_int(row, 14, 10_000, 100_000)
+    f"{symbol(row)} {number} - #{serial}"
+}
+
+// ---- one cell ---------------------------------------------------------
+
+/// `format!("{:.2} M", v / 1_000_000.0)` — the three money columns.
+fn millions(v: f64) -> String {
+    f"{v / 1_000_000.0:.2} M"
+}
+
+/// Upstream tints nine of the 24 cells by the row's change and leaves the rest
+/// on the table's own text colour.
+fn tinted(key: String) -> bool {
+    key == "last_done" || key == "prev_close" || key == "change" || key == "timestamp"
+        || key == "open" || key == "low" || key == "high" || key == "ttm" || key == "eps"
+}
+
+/// Upstream's `render_cell` match, arm for arm and including its `_` arm — with
+/// `pb`, `pe` and `eps` sharing one, since upstream gives all three the same
+/// `market_cap / shares` body.
+fn cell_text(row: i64, key: String) -> String {
+    match key {
+        "id" => f"{row}",
+        "symbol" => symbol(row),
+        "name" => name(row),
+        "last_done" => f"{last_done(row):.3}",
+        "prev_close" => f"{prev_close(row):.3}",
+        "change" => f"{change(row):.2}%",
+        "timestamp" => f"{timestamp(row)}",
+        "open" => f"{open(row):.2}",
+        "low" => f"{low(row):.2}",
+        "high" => f"{high(row):.2}",
+        "ttm" => f"{ttm(row):.2}",
+        "pe" | "pb" | "eps" => f"{book_value(row):.2}",
+        "market_cap" => millions(market_cap(row)),
+        "float_cap" => millions(float_cap(row)),
+        "turnover" => millions(turnover(row)),
+        "volume" => millions(volume(row) as f64),
+        "turnover_ratio" => f"{turnover_ratio(row):.2}%",
+        "shares" => f"{shares(row):.2}",
+        "dividend" => f"{dividend(row):.2}",
+        "yield" => f"{dividend_yield(row):.2}%",
+        "dividend_per_share" => f"{dividend_per_share(row):.2}",
+        "dividend_date" => dividend_date(row),
+        "dividend_payment" => f"{dividend_payment(row):.2}",
+        _ => "--",
+    }
+}
+
+/// One body cell: `px_1`, a fixed `w(width)`, truncation. Upstream does not turn
+/// shrinking off here, though it does on the header cells — reproduced as
+/// written, on both sides.
+fn cell(row: i64, key: String, width: i64, tint: String) -> ui::El {
+    let style = if tinted(key) {
+        f"ws=nowrap truncate px=4 w={width} color={tint}"
+    } else {
+        f"ws=nowrap truncate px=4 w={width}"
+    }
+    ui::text(cell_text(row, key), style)
+}
+
+// ---- one row ----------------------------------------------------------
+
+/// Record that the row builder was asked for `row`, keeping the *last* run of
+/// consecutive rows.
+///
+/// GPUI calls the builder once to measure row 0 and then once for the rows on
+/// screen, and the visible pass is last and contiguous — so the last run is the
+/// range a processor would have been handed, which is what makes this match
+/// upstream's header.
+fn note_visible(row: i64) {
+    let previous = gpui::state_int("visible.previous", -2)
+    if row != previous + 1 {
+        gpui::set_int("visible.lo", row)
+    }
+    gpui::set_int("visible.previous", row)
+    gpui::set_int("visible.hi", row)
+}
+
+/// One row of the ten thousand: its 24 cells, the row's alternating background,
+/// and the rule below it.
+fn table_row(row: i64) -> ui::El {
+    note_visible(row)
+    let tint = change_colour(row)
+    let background = if row % 2 == 0 { "#ffffff" } else { "#fafafa" }
+    let cells = FIELDS.map(|field| {
+        let key, width = field
+        cell(row, key, width, tint)
+    })
+    ui::row(f"borderb=1 bordercolor=#e0e0e0 bg={background} py=2 px=8").children(cells)
+}
+
+// ---- the header -------------------------------------------------------
+
+/// `key.replace("_", " ").to_uppercase()`.
+fn header_label(key: String) -> String {
+    key.replace("_", " ").to_uppercase()
+}
+
+/// One header cell: upstream turns shrinking off here but not on the body's
+/// cells, so the header keeps the columns' true widths. Reproduced as written.
+fn header_cell(key: String, width: i64) -> ui::El {
+    ui::text(header_label(key), f"ws=nowrap shrink=0 truncate px=4 w={width}")
+}
+
+// ---- the scrollbar ----------------------------------------------------
+
+/// Upstream's thumb. It is drawn at the position upstream computes when the
+/// list is scrolled to the top — `percentage` is 0, so the `clamp` floors
+/// `offset_top` at 4px — because the list's scroll offset cannot be read. It
+/// cannot be dragged either: see the header. Its hover refinement is
+/// upstream's, and works.
+fn scrollbar_thumb() -> ui::El {
+    ui::rect(f"absolute top=4 right=4 h={THUMB_HEIGHT} w={THUMB_WIDTH} bg=#c0c0c0 rounded=lg hover=bg:#a0a0a0")
+}
+
+// ---- the frame --------------------------------------------------------
+
 fn main() {
-    let outcome = gpui::run("02 - data_table", 720.0, 480.0, || {
-        status::missing(
-            "02 - data_table",
-            "upstream: examples/data_table.rs (473 lines)",
-            #[
-            "cx.processor(..) — a row builder that borrows the entity",
-            "window.on_mouse_event(..) — window-wide mouse observation",
-            "cx.entity() handles for per-column and per-row state",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("02 - data_table", 1280.0, 1000.0, || {
+        // The header is written before the body is laid out, so it names what
+        // the previous frame's row builder saw — the same one-frame lag
+        // upstream's header has, its processor also running during layout. Read
+        // it, then clear the run the builder is about to record.
+        let lo = gpui::state_int("visible.lo", 0)
+        let hi = gpui::state_int("visible.hi", -1)
+        let range = if hi < lo { "0..0" } else { f"{lo}..{hi + 1}" }
+        let heading = f"Total {TOTAL_ITEMS} items, visible range: {range}"
+        gpui::set_int("visible.lo", -1)
+        gpui::set_int("visible.hi", -1)
+        gpui::set_int("visible.previous", -2)
+
+        let header = FIELDS.map(|field| {
+            let key, width = field
+            header_cell(key, width)
+        })
+
+        ui::column("bg=#ffffff font=sm size=full p=16 gap=8")
+            .text(heading, "")
+            .child(ui::column("flex=1 overflow=hidden border=1 bordercolor=#e0e0e0 rounded=sm")
+                .child(ui::row("w_full overflow=hidden borderb=1 bordercolor=#e0e0e0 color=#555555 bg=#f0f0f0 py=4 px=8 font=xs")
+                    .children(header))
+                .child(ui::stack("size=full")
+                    .list("items", TOTAL_ITEMS, 22.0, "size=full", table_row)
+                    .child(scrollbar_thumb())))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

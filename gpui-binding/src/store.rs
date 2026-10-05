@@ -14,6 +14,7 @@ pub struct Store {
     flags: HashMap<String, bool>,
     texts: HashMap<String, String>,
     lists: HashMap<String, Vec<String>>,
+    float_lists: HashMap<String, Vec<f64>>,
 }
 
 pub static STORE: LazyLock<Mutex<Store>> = LazyLock::new(|| Mutex::new(Store::default()));
@@ -33,6 +34,16 @@ pub enum Request {
     Animate,
     /// Close the window and end the program.
     Quit,
+    /// Move focus to the next focusable element.
+    FocusNext,
+    /// Move focus to the previous focusable element.
+    FocusPrev,
+    /// Close the window this frame belongs to.
+    CloseWindow,
+    /// Resize the window this frame belongs to.
+    ResizeWindow { w: f64, h: f64 },
+    /// Install an application menu.
+    SetMenus { name: String, items: Vec<String> },
 }
 
 static REQUESTS: LazyLock<Mutex<Vec<Request>>> = LazyLock::new(|| Mutex::new(Vec::new()));
@@ -146,6 +157,26 @@ pub fn text_insert(key: &str, index: i64, value: &str) {
     }
 }
 
+pub fn push_float(key: &str, value: f64) {
+    STORE
+        .lock()
+        .unwrap()
+        .float_lists
+        .entry(key.to_string())
+        .or_default()
+        .push(value);
+}
+
+pub fn get_floats(key: &str) -> Vec<f64> {
+    STORE
+        .lock()
+        .unwrap()
+        .float_lists
+        .get(key)
+        .cloned()
+        .unwrap_or_default()
+}
+
 pub fn forget(key: &str) {
     let mut s = STORE.lock().unwrap();
     s.ints.remove(key);
@@ -153,4 +184,5 @@ pub fn forget(key: &str) {
     s.flags.remove(key);
     s.texts.remove(key);
     s.lists.remove(key);
+    s.float_lists.remove(key);
 }

@@ -21,6 +21,7 @@ use gpui::{
 
 use gossamer_binding::{NativeDispatch, PersistentCallback, Value};
 
+use crate::path;
 use crate::style;
 use crate::store;
 
@@ -87,6 +88,12 @@ pub enum Kind {
     Virtual { count: usize, build: PersistentCallback, row_height: f64 },
     /// A `canvas` painted by one of the routines below.
     Canvas { painter: String, phase: f64 },
+    /// A `canvas` that paints built paths, in order.
+    Paths { paths: Vec<i64>, backgrounds: Vec<String> },
+    /// A wrapper that reports pointer events for the element it holds.
+    Mouse { child: usize, id: String, kinds: String },
+    /// Text with per-byte-range highlights.
+    StyledText { content: String, highlights: Vec<String> },
 }
 
 pub struct El {
@@ -147,6 +154,152 @@ thread_local! {
     static START: std::cell::OnceCell<std::time::Instant> = const { std::cell::OnceCell::new() };
     static ROOT: Cell<i64> = const { Cell::new(0) };
     static REPORTED: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
+}
+
+/// Thread-local mirrors of the things a binding function can be asked for
+/// mid-frame but can only be read with a `Window` in hand.
+static MOUSE_POS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    static MOUSE_AT: Cell<(f64, f64)> = const { Cell::new((0.0, 0.0)) };
+    static FOCUSED_NOW: RefCell<std::collections::HashSet<String>> =
+        RefCell::new(std::collections::HashSet::new());
+    static COLORS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    static WINDOW_RECT: Cell<(f64, f64, f64, f64)> = const { Cell::new((0.0, 0.0, 0.0, 0.0)) };
+    static DISPLAYS: RefCell<Vec<Display>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `"start-end prop,prop"` over UTF-8 byte ranges, where the properties are
+/// the text half of the style language.
+fn parse_highlight(spec: &str) -> Option<(std::ops::Range<usize>, gpui::HighlightStyle)> {
+    let (range, props) = spec.split_once(' ')?;
+    let (start, end) = range.split_once('-')?;
+    let mut style = gpui::HighlightStyle::default();
+    for (key, value) in style::tokens(props) {
+        let v = value.as_deref().unwrap_or("");
+        match key.as_str() {
+            "bold" => style.font_weight = Some(gpui::FontWeight::BOLD),
+            "semibold" => style.font_weight = Some(gpui::FontWeight::SEMIBOLD),
+            "weight" => style.font_weight = Some(gpui::FontWeight::from(v.parse::<f32>().unwrap_or(400.0))),
+            "italic" => style.font_style = Some(gpui::FontStyle::Italic),
+            "color" => style.color = Some(style::colour(v)),
+            "bg" => style.background_color = Some(style::colour(v)),
+            "underline" => style.underline = Some(gpui::UnderlineStyle::default()),
+            "strike" => style.strikethrough = Some(gpui::StrikethroughStyle::default()),
+            _ => {}
+        }
+    }
+    Some((start.parse().ok()?..end.parse().ok()?, style))
+}
+
+/// The default colours, cached at frame start.
+pub fn default_color(name: &str) -> String {
+    COLORS.with(|c| c.borrow().get(name).cloned().unwrap_or_default())
+}
+
+/// Reads what the frame will ask for while it still has the window: the
+/// pointer's position, which focus handles are focused, and the default
+/// colours. Called once, before the view callback runs.
+pub fn begin_frame(window: &mut Window, cx: &App) {
+    let position = window.mouse_position();
+    MOUSE_AT.with(|p| {
+        p.set((f32::from(position.x) as f64, f32::from(position.y) as f64))
+    });
+    let _ = &MOUSE_POS;
+    let bounds = window.bounds();
+    WINDOW_RECT.with(|r| {
+        r.set((
+            f32::from(bounds.origin.x) as f64,
+            f32::from(bounds.origin.y) as f64,
+            f32::from(bounds.size.width) as f64,
+            f32::from(bounds.size.height) as f64,
+        ))
+    });
+    DISPLAYS.with(|d| {
+        let mut list = d.borrow_mut();
+        list.clear();
+        for display in cx.displays() {
+            let bounds = display.bounds();
+            list.push(Display {
+                id: i64::from(u32::from(display.id())),
+                x: f32::from(bounds.origin.x) as f64,
+                y: f32::from(bounds.origin.y) as f64,
+                w: f32::from(bounds.size.width) as f64,
+                h: f32::from(bounds.size.height) as f64,
+            });
+        }
+    });
+    // `get_global` panics when nothing installed the colours, which is the
+    // case for the frames GPUI draws before a program asks for anything.
+    let colors = if cx.has_global::<gpui::colors::GlobalColors>() {
+        Some(gpui::colors::Colors::get_global(cx).clone())
+    } else {
+        None
+    };
+    if let Some(colors) = colors {
+    COLORS.with(|c| {
+        let mut map = c.borrow_mut();
+        map.clear();
+        let hex = |c: gpui::Rgba| {
+            format!(
+                "#{:02x}{:02x}{:02x}{:02x}",
+                (c.r * 255.0).round() as u8,
+                (c.g * 255.0).round() as u8,
+                (c.b * 255.0).round() as u8,
+                (c.a * 255.0).round() as u8,
+            )
+        };
+        map.insert("text".into(), hex(colors.text));
+        map.insert("selected_text".into(), hex(colors.selected_text));
+        map.insert("background".into(), hex(colors.background));
+        map.insert("disabled".into(), hex(colors.disabled));
+        map.insert("selected".into(), hex(colors.selected));
+        map.insert("border".into(), hex(colors.border));
+        map.insert("separator".into(), hex(colors.separator));
+        map.insert("container".into(), hex(colors.container));
+    });
+    }
+    FOCUSED_NOW.with(|set| {
+        let mut set = set.borrow_mut();
+        set.clear();
+        FOCUS.with(|f| {
+            for (id, handle) in f.borrow().iter() {
+                if handle.is_focused(window) {
+                    set.insert(id.clone());
+                }
+            }
+        });
+    });
+}
+
+/// The window's rectangle, as of the start of this frame.
+pub fn window_rect() -> (f64, f64, f64, f64) {
+    WINDOW_RECT.with(|r| r.get())
+}
+
+/// One connected display's geometry.
+#[derive(Default, Clone)]
+pub struct Display {
+    pub id: i64,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// The connected displays, as of the start of this frame.
+pub fn displays() -> Vec<Display> {
+    DISPLAYS.with(|d| d.borrow().clone())
+}
+
+/// The pointer's position, from the start of this frame.
+pub fn mouse_position() -> (f64, f64) {
+    MOUSE_AT.with(|p| p.get())
+}
+
+/// Whether a registered focus handle is the focused one this frame.
+pub fn is_focused(id: &str) -> bool {
+    FOCUSED_NOW.with(|set| set.borrow().contains(id))
 }
 
 /// Starts a frame: an empty arena, and one more frame on the clock.
@@ -277,6 +430,15 @@ fn snapshot(handle: i64) -> Option<El> {
                 Kind::Canvas { painter, phase } => {
                     Kind::Canvas { painter: painter.clone(), phase: *phase }
                 }
+                Kind::Paths { paths, backgrounds } => {
+                    Kind::Paths { paths: paths.clone(), backgrounds: backgrounds.clone() }
+                }
+                Kind::Mouse { child, id, kinds } => {
+                    Kind::Mouse { child: *child, id: id.clone(), kinds: kinds.clone() }
+                }
+                Kind::StyledText { content, highlights } => {
+                    Kind::StyledText { content: content.clone(), highlights: highlights.clone() }
+                }
             },
             style: el.style.clone(),
             id: el.id.clone(),
@@ -356,6 +518,35 @@ fn error_card(message: String) -> AnyElement {
 thread_local! {
     static FOCUS: RefCell<HashMap<String, FocusHandle>> = RefCell::new(HashMap::new());
     static SLIDER_BOUNDS: RefCell<HashMap<String, Bounds<Pixels>>> = RefCell::new(HashMap::new());
+    static MOUSE_BOUNDS: RefCell<HashMap<String, Bounds<Pixels>>> = RefCell::new(HashMap::new());
+}
+
+/// Writes a pointer event into the state store and raises `"<id>|<kind>"`.
+///
+/// Coordinates are element-relative, so a program never has to know where its
+/// element sits — the same thing the slider does.
+fn report_pointer(
+    id: &str,
+    kind: &str,
+    position: gpui::Point<Pixels>,
+    modifiers: gpui::Modifiers,
+) {
+    let bounds = MOUSE_BOUNDS.with(|m| m.borrow().get(id).copied());
+    let (x, y) = match bounds {
+        Some(bounds) => (
+            f32::from(position.x) - f32::from(bounds.origin.x),
+            f32::from(position.y) - f32::from(bounds.origin.y),
+        ),
+        None => (f32::from(position.x), f32::from(position.y)),
+    };
+    store::set_float(&format!("{id}.x"), x as f64);
+    store::set_float(&format!("{id}.y"), y as f64);
+    store::set_flag(&format!("{id}.dragging"), kind == "move");
+    store::set_flag(&format!("{id}.shift"), modifiers.shift);
+    store::set_flag(&format!("{id}.control"), modifiers.control);
+    store::set_flag(&format!("{id}.alt"), modifiers.alt);
+    store::set_flag(&format!("{id}.platform"), modifiers.platform);
+    store::push_event_with(id, kind);
 }
 
 fn focus_for(id: &str, cx: &mut App) -> FocusHandle {
@@ -380,22 +571,31 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let (hover, active) = style::interaction(&el.style);
             match style::scroll_axis(&el.style) {
                 Some("x") => {
-                    let scrolled = apply_interactions(
-                        base.id(ElementId::Name(el.id.clone().into())),
+                    let scrolled = apply_focus_order(
+                        apply_interactions(
+                            base.id(ElementId::Name(el.id.clone().into())),
+                            &el.style,
+                        ),
                         &el.style,
                     );
                     scrolled.overflow_x_scroll().children(children).into_any_element()
                 }
                 Some("both") => {
-                    let scrolled = apply_interactions(
-                        base.id(ElementId::Name(el.id.clone().into())),
+                    let scrolled = apply_focus_order(
+                        apply_interactions(
+                            base.id(ElementId::Name(el.id.clone().into())),
+                            &el.style,
+                        ),
                         &el.style,
                     );
                     scrolled.overflow_scroll().children(children).into_any_element()
                 }
                 Some(_) => {
-                    let scrolled = apply_interactions(
-                        base.id(ElementId::Name(el.id.clone().into())),
+                    let scrolled = apply_focus_order(
+                        apply_interactions(
+                            base.id(ElementId::Name(el.id.clone().into())),
+                            &el.style,
+                        ),
                         &el.style,
                     );
                     scrolled.overflow_y_scroll().children(children).into_any_element()
@@ -403,8 +603,11 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 // A plain box only becomes interactive when it asks to be, so
                 // the common case keeps a stateless element.
                 None if hover.is_some() || active.is_some() => {
-                    let interactive = apply_interactions(
-                        base.id(ElementId::Name(el.id.clone().into())),
+                    let interactive = apply_focus_order(
+                        apply_interactions(
+                            base.id(ElementId::Name(el.id.clone().into())),
+                            &el.style,
+                        ),
                         &el.style,
                     );
                     interactive.children(children).into_any_element()
@@ -700,6 +903,88 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             style::apply(list, &el.style).into_any_element()
         }
 
+        Kind::Paths { paths, backgrounds } => {
+            let handles = paths.clone();
+            let specs = backgrounds.clone();
+            let element = canvas(
+                move |_bounds, _window, _cx| (),
+                move |_bounds, _state, window, _cx| {
+                    for (index, handle) in handles.iter().enumerate() {
+                        let Some(path) = path::get(*handle) else { continue };
+                        let background = match specs.get(index) {
+                            Some(spec) if !spec.is_empty() => style::background(spec),
+                            _ => style::colour("#ffffff").into(),
+                        };
+                        window.paint_path(path, background);
+                    }
+                },
+            );
+            style::apply(element, &el.style).into_any_element()
+        }
+
+        Kind::Mouse { child, id, kinds } => {
+            let inner = snapshot(*child as i64)
+                .map(|c| render(&c, window, cx, entity))
+                .unwrap_or_else(|| div().into_any_element());
+            let bounds_key = id.clone();
+            let mut wrapper = style::apply(div(), &el.style)
+                .on_children_prepainted(move |bounds, _window, _cx| {
+                    if let Some(first) = bounds.first() {
+                        MOUSE_BOUNDS.with(|m| m.borrow_mut().insert(bounds_key.clone(), *first));
+                    }
+                })
+                .id(ElementId::Name(el.id.clone().into()))
+                .child(inner);
+
+            if kinds.contains("down") {
+                let key = id.clone();
+                wrapper = wrapper.on_mouse_down(MouseButton::Left, move |event, _w, cx| {
+                    report_pointer(&key, "down", event.position, event.modifiers);
+                    cx.notify(entity);
+                });
+            }
+            if kinds.contains("up") {
+                let key = id.clone();
+                wrapper = wrapper.on_mouse_up(MouseButton::Left, move |event, _w, cx| {
+                    report_pointer(&key, "up", event.position, event.modifiers);
+                    cx.notify(entity);
+                });
+            }
+            if kinds.contains("click") {
+                let key = id.clone();
+                wrapper = wrapper.on_click(move |event, _w, cx| {
+                    report_pointer(&key, "click", event.position(), event.modifiers());
+                    cx.notify(entity);
+                });
+            }
+            if kinds.contains("right") {
+                let key = id.clone();
+                wrapper = wrapper.on_mouse_down(MouseButton::Right, move |event, _w, cx| {
+                    report_pointer(&key, "right", event.position, event.modifiers);
+                    cx.notify(entity);
+                });
+            }
+            if kinds.contains("move") {
+                let key = id.clone();
+                wrapper = wrapper.on_mouse_move(move |event, _w, cx| {
+                    if event.dragging() {
+                        report_pointer(&key, "move", event.position, event.modifiers);
+                        cx.notify(entity);
+                    }
+                });
+            }
+            wrapper.into_any_element()
+        }
+
+        Kind::StyledText { content, highlights } => {
+            let ranges: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = highlights
+                .iter()
+                .filter_map(|spec| parse_highlight(spec))
+                .collect();
+            let text = gpui::StyledText::new(content.clone()).with_highlights(ranges);
+            style::apply(div(), &el.style).child(text).into_any_element()
+        }
+
         Kind::Canvas { painter, phase } => {
             let painter = painter.clone();
             let phase = *phase;
@@ -710,6 +995,21 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             style::apply(element, &el.style).into_any_element()
         }
     }
+}
+
+/// Applies the focus-order tokens to an already identified element.
+fn apply_focus_order<T: StatefulInteractiveElement + 'static>(el: T, spec: &str) -> T {
+    let mut el = el;
+    for (key, value) in style::tokens(spec) {
+        let v = value.as_deref().unwrap_or("");
+        el = match key.as_str() {
+            "focusable" => el.focusable(),
+            "tabstop" => el.tab_stop(v != "0"),
+            "tabindex" => el.tab_index(v.parse::<isize>().unwrap_or(0)),
+            _ => el,
+        };
+    }
+    el
 }
 
 /// Applies `hover=`/`active=` refinements to an already identified element.

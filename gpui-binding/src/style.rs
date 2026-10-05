@@ -89,6 +89,9 @@ fn is_known(key: &str) -> bool {
         | "wavy" | "deco" | "decocolor" | "rotate"
         | "bordert" | "borderb" | "borderl" | "borderr" | "overflowx"
         | "ellipsis" | "clamp" | "ws" | "textoverflow"
+        | "roundedtl" | "roundedtr" | "roundedbl" | "roundedbr"
+        | "focusable" | "tabstop" | "tabindex"
+        | "w_full" | "wfull" | "h_full" | "hfull" | "size_full" | "sizefull"
         // interaction refinements (handled by `view`, listed here so they are
         // not reported as unknown)
         | "hover" | "active"
@@ -234,6 +237,12 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         "mr" => el.mr(px(num(v))),
         "auto" => el.mx_auto(),
 
+        // Bare full-size spellings, so `w_full` reads the way GPUI's own
+        // helper is named.
+        "w_full" | "wfull" => el.w_full(),
+        "h_full" | "hfull" => el.h_full(),
+        "size_full" | "sizefull" => el.size_full(),
+
         // ---- sizing ------------------------------------------------------
         "w" => apply_length(el, v, Axis::Width),
         "h" => apply_length(el, v, Axis::Height),
@@ -314,6 +323,10 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         "borderr" => el.border_r(px(num(v))),
         "bordercolor" => el.border_color(colour(v)),
         "dashed" => el.border_dashed(),
+        "roundedtl" => el.rounded_tl(px(num(v))),
+        "roundedtr" => el.rounded_tr(px(num(v))),
+        "roundedbl" => el.rounded_bl(px(num(v))),
+        "roundedbr" => el.rounded_br(px(num(v))),
         "rounded" => match v {
             "full" => el.rounded_full(),
             "xs" => el.rounded_xs(),
@@ -386,7 +399,17 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
             "text" => el.cursor_text(),
             "move" => el.cursor_move(),
             "grab" => el.cursor_grab(),
-            "cross" => el.cursor_crosshair(),
+            "grabbing" => el.cursor_grabbing(),
+            "cross" | "crosshair" => el.cursor_crosshair(),
+            "col-resize" => el.cursor_col_resize(),
+            "row-resize" => el.cursor_row_resize(),
+            "ew-resize" => el.cursor_ew_resize(),
+            "ns-resize" => el.cursor_ns_resize(),
+            "not-allowed" => el.cursor_not_allowed(),
+            // `cursor_none` takes the style it suppresses; the cursor is
+            // simply left unset instead.
+            "none" => el,
+            "open-hand" => el.cursor_grab(),
             _ => el.cursor_default(),
         },
         "overflowx" => match v {
@@ -468,6 +491,16 @@ pub fn colour(v: &str) -> Hsla {
         "purple" => hsla(270.0 / 360.0, 0.7, 0.7, 1.0),
         "transparent" => rgba(0x00000000).into(),
         _ => rgb(0x000000).into(),
+    }
+}
+
+/// A background from either a bare colour (`#rrggbbaa`, a name) or a full
+/// `grad=…` token. Used where a path is painted with a colour the element's
+/// own style did not carry.
+pub fn background(spec: &str) -> gpui::Background {
+    match spec.strip_prefix("grad=") {
+        Some(gradient_spec) => gradient(gradient_spec),
+        None => colour(spec).into(),
     }
 }
 

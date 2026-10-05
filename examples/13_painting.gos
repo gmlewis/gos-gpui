@@ -1,32 +1,300 @@
 // 13 - painting        upstream: tools/upstream/examples/painting.rs (463 lines)
 //
-// NOT PORTED YET. Direct painting: quads, paths, gradients, shadows and text drawn by hand.
+// Faithful port of the painting half of upstream. Four 50%-opaque squares over
+// black quads, two overlapping 50%-opaque red circles, a filled lightning
+// bolt, a star under an Oklab gradient, a gradient-filled arch of two quadratic
+// curves, a five-segment pie chart built from arcs, and a 1px sine wave stroked
+// across the window — with the interactive part on top: drag to draw freehand
+// strokes, a Dashed/Solid toggle, and Clear.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// Upstream paints the five black quads with `window.paint_quad` and everything
+// else with `window.paint_path`. `paint_quad` is deliberately not exposed (an
+// absolute `rect` reproduces it — see PORTING.md), so the quads are rects here
+// and the paths go through `gpui::paint_paths`. Both are in window
+// coordinates: the root carries no padding, so an absolute `rect` lands where
+// upstream's `Bounds` put the quad.
 //
-//   ./tools/upstream-examples.sh run painting
+// Deviations:
 //
-// and compare the two windows side by side.
+//   * The Rust logo is absent. Upstream draws it with
+//     `lyon::extra::rust_logo::build_logo_path`, and the binding exposes
+//     neither that path nor lyon's path data; its cubic outlines are not
+//     something a port should re-type by hand. Every other path in the
+//     example is present, at upstream's coordinates.
+//   * Shift-constrained straight lines are absent. Upstream reads
+//     `ev.modifiers.shift` on each mouse-move and snaps the point to the
+//     horizontal or vertical axis through the stroke's start. The binding's
+//     pointer events carry no modifier state, so the header's instruction is
+//     inert — its text is upstream's, kept verbatim. (Latching shift through
+//     `gpui::on_keys` cannot work either: it raises key-down only, so the
+//     latch could never be released.)
+//   * The wave's `StrokeOptions::with_line_join(Bevel)` is not settable; the
+//     binding has no line-join option. At 1px the two are indistinguishable.
+//   * Paths are rebuilt each frame after `gpui::path_reset()` rather than once
+//     in `new()`, because the drawn strokes are program state and their paths
+//     have to follow it. The pool outlives frames, so it is reset before each
+//     rebuild — nothing accumulates. The painted result is upstream's.
+//   * Pointer points come from the binding's `canvas.x` / `canvas.y`, written
+//     per event but read once per frame, so several move events coalescing into
+//     one frame all read the latest position. A fast drag therefore carries
+//     fewer vertices than upstream's; the rendered line is the same.
+//   * Upstream leaves `window_bounds` unset, so GPUI hands it
+//     `DEFAULT_WINDOW_SIZE` — 1536x864, clipped to the display and centred.
+//     This port passes 900x520, which is large enough for every path (the pie
+//     chart's arc reaches x=871, the wave y=460) and no larger.
+//   * The drawing surface spans the whole window instead of the area under the
+//     header. The header is painted over it, so its buttons still take clicks,
+//     and the paths it serves are in window coordinates anyway.
+//   * As in every port here, a Gossamer frame rebuilds the tree rather than
+//     re-rendering a retained `Entity<PaintingViewer>`.
+//
+// Reported to the parent as missing from the binding: a `rust_logo` path,
+// modifier state on pointer events, stroke options (line join / cap), and
+// `paint_quad`.
 
 use gpui
+use std::math
 use std::process
-use status
 use ui
 
+// ---- the black quads --------------------------------------------------
+//
+// Upstream's `background_quads`, in order: four 40x40 squares and one 80x80.
+
+fn quad(x: f64, y: f64, w: f64, h: f64) -> ui::El {
+    ui::rect(f"absolute left={x} top={y} w={w} h={h} bg=black")
+}
+
+// ---- path builders ----------------------------------------------------
+
+/// Finish a builder. An unbuildable path draws nothing rather than taking the
+/// frame down.
+fn finish(handle: i64) -> i64 {
+    gpui::path_build(handle).unwrap_or(-1)
+}
+
+fn fill_rect(x0: f64, y0: f64, x1: f64, y1: f64) -> i64 {
+    let handle = gpui::path_fill()
+    gpui::path_move_to(handle, x0, y0)
+    gpui::path_line_to(handle, x1, y0)
+    gpui::path_line_to(handle, x1, y1)
+    gpui::path_line_to(handle, x0, y1)
+    gpui::path_close(handle)
+    finish(handle)
+}
+
+/// Upstream's circle: move to the right-hand point, two half-circle arcs
+/// through `arc_to`, close.
+fn circle(cx: f64, cy: f64, radius: f64) -> i64 {
+    let handle = gpui::path_fill()
+    gpui::path_move_to(handle, cx + radius, cy)
+    gpui::path_arc_to(handle, radius, radius, 0.0, false, false, cx - radius, cy)
+    gpui::path_arc_to(handle, radius, radius, 0.0, false, false, cx + radius, cy)
+    gpui::path_close(handle)
+    finish(handle)
+}
+
+/// One pie segment: an arc of the 96px-radius circle centred at (96, 96),
+/// closed through the pie's own centre at (775, 255).
+fn wedge(start_x: f64, start_y: f64, end_x: f64, end_y: f64) -> i64 {
+    let handle = gpui::path_fill()
+    gpui::path_move_to(handle, start_x, start_y)
+    gpui::path_arc_to(handle, 96.0, 96.0, 0.0, false, false, end_x, end_y)
+    gpui::path_line_to(handle, 775.0, 255.0)
+    gpui::path_close(handle)
+    finish(handle)
+}
+
+/// The lightning bolt: one open polygon, which a fill closes implicitly.
+fn bolt() -> i64 {
+    let handle = gpui::path_fill()
+    gpui::path_polygon(handle, #[150.0, 300.0, 200.0, 225.0, 200.0, 275.0, 250.0, 200.0], false)
+    finish(handle)
+}
+
+/// Upstream's star, which returns to its first vertex rather than calling
+/// `close()`.
+fn star() -> i64 {
+    let handle = gpui::path_fill()
+    gpui::path_move_to(handle, 350.0, 200.0)
+    gpui::path_line_to(handle, 370.0, 260.0)
+    gpui::path_line_to(handle, 430.0, 260.0)
+    gpui::path_line_to(handle, 380.0, 300.0)
+    gpui::path_line_to(handle, 400.0, 360.0)
+    gpui::path_line_to(handle, 350.0, 320.0)
+    gpui::path_line_to(handle, 300.0, 360.0)
+    gpui::path_line_to(handle, 320.0, 300.0)
+    gpui::path_line_to(handle, 270.0, 260.0)
+    gpui::path_line_to(handle, 330.0, 260.0)
+    gpui::path_line_to(handle, 350.0, 200.0)
+    finish(handle)
+}
+
+/// The gradient band: a 200x80 box at (450, 200) whose top edge is scalloped
+/// by two quadratic curves, 30px down and one height in from each side.
+fn arch() -> i64 {
+    let handle = gpui::path_fill()
+    gpui::path_move_to(handle, 450.0, 280.0)
+    gpui::path_curve_to(handle, 530.0, 230.0, 450.0, 230.0)
+    gpui::path_line_to(handle, 570.0, 230.0)
+    gpui::path_curve_to(handle, 650.0, 280.0, 650.0, 230.0)
+    gpui::path_line_to(handle, 450.0, 280.0)
+    finish(handle)
+}
+
+/// The wave: 1px stroke, from (40, 420), then 49 points every 10px across and
+/// `sin(i * 10)` — radians, as upstream's `f32::sin` reads them — 40px about
+/// the baseline. The points are collected first so the pool handle is touched
+/// only by the one `path_polygon` call.
+fn wave() -> i64 {
+    let mut points: Vec<f64> = #[40.0, 420.0]
+    for i in 1..50 {
+        let step = i as f64 * 10.0
+        points.push(40.0 + step)
+        points.push(420.0 + math::sin(step) * 40.0)
+    }
+    let handle = gpui::path_stroke(1.0)
+    gpui::path_polygon(handle, points, false)
+    finish(handle)
+}
+
+// ---- the default painting ---------------------------------------------
+
+/// Upstream's `default_lines`, in paint order. The Rust logo would sit between
+/// the second circle and the bolt; see the first deviation.
+fn default_paths() -> Vec<i64> {
+    #[
+        fill_rect(50.0, 50.0, 130.0, 130.0),
+        fill_rect(150.0, 50.0, 230.0, 130.0),
+        fill_rect(250.0, 50.0, 330.0, 130.0),
+        fill_rect(350.0, 50.0, 430.0, 130.0),
+        circle(530.0, 85.0, 30.0),
+        circle(570.0, 85.0, 30.0),
+        bolt(),
+        star(),
+        arch(),
+        wedge(871.0, 255.0, 747.0, 163.0),
+        wedge(747.0, 163.0, 679.0, 263.0),
+        wedge(679.0, 263.0, 754.0, 349.0),
+        wedge(754.0, 349.0, 854.0, 310.0),
+        wedge(854.0, 310.0, 871.0, 255.0),
+        wave(),
+    ]
+}
+
+/// One background per path above, in the same order. `#ff000080` is upstream's
+/// `rgb(0xFF0000)` with `a = 0.5`, and so on; the star's is upstream's
+/// `linear_gradient(180., #FACC15 @ 0.7, #D56D0C @ 1.).color_space(Oklab)`;
+/// the arch's is `linear_gradient(180., blue @ 0.4, red @ 1.)` in sRGB.
+fn default_backgrounds() -> Vec<String> {
+    #[
+        "#ff000080",
+        "#0000ff80",
+        "#00ff0080",
+        "#00000080",
+        "#ff000080",
+        "#ff000080",
+        "#1d4ed8",
+        "grad=180,#facc15,0.7,#d56d0c,1,oklab",
+        "grad=180,blue,0.4,red,1",
+        "#1374e9",
+        "#e13527",
+        "#0751ce",
+        "#209742",
+        "#fbc10a",
+        "green",
+    ]
+}
+
+/// A drawn stroke, as a 1px path through every point recorded under `key`, or
+/// `-1` for the single-point strokes upstream skips. `points` is a flat
+/// x, y, x, y run — two floats per point, four for the smallest drawable
+/// stroke — which is what an open polygon wants.
+fn stroke_path(key: String, dashed: bool) -> i64 {
+    let points = gpui::list_all_float(key)
+    if points.len() < 4 {
+        return -1
+    }
+    let handle = gpui::path_stroke(1.0)
+    if dashed {
+        gpui::path_dash(handle, #[4.0, 2.0])
+    }
+    gpui::path_polygon(handle, points, false)
+    finish(handle)
+}
+
+// ---- the frame --------------------------------------------------------
+
 fn main() {
-    let outcome = gpui::run("13 - painting", 760.0, 620.0, || {
-        status::missing(
-            "13 - painting",
-            "upstream: examples/painting.rs (463 lines)",
-            #[
-            "constructing arbitrary PathBuilder paths from Gossamer",
-            "paint_quad with per-corner radii and borders from a script",
-            "gradients painted through a path",
-            "(the binding exposes three fixed painters: bars, wave, stripes, prism)",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("13 - painting", 900.0, 520.0, || {
+        // Upstream's listeners, through `on_mouse`: a down starts a stroke, a
+        // move extends it, an up ends it. The binding reports a move only
+        // while the button is down, and writes the point it reports into
+        // `canvas.x` / `canvas.y` relative to the surface's corner — which,
+        // for a surface at the window origin, is window coordinates.
+        for event in gpui::take_events() {
+            let id, kind = gpui::event_parts(event)
+            if id == "dashed" {
+                gpui::set_bool("dashed", !gpui::state_bool("dashed", false))
+            } else if id == "clear" {
+                gpui::set_int("strokes", 0)
+                gpui::set_int("current", -1)
+                gpui::set_bool("painting", false)
+            } else if id == "canvas" {
+                let x = gpui::state_float("canvas.x", 0.0)
+                let y = gpui::state_float("canvas.y", 0.0)
+                if kind == "down" {
+                    let index = gpui::state_int("strokes", 0)
+                    gpui::forget(f"stroke{index}")
+                    gpui::list_push_float(f"stroke{index}", x)
+                    gpui::list_push_float(f"stroke{index}", y)
+                    gpui::set_int("strokes", index + 1)
+                    gpui::set_int("current", index)
+                    gpui::set_bool("painting", true)
+                } else if kind == "move" {
+                    let index = gpui::state_int("current", -1)
+                    if gpui::state_bool("painting", false) && index >= 0 {
+                        gpui::list_push_float(f"stroke{index}", x)
+                        gpui::list_push_float(f"stroke{index}", y)
+                    }
+                } else if kind == "up" {
+                    gpui::set_bool("painting", false)
+                }
+            }
+        }
+
+        let dashed = gpui::state_bool("dashed", false)
+        let strokes = gpui::state_int("strokes", 0)
+
+        // Upstream keeps its paths for the life of the entity. Here the drawn
+        // strokes are state, so the whole pool is rebuilt every frame; reset
+        // first, and nothing accumulates across frames.
+        gpui::path_reset()
+
+        let stroke_handles: Vec<i64> = (0..strokes).map(|i| stroke_path(f"stroke{i}", dashed)).collect()
+        let stroke_backgrounds: Vec<String> = (0..strokes).map(|_| "black").collect()
+
+        let label = if dashed { "Solid" } else { "Dashed" }
+
+        ui::stack("size=full bg=white")
+            .child(quad(70.0, 70.0, 40.0, 40.0))
+            .child(quad(170.0, 70.0, 40.0, 40.0))
+            .child(quad(270.0, 70.0, 40.0, 40.0))
+            .child(quad(370.0, 70.0, 40.0, 40.0))
+            .child(quad(450.0, 50.0, 80.0, 80.0))
+            .child(ui::paths(default_paths(), default_backgrounds(), "absolute left=0 top=0 size=full"))
+            .child(ui::paths(stroke_handles, stroke_backgrounds, "absolute left=0 top=0 size=full"))
+            // Pixel-sized rather than `size=full`: `on_mouse` wraps this in a
+            // bare div, and a percentage against that wrapper's auto height has
+            // nothing definite to resolve against. At the window origin, the
+            // coordinates it reports are window coordinates either way.
+            .child(ui::on_mouse(ui::rect("w=900 h=520"), "down up move", "canvas"))
+            .child(ui::row("absolute left=16 top=16 right=16 gap=8 justify=between items=center")
+                .text("Mouse down any point and drag to draw lines (Hold on shift key to draw straight lines)", "")
+                .child(ui::row("gapx=8")
+                    .button("dashed", label, "flex px=12 py=4 bg=black color=white active=opacity:0.8")
+                    .button("clear", "Clear", "flex px=12 py=4 bg=black color=white active=opacity:0.8")))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

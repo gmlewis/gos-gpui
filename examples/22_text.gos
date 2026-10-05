@@ -1,31 +1,199 @@
 // 22 - text        upstream: tools/upstream/examples/text.rs (333 lines)
 //
-// NOT PORTED YET. The text primitives: runs, highlights, decorations, underlines and colours.
+// Faithful port of the specimen sheet: a 149-glyph character grid over eighteen
+// runs of the same sentence — one at every step of a 1.33 type scale, each step
+// twice, the second white-on-black inverted — with a 240px `container`-coloured
+// panel as the outer box's second child, the sheet scrolling vertically. The
+// point of the example is the glyphs and the size ramp, so what to compare is
+// the grid's 11 columns lining up, the two colours of each specimen pair, and
+// where each specimen's line breaks.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// Verdict on the dead-code claim the placeholder rested on — it holds. The
+// `TextStyle` / `rem_size` apparatus really is unreachable:
 //
-//   ./tools/upstream-examples.sh run text
+//   * `Specimen::new` sets `text_style: None` and there is no setter for it,
+//     so `if let Some(style_override)` in `RenderOnce for Specimen` never runs.
+//     Everything inside it is therefore dead: `TextStyle` itself,
+//     `AbsoluteLength`, `DefiniteLength`, and `window.rem_size()`, which
+//     `render` reads at the top and uses nowhere else.
+//   * `CharacterGrid.text_style` is never even read, and its `invert` field is
+//     never set true — there is no `CharacterGrid::invert` — so its cells only
+//     ever see `SpecimenTheme::default()`.
+//   * `CharacterGrid::scale` is stored and never read, so upstream's
+//     `CharacterGrid::new().scale(base)` with `base == 1.0` is a no-op.
+//   * `TextContext::get_global`, `GlobalTextContext` and the
+//     `ActiveTextContext` trait only carry the same three numbers
+//     `TextContext::default()` already fixes, so they are constants here.
 //
-// and compare the two windows side by side.
+// What is left and lives: the type scale, the white/black theme with its
+// inverted twin, the grid, and `colors.container` on the 240px panel. That
+// last one is the only default colour the example reads anywhere, and it is
+// `gpui::default_color("container")` here — so the port needs neither
+// `cx.text_context` nor `rem_size`, which is what the placeholder asked for.
+//
+// Deviations:
+//   * `cx.set_menus` is not called; the binding owns the macOS menu bar and
+//     exposes no API for it. Upstream installs one empty menu named "GPUI
+//     Typography", so that name is missing from the menu bar and nothing else
+//     is. This is the only API the example reaches for that the binding does
+//     not publish, and no element in the window depends on it.
+//   * `cx.init_colors()` is not called: the binding runs it once at startup
+//     (gpui-binding/src/app.rs), which is what makes `default_color` work.
+//   * The window title is the numbered one this repo runs examples under
+//     (`22 - text`); upstream titles the window "GPUI Typography".
+//   * Upstream opens the window at (0, 0); `gpui::run` centres it. Size is
+//     upstream's 920x720.
+//   * The type scale is derived in f64 here against f32 upstream, so a
+//     specimen's font size can land a few f32 ulps from upstream's — well
+//     under a thousandth of a pixel at the largest specimen, and nothing
+//     visible turns on it.
+//   * Upstream's outer box, and the two boxes wrapping the grid and the
+//     specimens, are bare `div()`s with no direction of their own. `ui::panel`
+//     is that same bare `div()` (unlike `ui::row` / `ui::column`, which add
+//     `flex row` / `flex col`), so the port keeps upstream's own direction
+//     rather than imposing one.
+//   * Upstream cuts the character list into rows with `div` builders and fills
+//     a short row with `iter::repeat_with(|| div().flex_1())`. Here the list is
+//     written already cut, one `#[..]` per row, and the last row's five blanks
+//     are appended to that one row as `#[0, 0, 0, 0, 0].map(pad)`. Same cells,
+//     same order, same fillers.
+//   * Upstream gives the scroll box the id `"text-example"`; element ids belong
+//     to the binding, which allocates one per element, so none is passed. The
+//     scroll container still needs (and gets) an id for `overflow=y` to work.
+//   * As in every port here, a Gossamer frame rebuilds the tree rather than
+//     re-rendering a retained `Entity<TextExample>`; `next_id` therefore has no
+//     counterpart — the binding numbers the elements itself.
 
 use gpui
 use std::process
-use status
 use ui
 
+// ---- TextContext::default() -------------------------------------------
+
+/// The sentence every specimen repeats.
+const SENTENCE: &str = "The quick brown fox jumps over the lazy dog"
+
+/// `TextContext::default()`: `font_size`, `line_height`, `type_scale`.
+const FONT_SIZE: f64 = 16.0
+const LINE_HEIGHT: f64 = 1.3
+const TYPE_SCALE: f64 = 1.33
+
+// Upstream computes nine scales from the ratio; each is one specimen, shown
+// upright and inverted. Keeping the derivation keeps the ramp obviously the
+// same one.
+fn step_down_2() -> f64 { 1.0 / (TYPE_SCALE * TYPE_SCALE) }
+fn step_down_1() -> f64 { 1.0 / TYPE_SCALE }
+fn step_up_1() -> f64 { TYPE_SCALE }
+fn step_up_2() -> f64 { step_up_1() * TYPE_SCALE }
+fn step_up_3() -> f64 { step_up_2() * TYPE_SCALE }
+fn step_up_4() -> f64 { step_up_3() * TYPE_SCALE }
+fn step_up_5() -> f64 { step_up_4() * TYPE_SCALE }
+fn step_up_6() -> f64 { step_up_5() * TYPE_SCALE }
+
+// ---- Specimen ---------------------------------------------------------
+
+/// `Specimen::render`: the sentence at `scale` steps of the type scale, on the
+/// white-on-black theme when `invert`, otherwise black-on-white.
+fn specimen(scale: f64, invert: bool) -> ui::El {
+    let size = FONT_SIZE * scale
+    if invert {
+        ui::text(*SENTENCE, f"p=10 bg=black color=white fs={size} lh={LINE_HEIGHT}")
+    } else {
+        ui::text(*SENTENCE, f"p=10 bg=white color=black fs={size} lh={LINE_HEIGHT}")
+    }
+}
+
+/// Upstream's eighteen `Specimen::new(id).scale(step)` calls, in order.
+fn specimens() -> Vec<ui::El> {
+    #[
+        specimen(step_down_2(), false),
+        specimen(step_down_2(), true),
+        specimen(step_down_1(), false),
+        specimen(step_down_1(), true),
+        specimen(1.0, false),
+        specimen(1.0, true),
+        specimen(step_up_1(), false),
+        specimen(step_up_1(), true),
+        specimen(step_up_2(), false),
+        specimen(step_up_2(), true),
+        specimen(step_up_3(), false),
+        specimen(step_up_3(), true),
+        specimen(step_up_4(), false),
+        specimen(step_up_4(), true),
+        specimen(step_up_5(), false),
+        specimen(step_up_5(), true),
+        specimen(step_up_6(), false),
+        specimen(step_up_6(), true),
+    ]
+}
+
+// ---- CharacterGrid ----------------------------------------------------
+
+/// `div().text_center().size(px(62.))…` — one 62px cell, 24px type, no leading.
+fn cell(character: String) -> ui::El {
+    ui::text(character, "align=center size=62 bg=white color=black fs=24 lh=1")
+}
+
+/// `div().flex_1()` — a blank that takes up the rest of a short row so the
+/// cells above it keep their columns. It is mapped over a run, so it takes the
+/// column index and ignores it.
+fn pad(column: i64) -> ui::El {
+    ui::rect("flex=1")
+}
+
+/// `div().w_full().flex().flex_row()` — one row, its cells left to right.
+fn grid_row(characters: Vec<String>) -> ui::El {
+    ui::row("w=full").children(characters.map(cell))
+}
+
+/// The 149 characters of upstream's `characters` vector, already cut at the
+/// eleven-column wrap (`columns = 11`); the last row is six glyphs.
+fn grid() -> ui::El {
+    ui::column("p=16 gap=8")
+        .child(grid_row(#["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "A"]))
+        .child(grid_row(#["B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]))
+        .child(grid_row(#["M", "N", "P", "Q", "R", "S", "T", "U", "V", "W", "X"]))
+        .child(grid_row(#["Y", "Z", "a", "b", "c", "d", "e", "f", "g", "h", "i"]))
+        .child(grid_row(#["j", "k", "l", "m", "n", "p", "q", "r", "s", "t", "u"]))
+        .child(grid_row(#["v", "w", "x", "y", "z", "ẞ", "ſ", "ß", "ð", "Þ", "þ"]))
+        .child(grid_row(#["α", "β", "Γ", "γ", "Δ", "δ", "η", "θ", "ι", "κ", "Λ"]))
+        .child(grid_row(#["λ", "μ", "ν", "ξ", "π", "τ", "υ", "φ", "χ", "ψ", "∂"]))
+        .child(grid_row(#["а", "в", "Ж", "ж", "З", "з", "К", "к", "л", "м", "Н"]))
+        .child(grid_row(#["н", "Р", "р", "У", "у", "ф", "ч", "ь", "ы", "Э", "э"]))
+        .child(grid_row(#["Я", "я", "ij", "öẋ", ".,", "⣝⣑", "~", "*", "_", "^", "`"]))
+        .child(grid_row(#["'", "(", "{", "«", "#", "&", "@", "$", "¢", "%", "|"]))
+        .child(grid_row(#["?", "¶", "µ", "❮", "<=", "!=", "==", "--", "++", "=>", "->"]))
+        // Six glyphs, so five blanks: upstream's `iter::repeat_with(||
+        // div().flex_1())` for the columns this row has no character for.
+        .child(grid_row(#["🏀", "🎊", "😍", "❤️", "👍", "👎"])
+            .children(#[0, 0, 0, 0, 0].map(pad)))
+}
+
+// ---- TextExample ------------------------------------------------------
+
+/// `cx.default_colors().container`, as `#rrggbbaa`.
+fn container_color() -> String {
+    gpui::default_color("container")
+}
+
+/// `div().w(px(240.)).h_full().bg(colors.container)` — the only default colour
+/// the example reads.
+fn sidebar() -> ui::El {
+    ui::panel(f"w=240 h=full bg={container_color()}")
+}
+
 fn main() {
-    let outcome = gpui::run("22 - text", 780.0, 620.0, || {
-        status::missing(
-            "22 - text",
-            "upstream: examples/text.rs (333 lines)",
-            #[
-            "cx.text_context + cx.init_colors() / cx.default_colors()",
-            "window.rem_size()",
-            "text runs, highlight styles and decorations as values",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("22 - text", 920.0, 720.0, || {
+        // `div().size_full()` with no direction of its own; `ui::panel` is the
+        // same bare `div()`.
+        ui::panel("size=full")
+            // .id("text-example").overflow_y_scroll().overflow_x_hidden()
+            // .bg(rgb(0xffffff)).size_full()
+            .child(ui::panel("overflow=y overflowx=hidden bg=#ffffff size=full")
+                .child(ui::panel("").child(grid()))
+                .child(ui::panel("").children(specimens())))
+            .child(sidebar())
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

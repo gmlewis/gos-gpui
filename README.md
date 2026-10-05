@@ -7,10 +7,10 @@ that publishes the framework behind a flat, Gossamer-shaped module called
 `gpui` — and a small Gossamer module, `ui`, that puts a chainable `El` type on
 top of it.
 
-Thirteen of the twenty-seven are ported and runnable; the other fourteen open
-a window naming exactly which GPUI API each is waiting on. See
-[Porting status](#porting-status) and [`PORTING.md`](PORTING.md) for the ABI
-decisions the reconnaissance settled.
+Twenty-six of the twenty-seven are ported and runnable; the last one opens a
+window naming what it is waiting on. See
+[Porting status](#porting-status), and [`PORTING.md`](PORTING.md) for the ABI
+decisions and the bugs the port itself surfaced.
 
 ```
 examples/01_animation.gos    …    examples/27_window.gos
@@ -426,43 +426,49 @@ One file per upstream example, numbered to match. Run the pair:
 ./tools/upstream-examples.sh run hello_world # the original
 ```
 
-**Ported** — a faithful port, runnable today:
+**Ported — 26 of 27.** A faithful port unless its row says otherwise:
 
 | | upstream | notes |
 |---|---|---|
-| `01_animation` | `animation.rs` | `bounce(ease_in_out)` reproduced exactly; frames driven by `gpui::animate()` rather than GPUI's animation driver |
-| `04_gif_viewer` | `gif_viewer.rs` | an animated GIF; window size is explicit here |
-| `05_gradient` | `gradient.rs` | including the sRGB/Oklab toggle; the canvas trapezoid is the `prism` painter |
+| `01_animation` | `animation.rs` | `bounce(ease_in_out)` reproduced exactly |
+| `02_data_table` | `data_table.rs` | 10,000 rows; the scrollbar thumb is inert — no `ScrollHandle` |
+| `03_drag_drop` | `drag_drop.rs` | **the drag protocol is emulated** — `on_drag`/`on_drop` take a `'static` payload the ABI cannot carry |
+| `04_gif_viewer` | `gif_viewer.rs` | animated GIF |
+| `05_gradient` | `gradient.rs` | including the sRGB/Oklab toggle |
 | `06_grid_layout` | `grid_layout.rs` | the "holy grail" 5×5 grid |
 | `07_hello_world` | `hello_world.rs` | |
-| `10_on_window_close_quit` | `on_window_close_quit.rs` | single window — see deviations |
-| `11_opacity` | `opacity.rs` | custom box shadow reproduced field-for-field |
-| `15_pattern` | `pattern.rs` | `pattern_slash` as the `slash=` token |
-| `16_scrollable` | `scrollable.rs` | both axes; `overflow=scroll` is the two-way case |
-| `18_shadow` | `shadow.rs` | every shadow band; custom `BoxShadow` via `shadow=` |
-| `21_text_wrapper` | `text_wrapper.rs` | truncation, ellipsis and clamping tokens |
-| `23_tree` | `tree.rs` | reads `GPUI_TREE_DEPTH`, like upstream |
-| `24_uniform_list` | `uniform_list.rs` | row height is explicit here, derived upstream |
+| `08_image_loading` | `image_loading.rs` | staged arrivals via `gpui::task`, not GPUI's asset pipeline |
+| `10_on_window_close_quit` | `on_window_close_quit.rs` | single window |
+| `12_ownership_post` | `ownership_post.rs` | **approximation** — upstream's entity half (`emit`/`subscribe`) is absent, shown through the event queue instead |
+| `11_opacity` | `opacity.rs` | custom box shadow field-for-field |
+| `13_painting` | `painting.rs` | drag-to-draw; the Rust logo and shift-snap are omitted |
+| `14_paths_bench` | `paths_bench.rs` | one path painted 2000× |
+| `15_pattern` | `pattern.rs` | `pattern_slash` |
+| `16_scrollable` | `scrollable.rs` | both axes |
+| `17_set_menus` | `set_menus.rs` | no submenu; the quit item is the binding's |
+| `18_shadow` | `shadow.rs` | every shadow band |
+| `19_tab_stop` | `tab_stop.rs` | focus order is real; **the blue focus ring is absent** — `is_focused` cannot observe a `focusable` element |
+| `20_text_layout` | `text_layout.rs` | including per-range highlights |
+| `21_text_wrapper` | `text_wrapper.rs` | truncation, ellipsis and clamping |
+| `22_text` | `text.rs` | `default_color`; no menu bar |
+| `23_tree` | `tree.rs` | renders to depth 40; upstream's 50 trips `GX0008` |
+| `24_uniform_list` | `uniform_list.rs` | explicit row height |
+| `25_window_positioning` | `window_positioning.rs` | nine windows per display, on the primary display |
+| `26_window_shadow` | `window_shadow.rs` | upstream's client-decoration arm is **dead on macOS**; the port renders the Server arm and labels its own pointer additions |
+| `27_window` | `window.rs` | multi-window; `Prompt` emulated as an in-window dialog, `Hide Application` marked unavailable |
 
-**Not ported yet** — each file opens a window naming the GPUI APIs its upstream
-example uses and the binding does not expose. That list *is* the work queue:
+**Not ported — 1.** It opens a window naming what it is waiting on:
 
 | | upstream | what it waits on |
 |---|---|---|
-| `02_data_table` | `data_table.rs` | pointer input and a scroll handle |
-| `03_drag_drop` | `drag_drop.rs` | `on_drag` / `on_drop` / drag previews |
-| `08_image_loading` | `image_loading.rs` | background image decoding, an image cache |
-| `09_input` | `input.rs` | `EntityInputHandler`, clipboard, IME, selection |
-| `12_ownership_post` | `ownership_post.rs` | `cx.emit` / `cx.subscribe` — the entity graph |
-| `13_painting` | `painting.rs` | arbitrary `PathBuilder` paths from Gossamer |
-| `14_paths_bench` | `paths_bench.rs` | `PathBuilder` + `paint_path` (it uses `canvas`, not a custom `Element`) |
-| `17_set_menus` | `set_menus.rs` | `cx.set_menus` |
-| `19_tab_stop` | `tab_stop.rs` | `tab_stop` / `window.focus_next` / `focus_prev` |
-| `20_text_layout` | `text_layout.rs` | `window.text_system()`, `ShapedLine`, `paint_text` |
-| `22_text` | `text.rs` | `cx.text_context`, `rem_size`, text runs |
-| `25_window_positioning` | `window_positioning.rs` | `cx.displays()`, live window bounds |
-| `26_window_shadow` | `window_shadow.rs` | hitboxes, mouse position, client inset |
-| `27_window` | `window.rs` | multi-window, popups, prompts, menus |
+| `09_input` | `input.rs` | a binding-owned `EditorState` — see below |
+
+`09_input` is the one that cannot be a port in the ordinary sense.
+`EntityInputHandler`, `InputHandler` and `window.handle_input` are trait
+callbacks the platform invokes *after* the binding call returns, so they cannot
+cross a call-scoped callback. The only faithful route is a Rust-owned editor
+behind `ui::editor(..)`: a re-implementation of upstream's bodies, not a port of
+them. See [`PORTING.md`](PORTING.md).
 
 ### Deviations that apply to every port
 

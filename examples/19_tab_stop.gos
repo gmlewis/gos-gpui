@@ -1,32 +1,121 @@
 // 19 - tab_stop        upstream: tools/upstream/examples/tab_stop.rs (155 lines)
 //
-// NOT PORTED YET. Tab and shift-tab moving focus between focusable boxes, with focus rings.
+// Focus order. Five 40px boxes — three with an explicit `tab_index` 1..3, one
+// that is focusable but not a tab stop, and one that repeats index 2 — plus
+// two buttons at indices 4 and 5. Tab and Shift-Tab move focus between the
+// stops, and the focused box draws upstream's 3px blue ring.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// The focus *order* is real: the boxes carry `focusable tabstop=1 tabindex=N`
+// and Tab calls `gpui::focus_next()`, so GPUI's own tab machinery is what
+// moves. Four deviations, all of them the binding's shape rather than a
+// choice:
 //
-//   ./tools/upstream-examples.sh run tab_stop
+//   * The ring never lights up. Upstream tests `item_handle.is_focused(window)`
+//     on every box; `gpui::is_focused(id)` instead looks the id up in a map of
+//     the focus handles the *binding* created (`focus_for`), which is filled in
+//     only for text fields and for the `~root` key handler behind
+//     `gpui::on_keys`. A `focusable()` div's handle is made inside GPUI and
+//     never reaches that map, and a plain element's id is the binding's own
+//     `gpui-auto-N`, which a program cannot name. Nothing in the frame can
+//     read focus, so the blue border is absent rather than faked.
+//   * Shift-Tab cannot be told from Tab. The binding owns its key bindings, so
+//     upstream's `KeyBinding::new("shift-tab", TabPrev, None)` cannot be
+//     registered; the only route to a keystroke is `gpui::on_keys(true)`, whose
+//     payload is `event.keystroke.key` alone. GPUI's macOS layer maps Shift-Tab
+//     to key "tab" and keeps the shift in `modifiers`, which the binding does
+//     not forward, so both keys arrive as `key|tab`. Tab drives `focus_next`;
+//     a small labelled control below the buttons drives `focus_prev` instead,
+//     so both of the APIs this example is about are reached.
+//   * The two buttons are a focusable box around a `ui::button`, not one
+//     element. Focus tokens are applied to plain elements only, and
+//     `ui::button` is a kind of its own with no focus order; the box carries
+//     `tab_index` and the button inside carries the click, which together are
+//     upstream's `div().id(..).focus(..).tab_index(..).on_click(..)`.
+//   * A plain element only receives focus tokens when its style also has
+//     `hover=` or `active=` — that is what gives it an id in the binding's
+//     renderer. The tab-stop boxes already carry upstream's hover; the button
+//     boxes and the non-stop box carry a `hover=` refinement that changes
+//     nothing, for that reason alone.
 //
-// and compare the two windows side by side.
+// One token-order note: in GPUI `tab_index(..)` also sets `tab_stop` to true,
+// so the box that must *not* be a tab stop emits no `tabindex` at all, which
+// is upstream's state for it as well (the default handle has tab_index 0 and
+// tab_stop false).
 
 use gpui
 use std::process
-use status
 use ui
 
+/// Upstream's opening line, verbatim.
+const MESSAGE: &str = "Press `Tab`, `Shift-Tab` to switch focus."
+
+/// One of the boxes that is a tab stop: `tab_index` 1, 2, 3 and a repeat of 2,
+/// upstream's `hover(bg(black.opacity(0.1)))`, and the 3px blue ring that this
+/// port cannot draw (see the header).
+fn stop_item(tab_index: i64) -> ui::El {
+    ui::panel(f"h=40 w=full flex justify=center items=center border=1 bordercolor=black hover=bg:#0000001a focusable tabindex={tab_index} tabstop=1")
+        .text(f"tab_index: {tab_index}", "")
+}
+
+/// The fourth handle: `cx.focus_handle()` with neither `tab_index` nor
+/// `tab_stop`, drawn at `opacity(0.4)` with the label `tab_stop: false`.
+fn loose_item() -> ui::El {
+    ui::panel("h=40 w=full flex justify=center items=center border=1 bordercolor=black opacity=0.4 hover=opacity:0.4 focusable tabstop=0")
+        .text("tab_stop: false", "")
+}
+
+/// Upstream's `button(id)`: a black `h_10 flex_1` box with `shadow_sm`, a
+/// `tab_index`, and a click. The tab stop is the box; the click is the button
+/// inside it — see the header.
+fn tab_button(id: String, label: String, tab_index: i64) -> ui::El {
+    ui::panel(f"flex col flex=1 h=40 bg=black color=white border=1 bordercolor=black shadow=sm hover=opacity:1 focusable tabindex={tab_index} tabstop=1")
+        .button(id, label, "flex=1 w=full")
+}
+
+/// Upstream's `on_tab` / `on_tab_prev` / the two `on_click`s, over the state
+/// store. The Shift-Tab control is this port's addition; see the header.
+fn handle_events() {
+    for event in gpui::take_events() {
+        let id, kind = gpui::event_parts(event)
+        if id == "key" && kind == "tab" {
+            gpui::focus_next()
+            gpui::set_text("message", "You have pressed `Tab`.")
+        } else if id == "tabprev" {
+            gpui::focus_prev()
+            gpui::set_text("message", "You have pressed `Shift-Tab`.")
+        } else if id == "el1" {
+            gpui::set_text("message", "You have clicked Button 1.")
+        } else if id == "el2" {
+            gpui::set_text("message", "You have clicked Button 2.")
+        }
+    }
+}
+
 fn main() {
-    let outcome = gpui::run("19 - tab_stop", 620.0, 460.0, || {
-        status::missing(
-            "19 - tab_stop",
-            "upstream: examples/tab_stop.rs (155 lines)",
-            #[
-            "tab_stop / tab_index on an element",
-            "window.focus_next(..) / window.focus_prev(..)",
-            "cx.focus_handle() handed to the program",
-            "on_focus / on_blur style refinements",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("19 - tab_stop", 800.0, 600.0, || {
+        // Upstream binds Tab and Shift-Tab to actions; the binding owns its key
+        // bindings, so the keys are read here as `key|<name>` events instead.
+        gpui::on_keys(true)
+
+        handle_events()
+
+        let message = gpui::state_text("message", MESSAGE)
+
+        ui::column("size=full p=16 gap=12 bg=white color=black")
+            .text(message, "")
+            .child(stop_item(1))
+            .child(stop_item(2))
+            .child(stop_item(3))
+            .child(loose_item())
+            .child(stop_item(2))
+            .child(ui::row("gap=12 items=center")
+                .child(tab_button("el1", "Button 1", 4))
+                .child(tab_button("el2", "Button 2", 5)))
+            // This port's addition: `focus_prev` has no keystroke to reach it.
+            .child(ui::row("gap=8 justify=center items=center")
+                .text("shift-tab arrives as plain tab here:", "font=xs color=#888888")
+                .button("tabprev", "⇧ Tab — focus_prev()", "px=8 py=4 rounded=6 bg=#e5e5e5 color=#111111"))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

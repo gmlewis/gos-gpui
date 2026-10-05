@@ -1,31 +1,218 @@
 // 03 - drag_drop        upstream: tools/upstream/examples/drag_drop.rs (137 lines)
 //
-// NOT PORTED YET. Dragging a coloured square onto a named drop target.
+// Three 128x128 squares you can drag onto a 512x128 target: while a square is
+// held, a translucent 120x50 "Item n" ghost rides with the pointer, and
+// releasing over the target paints it in the square's colour.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// THE DRAG PROTOCOL IS EMULATED, NOT GPUI'S OWN. Upstream uses
+// `on_drag(value, ..)` / `on_drop(..)`, which hand GPUI a `'static` payload and
+// an `Entity<W>` drag preview; neither fits the binding's ABI, and neither
+// method is exposed. Everything below is `on_mouse` plus the state store:
 //
-//   ./tools/upstream-examples.sh run drag_drop
+//   * `on_drag(DragInfo::new(ix, colour), ..)`  ->  `down` on a square writes
+//     the same payload (index and colour) into `drag.*`.
+//   * the `Entity<DragInfo>` preview            ->  a plain `ui::panel` placed
+//     `absolute` from `gpui::mouse_position()`, centred on the pointer at
+//     -60/-25. Upstream's preview lands in exactly that place: GPUI lays the
+//     preview root out at `mouse - cursor_offset` and the view then adds
+//     `position.x - size.width.half()`, where the two `cursor_offset`s cancel.
+//   * `on_drop(..)`                             ->  `up` on the target copies
+//     `drag.*` into `drop.*`, which the target paints from.
 //
-// and compare the two windows side by side.
+// Deviations:
+//
+//   * The ghost is an ordinary element of the window's own tree, not GPUI's
+//     drag-preview layer. It carries no id and no listeners, so it never takes
+//     a hit, but it is painted with the rest of the frame rather than over it.
+//   * The ghost is armed by the press, where upstream waits for GPUI's ~4px
+//     `DRAG_THRESHOLD`. The binding's `move` events carry no threshold —
+//     `event.dragging()` is just "the left button is held" — and a move
+//     listener stops at the edge of the element that raised it, so a drag that
+//     leaves the square quickly could raise no `move` at all. Arming on `down`
+//     is the emulation's reliable point; the visible difference is a few
+//     pixels of travel before the ghost appears.
+//   * GPUI ends a drag on the next mouse-up wherever it lands; the binding
+//     only reports `up` on an element that has a listener. A transparent
+//     800x600 `on_mouse` overlay sits at the bottom of the window to hear a
+//     release over empty space. It is pixel-sized because `on_mouse` wraps its
+//     element in a bare div whose height is its content's — a `size=full`
+//     child has no definite height to resolve against, the same limit
+//     13_painting records for its canvas. The content column is positioned
+//     `absolute` so that overlay is the stack's only in-flow child, and a
+//     release outside the overlay after a window resize is the one release
+//     still not seen.
+//   * The ghost follows the pointer only because the frame asks for another
+//     frame (`gpui::animate()`) for as long as a drag is in flight. Without it
+//     the ghost would freeze the moment the pointer left the square, since the
+//     binding's `move` events do not follow the pointer out of the element.
+//   * `cx.listener(..)` — a handler bound to the entity — has no equivalent
+//     here. Handlers are plain functions over the shared state store, which is
+//     how every port in this repo reaches across a frame.
 
 use gpui
 use std::process
-use status
 use ui
 
+/// Upstream's `[gpui::blue(), gpui::red(), gpui::green()]`.
+fn name_of(ix: i64) -> String {
+    let names = ["blue", "red", "green"]
+    let name = names[ix]
+    f"{name}"
+}
+
+/// The same three colours at 50% — `self.color.opacity(0.5)` on the target's
+/// fill and the ghost. The style language takes the alpha in the hex, and
+/// `gpui::green()` is `#008000` rather than the CSS `#00ff00`.
+fn fill_of(ix: i64) -> String {
+    let fills = ["#0000ff80", "#ff000080", "#00800080"]
+    let fill = fills[ix]
+    f"{fill}"
+}
+
+/// … and at 20%, which is the hover on an item.
+fn hover_of(ix: i64) -> String {
+    let hovers = ["#0000ff33", "#ff000033", "#00800033"]
+    let hover = hovers[ix]
+    f"{hover}"
+}
+
+/// Upstream's `DragInfo`: which square is being dragged, and its colour. The
+/// position is not carried — the ghost reads the pointer each frame instead.
+fn begin_drag(ix: i64) {
+    gpui::set_int("drag.ix", ix)
+    gpui::set_text("drag.name", name_of(ix))
+    gpui::set_text("drag.fill", fill_of(ix))
+}
+
+/// A release anywhere other than the target drops the payload, as GPUI does.
+fn cancel_drag() {
+    gpui::set_int("drag.ix", -1)
+}
+
+/// `on_drop`: the payload lands on the target, which paints from `drop.*`.
+fn commit_drop() {
+    let ix = gpui::state_int("drag.ix", -1)
+    if ix >= 0 {
+        gpui::set_int("drop.ix", ix)
+        gpui::set_text("drop.name", name_of(ix))
+        gpui::set_text("drop.fill", fill_of(ix))
+        // Which frame the drop landed in. The overlay behind the target hears
+        // this same release — GPUI's `hitbox.is_hovered` counts every hitbox
+        // under the pointer, not just the front one — and it would clear the
+        // payload the drop has just read. The stamp lets it tell a release it
+        // has already seen from a live one, whatever order the two handlers
+        // are dispatched in.
+        gpui::set_int("drop.frame", gpui::frame())
+    }
+    cancel_drag()
+}
+
+/// `up` on the full-window overlay: a release over empty space ends the drag.
+fn end_drag_over_background() {
+    if gpui::state_int("drop.frame", -1) == gpui::frame() {
+        return
+    }
+    cancel_drag()
+}
+
+/// One draggable square: upstream's `div().id(("item", ix)).size_32()`, with
+/// `on_drag(..)` replaced by `on_mouse`.
+fn item(ix: i64) -> ui::El {
+    let name = name_of(ix)
+    let hover = hover_of(ix)
+    ui::panel(f"w=128 h=128 flex justify=center items=center border=2 bordercolor={name} color={name} cursor=move hover=bg:{hover}")
+        .text(f"Item ({ix})", "")
+        .on_mouse("down up", f"item{ix}")
+}
+
+/// Upstream's `#drop-target`: a 3px black border until something is dropped on
+/// it, then the dropped item's colour and a 50%-opaque fill. `drop.name` is
+/// unset until then, so its `"black"` default is upstream's `gpui::black()`.
+fn drop_target() -> ui::El {
+    let name = gpui::state_text("drop.name", "black")
+    let fill = gpui::state_text("drop.fill", "")
+    let style = if gpui::state_int("drop.ix", -1) >= 0 {
+        f"w=512 h=128 flex justify=center items=center border=3 bordercolor={name} bg={fill}"
+    } else {
+        f"w=512 h=128 flex justify=center items=center border=3 bordercolor={name}"
+    }
+    ui::panel(style).text("Drop items here", "").on_mouse("up", "drop")
+}
+
+/// Is a square being dragged? The ghost and the frame loop both key off this.
+fn dragging() -> bool {
+    gpui::state_int("drag.ix", -1) >= 0
+}
+
+/// Upstream's drag preview: 120x50, the item's colour at 50%, white `text_xs`
+/// and `shadow_md`, centred on the pointer. It stays in the tree while nothing
+/// is dragged — `hidden` keeps it out of the paint, and being `absolute` it
+/// takes no layout either way.
+fn ghost() -> ui::El {
+    let ix = gpui::state_int("drag.ix", -1)
+    let fill = gpui::state_text("drag.fill", "#00000080")
+    let mx, my = gpui::mouse_position()
+    let visibility = if dragging() { "" } else { "hidden" }
+    ui::panel(f"absolute top={my - 25.0} left={mx - 60.0} w=120 h=50 flex justify=center items=center bg={fill} color=white font=xs shadow=md {visibility}")
+        .text(f"Item {ix}", "")
+}
+
+/// Upstream's listeners, over the shared state store.
+fn handle_events() {
+    for event in gpui::take_events() {
+        let id, kind = gpui::event_parts(event)
+        if id == "drop" {
+            commit_drop()
+        } else if id == "drag-end" {
+            end_drag_over_background()
+        } else if id == "item0" {
+            item_event(0, kind)
+        } else if id == "item1" {
+            item_event(1, kind)
+        } else if id == "item2" {
+            item_event(2, kind)
+        }
+    }
+}
+
+/// `down` on a square starts the drag; `up` back on a square ends it without a
+/// drop, which is what GPUI does when the release is not over a drop target.
+fn item_event(ix: i64, kind: String) {
+    if kind == "down" {
+        begin_drag(ix)
+    } else if kind == "up" {
+        cancel_drag()
+    }
+}
+
 fn main() {
-    let outcome = gpui::run("03 - drag_drop", 600.0, 400.0, || {
-        status::missing(
-            "03 - drag_drop",
-            "upstream: examples/drag_drop.rs (137 lines)",
-            #[
-            "on_drag / on_drop — drag payloads between elements",
-            "DragView / drag preview rendering",
-            "cx.listener(..) — a handler bound to the entity",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("03 - drag_drop", 800.0, 600.0, || {
+        handle_events()
+
+        // Upstream gets a frame for every pointer move from GPUI's drag
+        // machinery. Here the ghost has to be put where the pointer is, and a
+        // drag that leaves the square stops raising `move` events, so a drag in
+        // flight asks for a frame each time round — and stops when it ends.
+        if dragging() {
+            gpui::animate()
+        }
+
+        ui::stack("size=full bg=white")
+            // The release listener for empty space. It is the stack's first
+            // child, so it paints under everything and every real target has
+            // its hitbox in front of it.
+            .child(ui::rect("w=800 h=600").on_mouse("up", "drag-end"))
+            // Upstream's root column, `absolute` so the overlay is the stack's
+            // only in-flow child. The four insets rather than `size=full`: an
+            // absolute box that fills its containing block needs no percentage
+            // against the stack to resolve.
+            .child(ui::column("absolute top=0 left=0 right=0 bottom=0 gap=20 justify=center items=center color=#333333")
+                .text("Drop & Drop", "font=xl align=center")
+                .child(ui::row("w=full mb=40 gap=16 justify=center items=center")
+                    .children(#[0, 1, 2].map(item)))
+                .child(drop_target()))
+            .child(ghost())
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

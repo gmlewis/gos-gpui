@@ -1,31 +1,177 @@
 // 12 - ownership_post        upstream: tools/upstream/examples/ownership_post.rs (35 lines)
 //
-// NOT PORTED YET. A companion to Zed's ownership blog post: parent/child entities and subscription.
+// UPSTREAM OPENS NO WINDOW, AND ITS WHOLE OUTPUT IS AN ASSERT THAT PASSES.
+// `main` builds two entities, wires one subscription, runs one update, then
+// checks the result — so when the example works, nothing is visible anywhere.
+// The ownership blog post it accompanies is about the *model*:
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+//     let counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
+//     let subscriber = cx.new(|cx| {
+//         cx.subscribe(&counter, |subscriber, _emitter, event, _cx| {
+//             subscriber.count += event.increment * 2;
+//         }).detach();
+//         Counter { count: counter.read(cx).count * 2 }
+//     });
+//     counter.update(cx, |counter, cx| {
+//         counter.count += 2;
+//         cx.notify();
+//         cx.emit(Change { increment: 2 });
+//     });
+//     assert_eq!(subscriber.read(cx).count, 4);
 //
-//   ./tools/upstream-examples.sh run ownership_post
+// THE ENTITY HALF OF THAT IS ABSENT HERE, NOT EMULATED. The binding rebuilds
+// the whole tree every frame and has no entity graph: no `Entity<T>`, no
+// `cx.new`, no `counter.read(cx)`, no `EventEmitter<Change>`, no
+// `cx.subscribe(..).detach()` and no `cx.notify()`. `Change` is a typed struct
+// travelling between typed entities; what the binding has instead is one
+// process-wide queue of `"<id>|<payload>"` strings
+// (gpui-binding/src/store.rs:22-24, 63-65) that a frame drains with
+// `gpui::take_events` and appends to with `gpui::emit`.
 //
-// and compare the two windows side by side.
+// So the port keeps the demo's arithmetic — the same `count += 2`, the same
+// `increment * 2`, the same `== 4` — and shows the queue where upstream shows
+// the entity graph. Nothing about ownership is reproduced; the two boxes are
+// two state keys, not two entities, and the subscriber is an `if` branch.
+//
+// Deviations:
+//
+//   * The entity graph is missing, not approximated: no parent/child
+//     `Entity` ownership, no subscription object to hold or `detach`, and
+//     nothing for `cx.notify()` to re-render. The port's "subscriber" runs
+//     inside the emitter's own frame callback.
+//   * `Change { increment: usize }` becomes untyped payload text. `gpui::emit`
+//     takes strings, so the increment crosses as `"2"` and is read back with
+//     `to_i64()`; the type, and with it the compiler's guarantee that only a
+//     `Change` can arrive, are gone.
+//   * `cx.emit` delivers within the same update: it pushes an `Effect::Emit`
+//     that GPUI flushes when the enclosing update ends (`App::finish_update` ->
+//     `flush_effects`, gpui-0.2.2 src/app.rs:763-777, 1201-1215), so the
+//     subscriber has run by the time `counter.update` returns — which is why
+//     upstream's `assert_eq!` on the next line sees 4. `gpui::emit` is a plain
+//     queue append and asks for nothing, so the port calls `gpui::animate()`
+//     itself whenever it wants the emission seen. Upstream's one update becomes
+//     three frames here: frame 1 asks for `counter.update`, frame 2 performs it
+//     and emits `change`, frame 3 observes `change`. `gpui::frame()` is on
+//     screen so that staging is visible, and upstream's demo — which runs from
+//     `main`, before any window exists — is set going by the port's first frame.
+//   * Upstream's `assert_eq!` is invisible and final: it passes silently or
+//     panics the process. Here it is a panel that records what the first round
+//     produced and reads `holds`, with the live
+//     `subscriber.count == counter.count * 2` invariant shown next to it — a
+//     display where upstream has a panic path.
+//   * The window is the port's. The binding's only way to run a program is
+//     `gpui::run`, which opens one; upstream creates no window at all.
+//   * The button and the event log are this port's additions. Upstream's demo
+//     runs once, unprompted, and has no event to log.
 
 use gpui
 use std::process
-use status
 use ui
 
+/// Upstream's `Change { increment: 2 }`, and its `counter.count += 2`.
+const INCREMENT: i64 = 2
+
+/// Upstream's `assert_eq!(subscriber.read(cx).count, 4)`.
+const ASSERTED: i64 = 4
+
+/// One half of upstream's demo, as a labelled box. Upstream has two entities;
+/// this has two state keys, which is the deviation stated at the top.
+fn card(label: String, value: String, tint: String) -> ui::El {
+    ui::column("gap=4 p=14 bg=#181825 rounded=8 border=1 bordercolor=#313244 w=240")
+        .text(label, "font=xs color=#6c7086")
+        .text(value, f"font=2xl bold color={tint}")
+}
+
 fn main() {
-    let outcome = gpui::run("12 - ownership_post", 620.0, 420.0, || {
-        status::missing(
-            "12 - ownership_post",
-            "upstream: examples/ownership_post.rs (35 lines)",
-            #[
-            "cx.emit / cx.subscribe — GPUI's observable entity model",
-            "Entity parent/child ownership",
-            "(the binding rebuilds the tree each frame and has no entity graph)",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("12 - ownership_post", 720.0, 700.0, || {
+        // ---- the frame's events: upstream's one synchronous demo, unwound -----
+
+        for event in gpui::take_events() {
+            let id, payload = gpui::event_parts(event)
+            gpui::list_push("log", f"{id}|{payload}")
+
+            if id == "counter.update" {
+                // upstream, inside `counter.update`:
+                //   counter.count += 2;
+                //   cx.notify();
+                //   cx.emit(Change { increment: 2 });
+                gpui::set_int("counter.count", gpui::state_int("counter.count", 0) + INCREMENT)
+                gpui::emit("change", f"{INCREMENT}")
+                // `gpui::emit` only appends to the queue; without this the
+                // emission would sit unread until the next click.
+                gpui::animate()
+            } else if id == "change" {
+                // upstream, inside the `cx.subscribe` closure:
+                //   subscriber.count += event.increment * 2;
+                let increment = payload.to_i64().unwrap_or(0)
+                let next = gpui::state_int("subscriber.count", 0) + increment * 2
+                gpui::set_int("subscriber.count", next)
+                let rounds = gpui::state_int("rounds", 0) + 1
+                gpui::set_int("rounds", rounds)
+                if rounds == 1 {
+                    // upstream's assert, recorded instead of panicking
+                    gpui::set_bool("assert.held", next == ASSERTED)
+                }
+            } else if id == "reset" {
+                gpui::set_int("counter.count", 0)
+                gpui::set_int("subscriber.count", 0)
+                gpui::set_int("rounds", 0)
+                gpui::set_bool("assert.held", false)
+                gpui::list_clear("log")
+            }
+        }
+        if gpui::list_len("log") > 8 {
+            gpui::list_remove("log", 0)
+        }
+
+        // Upstream's demo runs from `main`, before a window exists. Here the
+        // first frame asks for the same update and lets the queue carry it.
+        if !gpui::state_bool("started", false) {
+            gpui::set_bool("started", true)
+            gpui::emit("counter.update", "first frame")
+            gpui::animate()
+        }
+
+        // ---- state, read once per frame --------------------------------------
+
+        let counter = gpui::state_int("counter.count", 0)
+        let subscriber = gpui::state_int("subscriber.count", 0)
+        let rounds = gpui::state_int("rounds", 0)
+        let verdict = if rounds == 0 {
+            "not run yet"
+        } else if gpui::state_bool("assert.held", false) {
+            "holds"
+        } else {
+            "does not hold"
+        }
+        let invariant = if subscriber == counter * 2 { "holds" } else { "does not hold" }
+        let observed = gpui::list_all("log")
+
+        // ---- the window ------------------------------------------------------
+
+        ui::column("flex col size=full bg=#1e1e2e p=20 gap=12")
+            .text("12 - ownership_post", "font=2xl bold color=#f9e2af")
+            .text("upstream opens no window: its demo is cx.emit / cx.subscribe over two entities, and it ends in assert_eq!", "font=sm color=#9399b2")
+            .child(ui::row("flex row gap=12 w=full")
+                .child(card("counter (the emitter)", f"count = {counter}", "#89b4fa"))
+                .child(card("subscriber (not an entity here)", f"count = {subscriber}", "#94e2d5")))
+            .child(ui::column("gap=4 p=12 bg=#181825 rounded=8 w=full")
+                .text(f"assert_eq!(subscriber.read(cx).count, {ASSERTED})   ->   {verdict}", "font=sm semibold color=#a6e3a1")
+                .text(f"live invariant: subscriber.count == counter.count * 2   ->   {invariant}", "font=sm color=#cdd6f4")
+                .text(f"rounds through the queue: {rounds}   ·   frame {gpui::frame()}", "font=xs color=#6c7086"))
+            .child(ui::row("gap=8")
+                .button("counter.update", "counter.update(cx, ..)", "px=14 py=8 rounded=8 bg=#89b4fa color=#11111b hover=bg:#a6e3fa")
+                .button("reset", "reset", "px=14 py=8 rounded=8 bg=#313244 color=#cdd6f4"))
+            .child(ui::column("gap=2 p=12 bg=#181825 rounded=8 w=full")
+                .text("the event queue, as this frame drained it", "font=xs semibold color=#6c7086")
+                .children(observed.map(|line| ui::text(line, "font=xs color=#cdd6f4"))))
+            .child(ui::column("gap=2 p=12 bg=#181825 rounded=8 w=full")
+                .text("absent, not emulated: the entity graph", "font=xs semibold color=#f38ba8")
+                .text("Entity<T> / cx.new / counter.read(cx) — parent/child ownership", "font=xs color=#cdd6f4")
+                .text("EventEmitter<Change> / cx.emit — a typed event on an entity", "font=xs color=#cdd6f4")
+                .text("cx.subscribe(..).detach() — the subscription and its lifetime", "font=xs color=#cdd6f4")
+                .text("cx.notify() — a retained Entity re-rendering itself", "font=xs color=#cdd6f4"))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

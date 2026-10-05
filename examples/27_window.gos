@@ -1,32 +1,254 @@
 // 27 - window        upstream: tools/upstream/examples/window.rs (269 lines)
 //
-// NOT PORTED YET. Every window option: popups, prompts, custom titlebars, resize, hide, fullscreen.
+// The window-option sampler. Upstream's `WindowDemo` is a wrapping, centred
+// panel of eleven buttons; each one opens a 300x300 window with a different
+// `WindowOptions`, and every sub-window carries upstream's `SubWindow` view —
+// a "Close" button that removes the window — with the Custom Titlebar one
+// drawing its own blue 32px bar over a client-side titlebar.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// Faithful buttons — same window option, same sub-window view as upstream:
 //
-//   ./tools/upstream-examples.sh run window
+//   Normal           default window options
+//   Popup            kind=popup     (upstream's `WindowKind::PopUp`)
+//   Custom Titlebar  titlebar=none, and the view draws the blue 32px bar
+//   Invisible        show=false
+//   Unmovable        movable=false titlebar=none
+//   Unresizable      resizable=false
+//   Unminimizable    minimizable=false
+//   Resize           swaps this window's width and height, from the live
+//                    bounds, exactly as upstream's `window.resize(..)` does
 //
-// and compare the two windows side by side.
+// Upstream's sub-window "Close" button is `window.remove_window()`, which is
+// `gpui::close_window()` here.
+//
+// Emulated — `window.prompt(..)` is not exposed:
+//
+//   Prompt, Prompt (non-English)
+//   An ordinary in-window dialog stands in for the native modal: a dimmed
+//   overlay with an "Are you sure?" panel and Ok / Cancel (确定 / 取消 — the
+//   labels are upstream's `&["Ok", "Cancel"]` and
+//   `PromptButton::ok("确定") / cancel("取消")`). It prints upstream's exact
+//   lines to stdout. It is NOT a modal: the window behind it stays
+//   interactive and no platform dialog appears. The dialog says so on screen.
+//
+// Missing — no equivalent anywhere in the binding:
+//
+//   Hide Application
+//   Upstream calls `cx.hide()` and then, three seconds later, `cx.activate(false)`
+//   from a `window.spawn` task. `cx.hide`, `window.spawn`, `cx.activate` and
+//   `Timer` tasks are all unexposed, so the button is drawn as an inert,
+//   dashed, greyed placeholder that names the gap rather than a live control
+//   that silently does nothing.
+//
+// Also absent, and therefore not ported:
+//
+//   * `cx.observe_window_bounds(..)`. Upstream's `main` prints
+//     "Window bounds changed: .." on every move and resize. Nothing is
+//     printed here; `gpui::window_field(..)` reads the rectangle only at the
+//     start of a frame.
+//   * `cx.bind_keys` / `cx.on_action` / `actions!(window, [Quit])`. The
+//     binding owns its key bindings and already binds the desktop quit
+//     shortcut (⌘Q on macOS, Ctrl+Q elsewhere), so upstream's own ⌘Q wiring
+//     has no counterpart — and none is needed.
+//
+// Deviations that are this port's rather than the binding's:
+//
+//   * Sub-window placement. Upstream asks for `Bounds::centered(None, ..)`,
+//     the centre of the primary display. The binding exposes displays by index
+//     only (no `primary_display`) and its `place=center` option, as of this
+//     revision, resolves to the same bounds as the explicit x/y it is handed,
+//     so the port computes the centred origin from `gpui::display_field(0, ..)`.
+//   * `open_window` requires a title; upstream's sub-windows set none, so ""
+//     is passed and their title bars stay empty.
+//   * `titlebar=none` is the binding's spelling of a client-drawn title bar:
+//     on macOS it keeps the traffic lights and moves them to (12,12) so they
+//     sit inside the 32px bar, where upstream's `titlebar: None` leaves them
+//     where the platform puts them. On Linux it sets client decorations.
+//   * `Rect` and `DisplayInfo` are declared below. The binding returns
+//     geometry as five scalars rather than a struct.
+//     fields by a matching struct *name* declared in the program, so a port
+//     that reads `.x` / `.w` has to declare the shape (and its field order)
+//     itself.
+//   * Events are process-wide and drained by whichever window repaints. A
+//     click is notified only to the window it happened in, so this port gives
+//     each sub-window its own close event id and each window handles only its
+//     own; the API does not itself scope an event to a window.
+//   * An Invisible sub-window is still an open window, so closing every
+//     visible window leaves the program running (the binding quits only when
+//     no window at all remains). ⌘Q / Ctrl+Q ends it.
+//   * `ui::button` supplies its own `flex items=center justify=center
+//     cursor=pointer`; upstream's hand-built button gets the equivalent from
+//     its explicit helpers. The rest of the button chrome is upstream's.
 
 use gpui
 use std::process
-use status
 use ui
 
+/// Upstream's `button(text, on_click)`. A frame's clicks arrive as events here,
+/// so the id is how a click reaches the program; the style is upstream's
+/// `flex_none px_2 bg(rgb(0xf7f7f7)) active(opacity 0.85) border_1
+/// border_color(rgb(0xe0e0e0)) rounded_sm cursor_pointer` — `px_2` is 8px.
+fn button(id: String, label: String) -> ui::El {
+    ui::button(id, label, "flex=none px=8 bg=#f7f7f7 active=opacity:0.85 border=1 bordercolor=#e0e0e0 rounded=sm cursor=pointer")
+}
+
+/// A button upstream has and the binding cannot express: inert, dashed, and
+/// labelled with the gap, rather than a live control that does nothing.
+fn unavailable(label: String) -> ui::El {
+    ui::panel("flex=none px=8 border=1 dashed bordercolor=#c0c0c0 rounded=sm color=#909090 bg=#fafafa")
+        .text(label, "")
+}
+
+/// The sub-window origin upstream asks for with
+/// `WindowBounds::Windowed(Bounds::centered(None, size(px(300.), px(300.)), cx))`:
+/// the centre of the primary display. See the header for why this is
+/// arithmetic over `display_field(0, ..)` instead.
+fn centred(width: f64, height: f64) -> (f64, f64) {
+    if gpui::display_count() < 1 {
+        return (0.0, 0.0)
+    }
+    let dx = gpui::display_field(0, "x")
+    let dy = gpui::display_field(0, "y")
+    let dw = gpui::display_field(0, "w")
+    let dh = gpui::display_field(0, "h")
+    (dx + (dw - width) / 2.0, dy + (dh - height) / 2.0)
+}
+
+/// Upstream's custom titlebar: `flex h(px(32.)) px_4 bg(blue) text_color(white)
+/// w_full`, with "Custom Titlebar" centred inside it.
+fn custom_title_bar() -> ui::El {
+    ui::panel("flex h=32 px=16 bg=blue color=white w=full")
+        .child(ui::panel("flex items=center justify=center size=full")
+            .text("Custom Titlebar", ""))
+}
+
+/// Upstream's `SubWindow` view. `custom_titlebar` is upstream's
+/// `SubWindow { custom_titlebar }`, and `close_id` is the id of this
+/// sub-window's own Close event — one per window, since events are global.
+fn sub_view(close_id: String, custom_titlebar: bool) -> ui::El {
+    // Upstream's `button("Close", |window, _| window.remove_window())`, and
+    // the only event a sub-window has.
+    for event in gpui::take_events() {
+        let id, _data = gpui::event_parts(event)
+        if id == close_id {
+            gpui::close_window()
+        }
+    }
+
+    let mut window = ui::column("gap=8 bg=#ffffff size=full")
+    if custom_titlebar {
+        window = window.child(custom_title_bar())
+    }
+
+    // Upstream's `div().p_8().gap_2()` — 32px of padding, 8px between the
+    // label and the button.
+    window.child(ui::panel("p=32 gap=8")
+        .text("SubWindow", "")
+        .child(button(close_id, "Close")))
+}
+
+/// Open one sub-window. `options` is the binding's vocabulary for the
+/// `WindowOptions` upstream builds, and `custom_titlebar` is upstream's
+/// `SubWindow` flag.
+///
+/// This is `gpui::open_window`, not `ui::open_window`: a window's view names
+/// its root by calling `ui::root`, so the callback answers nothing, and the
+/// `ui` wrapper declares its view as `Fn() -> El`.
+fn open_sub(title: String, options: String, custom_titlebar: bool) {
+    let sequence = gpui::state_int("sub_window", 0) + 1
+    gpui::set_int("sub_window", sequence)
+    let close_id = f"sub{sequence}.close"
+
+    let x, y = centred(300.0, 300.0)
+    gpui::open_window(title, x, y, 300.0, 300.0, options, || {
+        sub_view(close_id, custom_titlebar) |> ui::root
+    })
+}
+
+/// Upstream's `WindowDemo`: `p_4 flex flex_wrap bg(white) size_full
+/// justify_center content_center gap_2`, with its buttons in upstream's order.
+fn demo_panel() -> ui::El {
+    ui::panel("p=16 flex wrap bg=#ffffff size=full justify=center content=center gap=8")
+        .child(button("normal", "Normal"))
+        .child(button("popup", "Popup"))
+        .child(button("custom_titlebar", "Custom Titlebar"))
+        .child(button("invisible", "Invisible"))
+        .child(button("unmovable", "Unmovable"))
+        .child(button("unresizable", "Unresizable"))
+        .child(button("unminimizable", "Unminimizable"))
+        .child(unavailable("Hide Application (unavailable)"))
+        .child(button("resize", "Resize"))
+        .child(button("prompt", "Prompt"))
+        .child(button("prompt_zh", "Prompt (non-English)"))
+}
+
+/// The two-button dialog that stands in for `window.prompt(..)`. See the
+/// header: the labels are upstream's, the modality is not.
+fn prompt_dialog(ok: String, cancel: String) -> ui::El {
+    ui::panel("absolute inset=0 flex justify=center items=center bg=#00000040")
+        .child(ui::column("gap=12 p=20 bg=#ffffff border=1 bordercolor=#e0e0e0 rounded=md shadow=lg items=center")
+            .text("Are you sure?", "")
+            .child(ui::row("gap=8")
+                .child(button("prompt_ok", ok))
+                .child(button("prompt_cancel", cancel)))
+            .text("emulated: the binding exposes no window.prompt", "font=xs color=#909090"))
+}
+
+/// What a frame does before it builds the tree: drain every button event.
+fn handle_events() {
+    for event in gpui::take_events() {
+        let id, _data = gpui::event_parts(event)
+        if id == "normal" {
+            open_sub("", "", false)
+        } else if id == "popup" {
+            open_sub("", "kind=popup", false)
+        } else if id == "custom_titlebar" {
+            open_sub("", "titlebar=none", true)
+        } else if id == "invisible" {
+            open_sub("", "show=false", false)
+        } else if id == "unmovable" {
+            open_sub("", "movable=false titlebar=none", false)
+        } else if id == "unresizable" {
+            open_sub("", "resizable=false", false)
+        } else if id == "unminimizable" {
+            open_sub("", "minimizable=false", false)
+        } else if id == "resize" {
+            // Upstream: `let content_size = window.bounds().size;
+            // window.resize(size(content_size.height, content_size.width));`
+            let live_w = gpui::window_field("w")
+            let live_h = gpui::window_field("h")
+            gpui::resize_window(live_h, live_w)
+        } else if id == "prompt" {
+            gpui::set_text("prompt", "en")
+        } else if id == "prompt_zh" {
+            gpui::set_text("prompt", "zh")
+        } else if id == "prompt_ok" {
+            println("You have clicked Ok")
+            gpui::set_text("prompt", "")
+        } else if id == "prompt_cancel" {
+            println("You have clicked Cancel")
+            gpui::set_text("prompt", "")
+        }
+    }
+}
+
+/// The main window: upstream's panel, with the emulated prompt over it while
+/// one is open.
+fn window_view() -> ui::El {
+    handle_events()
+
+    let mut root = demo_panel()
+    if gpui::state_text("prompt", "") == "zh" {
+        root = ui::stack("size=full").child(root).child(prompt_dialog("确定", "取消"))
+    } else if gpui::state_text("prompt", "") == "en" {
+        root = ui::stack("size=full").child(root).child(prompt_dialog("Ok", "Cancel"))
+    }
+    root
+}
+
 fn main() {
-    let outcome = gpui::run("27 - window", 720.0, 520.0, || {
-        status::missing(
-            "27 - window",
-            "upstream: examples/window.rs (269 lines)",
-            #[
-            "cx.open_window(..) more than once — the binding is single-window",
-            "WindowKind::PopUp, titlebar: None, show: false",
-            "window.prompt(..), window.resize(..), window.remove_window()",
-            "cx.hide(), cx.observe_window_bounds(..)",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("27 - window", 800.0, 600.0, || {
+        window_view() |> ui::root
     })
 
     if let Err(problem) = outcome {

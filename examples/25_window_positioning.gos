@@ -1,31 +1,148 @@
-// 25 - window_positioning        upstream: tools/upstream/examples/window_positioning.rs (219 lines)
+// 25 - window_positioning        upstream: tools/upstream/examples/window_positioning.rs
 //
-// NOT PORTED YET. Moving a window between displays and reporting its bounds.
+// Nine small windows around every connected display — four corners, four edge
+// centres and the centre — each one reporting the bounds it asked for and the
+// bounds it actually got. Two are red, two blue and five black, in upstream's
+// order; the count grows with the number of displays.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// Upstream loops over `cx.displays()` inside `Application::run`'s closure and
+// opens all nine windows there, once. Here that loop runs from `gpui::run`'s
+// view callback, guarded by a state flag: a Gossamer view callback is
+// re-invoked every frame, so an unguarded open would spawn a fresh nine windows
+// per frame. `gpui::open_window` is deferred to after the frame that asked for
+// it — opening a window draws it immediately, and a nested draw would disturb
+// the frame being built — which is what lets a running view open another
+// window at all.
 //
-//   ./tools/upstream-examples.sh run window_positioning
+// Each window's content is upstream's, including the two nested `size_full`
+// boxes: the label, then the requested origin/size, then the live
+// `window.bounds()` origin/size. Both are printed as `…px`, which is what
+// GPUI's `Display for Pixels` writes. `window.bounds()` is
+// `gpui::window_field(..)`, read afresh on every frame, so the second line tracks
+// the window while it is dragged or resized.
 //
-// and compare the two windows side by side.
+// Deviations, all on the binding's side:
+//
+//   * There is no `display_id` window option, so a window cannot be pinned to a
+//     particular display the way upstream's `WindowOptions::display_id` does.
+//     `open_window` takes absolute screen coordinates and resolves them against
+//     the primary display, so where upstream puts nine windows on *each* display
+//     this port puts all of them on one. The arithmetic that produces the
+//     positions is upstream's, run against `gpui::display_field(i, ..)`, and the labels
+//     still carry the id of the display each window is meant for.
+//   * The arithmetic keeps upstream's own quirks, which a multi-display Mac
+//     cannot see anyway because GPUI's macOS `Display::bounds()` reports the
+//     origin as (0, 0) for every display and only the size is real. Top Left is
+//     the absolute point (150, 150); Top Center is at y = 150 and Left Center at
+//     x = 150, both absolute; Right Center takes its x from the display's
+//     *width* and Bottom Center its y from the display's *height*, so neither
+//     follows a display whose origin is not (0, 0). The port reproduces all of
+//     it window for window rather than "fixing" it.
+//   * `gpui::run` always opens one window of its own, and upstream's app opens
+//     none — it only opens the positioned ones. That host window is the one
+//     whose callback does the opening, and it lists the connected displays.
+//   * Upstream's labels interpolate `DisplayId`'s `Debug`, which is
+//     `DisplayId(1)`. `gpui::display_field(i, "id")` is that number, so the labels are
+//     reproduced with the `DisplayId(…)` wrapper spelled out by hand.
+//   * Upstream passes `titlebar: None`; the binding always attaches a titlebar,
+//     invisible here because the port asks for `titlebar=none`. Each window is
+//     given its label as a title.
+//   * Upstream's window is 350x75 with a 150px margin, which the port keeps; the
+//     host window's size is explicit, as everywhere in these ports.
 
 use gpui
 use std::process
-use status
 use ui
 
+/// Upstream's `size`.
+const WINDOW_W: f64 = 350.0
+const WINDOW_H: f64 = 75.0
+
+/// Upstream's `margin_offset`.
+const MARGIN: f64 = 150.0
+
+/// Upstream's `build_window_options`, minus `display_id` — see the deviations.
+const OPTIONS: &str = "kind=popup focus=false movable=false titlebar=none background=transparent"
+
+/// One positioned window: `label` names it, `colour` is upstream's background,
+/// and `x`/`y` are the requested screen coordinates in pixels.
+///
+/// This is `gpui::open_window`, not `ui::open_window`: the `ui` wrapper
+/// declares its view as `Fn() -> El`, while a window's view names its root by
+/// calling `ui::root` (the binding's `Root::render` discards the callback's
+/// return value and reads the root the callback named). `gpui::open_window`
+/// takes the same callback `gpui::run` does, so the `… |> ui::root` ending
+/// works here.
+fn positioned(label: String, colour: String, x: f64, y: f64) {
+    let title = f"25 - {label}"
+    gpui::open_window(title, x, y, WINDOW_W, WINDOW_H, *OPTIONS, || {
+        let here_x = gpui::window_field("x")
+        let here_y = gpui::window_field("y")
+        let here_w = gpui::window_field("w")
+        let here_h = gpui::window_field("h")
+        ui::panel(f"flex col size=full items=center bg={colour} color=#ffffff")
+            .text(label, "")
+            .child(ui::panel("flex col font=sm items=center size=full")
+                .text(f"origin: {x}px, {y}px size: {WINDOW_W}px, {WINDOW_H}px", "")
+                .text(f"cx.bounds() origin: {here_x}px, {here_y}px size {here_w}px, {here_h}px", ""))
+            |> ui::root
+    })
+}
+
+/// Upstream's nine windows for one display, in the order it opens them.
+fn display_windows(index: i64) {
+    let id = gpui::display_field(index, "id")
+    let dx = gpui::display_field(index, "x")
+    let dy = gpui::display_field(index, "y")
+    let dw = gpui::display_field(index, "w")
+    let dh = gpui::display_field(index, "h")
+    let left = dx + MARGIN
+    let right = dx + dw - WINDOW_W - MARGIN
+    let top = dy + MARGIN
+    let bottom = dy + dh - WINDOW_H - MARGIN
+    let middle_x = dx + dw / 2.0 - WINDOW_W / 2.0
+    let middle_y = dy + dh / 2.0 - WINDOW_H / 2.0
+
+    positioned(f"Top Left DisplayId({id})", "red", MARGIN, MARGIN)
+    positioned(f"Top Right DisplayId({id})", "red", right, top)
+    positioned(f"Bottom Left DisplayId({id})", "blue", left, bottom)
+    positioned(f"Bottom Right DisplayId({id})", "blue", right, bottom)
+    positioned(f"Top Center DisplayId({id})", "black", middle_x, MARGIN)
+    positioned(f"Left Center DisplayId({id})", "black", MARGIN, middle_y)
+    positioned(f"Center DisplayId({id})", "black", middle_x, middle_y)
+    positioned(f"Right Center DisplayId({id})", "black", dw - WINDOW_W - MARGIN, middle_y)
+    positioned(f"Bottom Center DisplayId({id})", "black", middle_x, dh - WINDOW_H - MARGIN)
+}
+
+/// One line of the host window's display list.
+fn display_line(index: i64) -> ui::El {
+    let id = gpui::display_field(index, "id") as i64
+    let x = gpui::display_field(index, "x")
+    let y = gpui::display_field(index, "y")
+    let w = gpui::display_field(index, "w")
+    let h = gpui::display_field(index, "h")
+    ui::text(f"display {id}: origin {x}px, {y}px size {w}px, {h}px", "font=sm color=#cdd6f4")
+}
+
 fn main() {
-    let outcome = gpui::run("25 - window_positioning", 640.0, 460.0, || {
-        status::missing(
-            "25 - window_positioning",
-            "upstream: examples/window_positioning.rs (219 lines)",
-            #[
-            "cx.displays() — the connected displays",
-            "window.bounds() and setting bounds on a live window",
-            "moving a window to another display",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("25 - window_positioning", 560.0, 420.0, || {
+        // Upstream opens every window from `Application::run`'s closure, once.
+        // A Gossamer view callback runs once per frame, so this is guarded.
+        if !gpui::state_bool("opened", false) {
+            gpui::set_bool("opened", true)
+            for index in 0..gpui::display_count() {
+                display_windows(index)
+            }
+        }
+
+        let displays = gpui::display_count()
+
+        ui::panel("flex col gap=10 p=20 bg=#181825 color=#cdd6f4 size=full items=center justify=center")
+            .text("25 - window_positioning", "font=2xl bold color=#ffffff")
+            .text(f"displays: {displays}; nine 350x75 windows each, margin 150", "font=sm")
+            .child(ui::column("gap=2").children((0..displays).map(display_line).collect()))
+            .text("upstream opens them from Application::run; here the host window does.", "font=xs color=#6c7086")
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

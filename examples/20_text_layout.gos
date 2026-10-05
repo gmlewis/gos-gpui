@@ -1,31 +1,88 @@
 // 20 - text_layout        upstream: tools/upstream/examples/text_layout.rs (96 lines)
 //
-// NOT PORTED YET. Shaping a line and painting it directly, with a shaped line and runs.
+// Faithful port. Despite the name, upstream never touches the text system: no
+// `text_system`, no `TextLayout`, no `ShapedLine`, no `paint_text`. Every row
+// is ordinary `div()` styling, and the last is a `StyledText` carrying two
+// per-range highlights. What to compare is the first nine rows — left, centre
+// and right, each shown plain, then underlined, then struck through — the two
+// nowrap boxes that must clip instead of wrapping, and the "ABCD" run, where
+// the A is extra-bold and the C is italic.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// The style language reaches all of it, one token per GPUI call:
 //
-//   ./tools/upstream-examples.sh run text_layout
+//   text_center() / text_right()  ->  align=center / align=right
+//   text_decoration_1()           ->  deco=1
+//   line_through()                ->  strike
+//   whitespace_nowrap()           ->  ws=nowrap
+//   overflow_hidden()             ->  overflow=hidden
+//   w(px(400.)) / w_32()          ->  w=400 / w=128
+//   StyledText::with_highlights   ->  ui::styled_text(..)
 //
-// and compare the two windows side by side.
+// Two of those deserve a note. `deco=1` is GPUI's own `text_decoration_1()`,
+// not a lookalike: it sets `underline = Some(UnderlineStyle { thickness:
+// 1px })`, so the underline it implies already exists and `underline` is not
+// added alongside it. And the numeric helpers are the 4px Tailwind ramp — the
+// suffix is rems(0.25) each — so `w_32()` is 32 × 4px = 128px, which is what
+// `w=128` says; `p_1()` is 4px, `p_4()` is 16px, `gap_2()` is 8px.
+//
+// The highlight entries are `"start-end prop,prop"` over UTF-8 byte ranges:
+// `"0-1 weight=800"` is upstream's `FontWeight::EXTRA_BOLD` on byte 0, and
+// `"2-3 italic"` is `FontStyle::Italic` on byte 2. `weight=800` parses to the
+// same `FontWeight(800.)` value the enum arm holds.
+//
+// Deviations:
+//   * The window title is the numbered one this repo runs examples under
+//     (`20 - text_layout`); upstream leaves the titlebar to GPUI's default.
+//   * Upstream writes each string as `div().child("…")`. Here each is one
+//     `ui::text(..)`, which is the binding's `div().child(text)` — the same
+//     two-level element, with the style on the outer div, exactly as upstream
+//     has it.
+//   * `ui::styled_text(..)` wraps the `StyledText` in a `div` — the binding
+//     renders `Kind::StyledText` as `div().child(text)`, where upstream puts
+//     the `StyledText` in the row directly. The row's other children are divs
+//     anyway, so the flex item count and their sizes are unchanged.
+//   * A Gossamer frame rebuilds the whole tree each frame instead of
+//     re-rendering a retained `Entity`; the tree itself is the same.
+//
+// Nothing is missing from the binding for this example. The placeholder this
+// replaced claimed it needed `window.text_system()`, `ShapedLine` and
+// `paint_text`; it needs none of them.
 
 use gpui
 use std::process
-use status
 use ui
 
 fn main() {
-    let outcome = gpui::run("20 - text_layout", 700.0, 420.0, || {
-        status::missing(
-            "20 - text_layout",
-            "upstream: examples/text_layout.rs (96 lines)",
-            #[
-            "window.text_system() — a FontId, a font size, and a line width",
-            "TextLayout / LineLayout / ShapedLine",
-            "paint_text with TextRun slices",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("20 - text_layout", 800.0, 600.0, || {
+        ui::column("bg=white gap=8 p=16 size=full")
+            // div().child("Text left")
+            .text("Text left", "")
+            // .text_center() / .text_right()
+            .text("Text center", "align=center")
+            .text("Text right", "align=right")
+            // .text_decoration_1()
+            .text("Text left (underline)", "deco=1")
+            .text("Text center (underline)", "align=center deco=1")
+            .text("Text right (underline)", "align=right deco=1")
+            // .line_through()
+            .text("Text left (line_through)", "strike")
+            .text("Text center (line_through)", "align=center strike")
+            .text("Text right (line_through)", "align=right strike")
+            // div().flex().gap_2().justify_between() with two children:
+            // .w(px(400.)).border_1().border_color(blue).p_1()
+            // .whitespace_nowrap().overflow_hidden().text_center()
+            .child(ui::row("gap=8 justify=between")
+                .text("A long non-wrapping text align center", "w=400 border=1 bordercolor=blue p=4 ws=nowrap overflow=hidden align=center")
+                // .w_32() is 32 × 4px, i.e. 128px.
+                .text("100%", "w=128 border=1 bordercolor=blue p=4 ws=nowrap overflow=hidden align=right"))
+            // The same row, holding the one `StyledText`:
+            // StyledText::new("ABCD").with_highlights([
+            //     (0..1, FontWeight::EXTRA_BOLD.into()),
+            //     (2..3, FontStyle::Italic.into()),
+            // ])
+            .child(ui::row("gap=8 justify=between")
+                .styled_text("ABCD", #["0-1 weight=800", "2-3 italic"], ""))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

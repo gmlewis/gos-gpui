@@ -1,7 +1,15 @@
 // 23 - tree        upstream: tools/upstream/examples/tree.rs
 //
-// Fifty levels of nested divs, each 2px of padding and one of four colours,
-// cycling. Upstream reads the depth from `GPUI_TREE_DEPTH`; so does this port.
+// Deeply nested divs, each 2px of padding and one of four colours, cycling.
+// Upstream reads the depth from `GPUI_TREE_DEPTH` and defaults to 50; so does
+// this port, but its default is 40.
+//
+// Deviation: 50 is too deep here. `gos run --main-thread` arms Gossamer's
+// stack guard for the main thread's own stack rather than the large reserve a
+// worker thread gets, and this binding walks the tree recursively as it turns
+// each level into a GPUI element — so each level costs more native stack than
+// upstream's does. 40 renders; 50 trips `GX0008`. Raise `GPUI_TREE_DEPTH` if
+// you want to find your own machine's ceiling.
 //
 // The point of the example is that deep hierarchies lay out at all, so a
 // difference here — missing levels, wrong colours, a stack overflow — is worth
@@ -12,19 +20,24 @@ use std::env
 use std::process
 use ui
 
-const DEFAULT_DEPTH: i64 = 50
+const DEFAULT_DEPTH: i64 = 40
 
-/// Upstream cycles `[red, blue, green, yellow]`, but its iterator yields one
-/// colour per div *including* the innermost, and the nesting is built outside
-/// in — so the outermost div gets the colour after the innermost's.
-fn nest(depth: i64, level: i64) -> ui::El {
+/// Built the way upstream builds it: the innermost div first, then wrapped
+/// outward in a loop. (`p_0p5` is 2px.)
+///
+/// This was written as recursion first, and 50 frames of Rust `fn` recursion
+/// tripped Gossamer's `GX0008` recursion guard on the main thread — a loop is
+/// both what upstream does and what fits.
+fn nest(depth: i64) -> ui::El {
     let colours = ["red", "blue", "green", "yellow"]
-    let colour = colours[(level % 4) as i64]
-    if level == 0 {
-        ui::rect(f"p=2 bg={colour}")
-    } else {
-        ui::panel(f"p=2 bg={colour}").child(nest(depth, level - 1))
+    let mut node = ui::rect("p=2 bg=red");
+    let mut level = 1;
+    while level <= depth {
+        let colour = colours[(level % 4) as i64];
+        node = ui::panel(f"p=2 bg={colour}").child(node);
+        level += 1;
     }
+    node
 }
 
 fn main() {
@@ -33,7 +46,7 @@ fn main() {
         .unwrap_or(DEFAULT_DEPTH)
 
     let outcome = gpui::run("23 - tree", 300.0, 300.0, || {
-        nest(depth, depth) |> ui::root
+        nest(depth) |> ui::root
     })
 
     if let Err(problem) = outcome {

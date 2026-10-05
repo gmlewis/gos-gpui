@@ -79,6 +79,11 @@ impl El {
         self.child(image(path, style))
     }
 
+    /// Text with per-byte-range highlights; see `ui::styled_text`.
+    pub fn styled_text(&self, content: String, highlights: Vec<String>, style: String) -> El {
+        self.child(styled_text(content, highlights, style))
+    }
+
     pub fn rect(&self, style: String) -> El {
         self.child(rect(style))
     }
@@ -93,6 +98,21 @@ impl El {
 
     pub fn draw(&self, painter: String, phase: f64, style: String) -> El {
         self.child(draw(painter, phase, style))
+    }
+
+    /// Report pointer events for this element. `kinds` is any of `down`,
+    /// `up`, `move`, `click`, `right`; each raises `"<id>|<kind>"` and writes
+    /// `<id>.x` / `<id>.y` into the state store, relative to this element's
+    /// top-left corner.
+    pub fn on_mouse(&self, kinds: String, id: String) -> El {
+        let handle: i64 = self.into()
+        gpui::on_mouse(handle, kinds, id).into()
+    }
+
+    /// Paint a run of built paths — each entry in `backgrounds` lines up with
+    /// the path at the same index, and is a colour or a `grad=…` token.
+    pub fn paths(&self, handles: Vec<i64>, backgrounds: Vec<String>, style: String) -> El {
+        self.child(paths(handles, backgrounds, style))
     }
 
     /// A virtualised list. `build` is called with a row's index, for the rows
@@ -127,6 +147,11 @@ pub fn scroll(style: String) -> El { gpui::scroll(style).into() }
 // ---- leaves -----------------------------------------------------------
 
 pub fn text(content: String, style: String) -> El { gpui::text(content, style).into() }
+
+/// Text with per-byte-range highlights: `"0-1 bold"`, `"2-3 italic"`.
+pub fn styled_text(content: String, highlights: Vec<String>, style: String) -> El {
+    gpui::text_styled(content, highlights, style).into()
+}
 
 pub fn button(id: String, label: String, style: String) -> El {
     gpui::button(id, label, style).into()
@@ -165,6 +190,33 @@ pub fn draw(painter: String, phase: f64, style: String) -> El {
 /// closure where the other leaves take a style string.
 pub fn list(id: String, count: i64, row_height: f64, style: String, build: Fn(i64) -> El) -> El {
     gpui::list(id, count, row_height, style, build).into()
+}
+
+/// A painted surface. Build its paths with `gpui::path_fill` /
+/// `gpui::path_line_to` / `gpui::path_build`, then hand them over here.
+pub fn paths(handles: Vec<i64>, backgrounds: Vec<String>, style: String) -> El {
+    gpui::paint_paths(handles, backgrounds, style).into()
+}
+
+/// Raise an event from inside a frame. See `gpui::emit`.
+pub fn emit(id: String, payload: String) {
+    gpui::emit(id, payload)
+}
+
+/// Install an application menu. See `gpui::set_menus`.
+pub fn set_menus(name: String, items: Vec<String>) {
+    gpui::set_menus(name, items)
+}
+
+/// Open another window with its own view. See `gpui::open_window`.
+pub fn open_window(title: String, x: f64, y: f64, w: f64, h: f64, options: String, view: Fn()) {
+    gpui::open_window(title, x, y, w, h, options, view)
+}
+
+/// Report pointer events for a whole element. See `El::on_mouse`.
+pub fn on_mouse(element: El, kinds: String, id: String) -> El {
+    let handle: i64 = element.into()
+    gpui::on_mouse(handle, kinds, id).into()
 }
 
 // ---- the last step ----------------------------------------------------

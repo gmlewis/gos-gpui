@@ -1,5 +1,11 @@
 //! `gpui` — Zed's GPU-accelerated UI framework, exposed to Gossamer.
 //!
+//! `register_module!` walks its function list with a tt-muncher, so the crate
+//! needs a deeper macro recursion limit than the default once the surface
+//! passes roughly sixty bindings.
+#![recursion_limit = "512"]
+
+//!
 //! A Gossamer program describes its window once per frame, and the view
 //! callback *answers* the element it wants as the root:
 //!
@@ -36,7 +42,14 @@
 // with `use super::*;`.
 use gossamer_binding::PersistentCallback;
 
+// Window and display geometry is returned as scalars rather than a struct.
+// A binding-returned `GosStruct` is an opaque type to the compiled tier, which
+// lowers a field read only when the *program* declares a matching Gossamer
+// struct — so `window_rect().x` would fail to lower in a program that did not
+// happen to redeclare `Rect`. Scalars cross every tier unchanged.
+
 mod app;
+mod path;
 mod store;
 mod style;
 mod view;
@@ -117,6 +130,15 @@ gossamer_binding::register_module!(
             Some((id, _)) => id.to_string(),
             None => event,
         }
+    }
+
+    /// Raise an event from inside a frame, as `"<id>|<payload>"`.
+    ///
+    /// Gossamer has no observable-entity layer to emit through; this is the
+    /// binding's equivalent, and it is what a port uses where upstream would
+    /// call `cx.emit(..)`.
+    fn emit(id: String, payload: String) {
+        store::push_event_with(&id, payload)
     }
 
     /// Split an event into `(id, payload)` in one step.
@@ -330,10 +352,148 @@ gossamer_binding::register_module!(
         view::push(Kind::Spacer(size), String::new(), String::new())
     }
 
+    /// Text with per-byte-range highlights. Each entry is
+    /// `"start-end prop,prop"`, where the properties are the text half of the
+    /// style language: `bold`, `semibold`, `italic`, `weight=800`,
+    /// `color=#rrggbb`, `bg=#rrggbb`, `underline`, `strike`.
+    fn text_styled(content: String, highlights: Vec<String>, style: String) -> i64 {
+        view::push(Kind::StyledText { content, highlights }, style, String::new())
+    }
+
+    /// One of the application's default colours, as `#rrggbbaa`: `text`,
+    /// `selected_text`, `background`, `disabled`, `selected`, `border`,
+    /// `separator`, `container`.
+    fn default_color(name: String) -> String {
+        view::default_color(&name)
+    }
+
     /// A directly painted surface. `painter` is one of `"bars"`, `"wave"` or
     /// `"stripes"`; `phase` drives its animation.
     fn draw(painter: String, phase: f64, style: String) -> i64 {
         view::push(Kind::Canvas { painter, phase }, style, String::new())
+    }
+
+    // -----------------------------------------------------------------
+    // paths
+    // -----------------------------------------------------------------
+
+    /// A new, empty path to be filled.
+    fn path_fill() -> i64 {
+        path::fill()
+    }
+
+    /// A new, empty path to be stroked at `width`.
+    fn path_stroke(width: f64) -> i64 {
+        path::stroke(width)
+    }
+
+    /// Start a contour at `x, y`.
+    fn path_move_to(handle: i64, x: f64, y: f64) {
+        path::move_to(handle, x, y)
+    }
+
+    /// Add a line to `x, y`.
+    fn path_line_to(handle: i64, x: f64, y: f64) {
+        path::line_to(handle, x, y)
+    }
+
+    /// Add a quadratic curve to `x, y` with control point `ctrl_x, ctrl_y`.
+    fn path_curve_to(handle: i64, x: f64, y: f64, ctrl_x: f64, ctrl_y: f64) {
+        path::curve_to(handle, x, y, ctrl_x, ctrl_y)
+    }
+
+    /// Add an elliptical arc.
+    fn path_arc_to(handle: i64, rx: f64, ry: f64, x_rotation: f64, large_arc: bool, sweep: bool, x: f64, y: f64) {
+        path::arc_to(handle, rx, ry, x_rotation, large_arc, sweep, x, y)
+    }
+
+    /// Add a polygon. `points` is a flat `x, y, x, y …` run.
+    fn path_polygon(handle: i64, points: Vec<f64>, closed: bool) {
+        path::polygon(handle, points, closed)
+    }
+
+    /// Close the current contour.
+    fn path_close(handle: i64) {
+        path::close(handle)
+    }
+
+    /// Set the dash pattern of a stroked path.
+    fn path_dash(handle: i64, dashes: Vec<f64>) {
+        path::dash(handle, dashes)
+    }
+
+    /// Translate and scale everything added so far.
+    fn path_transform(handle: i64, translate_x: f64, translate_y: f64, scale: f64) {
+        path::transform(handle, translate_x, translate_y, scale)
+    }
+
+    /// Finish a path. The handle keeps working and now names the built path.
+    fn path_build(handle: i64) -> Result<i64, String> {
+        path::build(handle)
+    }
+
+    /// Empty the path pool. Every handle issued before this stops working.
+    fn path_reset() {
+        path::reset()
+    }
+
+    /// Paint built paths, in order. `backgrounds` lines up with `paths` and
+    /// each entry is a colour (`#rrggbbaa`, a name) or a `grad=…` token.
+    ///
+    /// Coordinates are window coordinates: a path is painted where it was
+    /// built, exactly as `Window::paint_path` does.
+    fn paint_paths(paths: Vec<i64>, backgrounds: Vec<String>, style: String) -> i64 {
+        view::push(Kind::Paths { paths, backgrounds }, style, String::new())
+    }
+
+    // -----------------------------------------------------------------
+    // pointer
+    // -----------------------------------------------------------------
+
+    /// Report pointer events for `element`. `kinds` is any of
+    /// `down`, `up`, `move`, `click`, `right`, and each one raises
+    /// `"<id>|<kind>"` and writes `<id>.x` / `<id>.y` into the state store,
+    /// relative to the element's own top-left corner.
+    fn on_mouse(element: i64, kinds: String, id: String) -> i64 {
+        view::push(
+            Kind::Mouse { child: element.max(0) as usize, id, kinds },
+            String::new(),
+            String::new(),
+        )
+    }
+
+    /// The pointer's position in the window.
+    fn mouse_position() -> (f64, f64) {
+        view::mouse_position()
+    }
+
+    /// Move focus to the next focusable element.
+    fn focus_next() {
+        store::request(store::Request::FocusNext)
+    }
+
+    /// Move focus to the previous focusable element.
+    fn focus_prev() {
+        store::request(store::Request::FocusPrev)
+    }
+
+    /// Whether the element with this id currently holds focus.
+    fn is_focused(id: String) -> bool {
+        view::is_focused(&id)
+    }
+
+    // -----------------------------------------------------------------
+    // list-valued floats
+    // -----------------------------------------------------------------
+
+    /// Append a float to the list stored under `key`.
+    fn list_push_float(key: String, value: f64) {
+        store::push_float(&key, value)
+    }
+
+    /// The whole float list, as a copy.
+    fn list_all_float(key: String) -> Vec<f64> {
+        store::get_floats(&key)
     }
 
     /// A virtualised list of `count` rows: `build` runs only for the rows on
@@ -344,6 +504,77 @@ gossamer_binding::register_module!(
             style,
             id,
         )
+    }
+
+    // -----------------------------------------------------------------
+    // windows
+    // -----------------------------------------------------------------
+
+    /// Open another window. Its `view` becomes a permanent callback, valid for
+    /// the life of the program.
+    ///
+    /// The window is opened once the frame that asked for it has finished —
+    /// opening one draws it immediately, and a nested draw would disturb the
+    /// frame being built.
+    cb_fn open_window(d, title: String, x: f64, y: f64, w: f64, h: f64, options: String, view: PersistentCallback) -> () {
+        let _ = d;
+        app::queue_window(app::PendingOpen { title, x, y, w, h, options, view })
+    }
+
+    /// Close the window this frame belongs to.
+    fn close_window() {
+        store::request(store::Request::CloseWindow)
+    }
+
+    /// Resize the window this frame belongs to.
+    fn resize_window(w: f64, h: f64) {
+        store::request(store::Request::ResizeWindow { w, h })
+    }
+
+    /// Install an application menu.
+    ///
+    /// Each entry is one of `"separator"`, `"quits:Quit"`, or
+    /// `"events:<label>"`; an `events` entry raises `"menu|<position>"` when
+    /// it is chosen. Menu items carry a boxed action, which no ABI can pass,
+    /// so the binding owns eight action slots and maps entries onto them by
+    /// position — a menu with more than eight `events` entries reuses slot 0.
+    fn set_menus(name: String, items: Vec<String>) {
+        store::request(store::Request::SetMenus { name, items })
+    }
+
+    /// The window's x, y, width or height, as of the start of this frame.
+    /// `field` is `x`, `y`, `w` or `h`.
+    fn window_field(field: String) -> f64 {
+        let (x, y, w, h) = view::window_rect();
+        match field.as_str() {
+            "x" => x,
+            "y" => y,
+            "w" => w,
+            "h" => h,
+            _ => 0.0,
+        }
+    }
+
+    /// How many displays are connected.
+    fn display_count() -> i64 {
+        view::displays().len() as i64
+    }
+
+    /// One field of one display. `field` is `id`, `x`, `y`, `w` or `h`;
+    /// anything else, or an index out of range, answers `0.0`.
+    fn display_field(index: i64, field: String) -> f64 {
+        let Some(display) = view::displays().get(usize::try_from(index).unwrap_or(usize::MAX)).cloned()
+        else {
+            return 0.0;
+        };
+        match field.as_str() {
+            "id" => display.id as f64,
+            "x" => display.x,
+            "y" => display.y,
+            "w" => display.w,
+            "h" => display.h,
+            _ => 0.0,
+        }
     }
 
     // -----------------------------------------------------------------
