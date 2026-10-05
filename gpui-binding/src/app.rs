@@ -124,13 +124,13 @@ pub fn run_app(
     }
 
     let mut resizable = true;
-    let mut transparent_titlebar = false;
+    let mut no_titlebar = false;
     let mut always_on_top = false;
     let mut background = false;
     for (key, value) in crate::style::tokens(options) {
         match (key.as_str(), value.as_deref()) {
             ("resizable", Some("false")) => resizable = false,
-            ("titlebar", Some("none")) => transparent_titlebar = true,
+            ("titlebar", Some("none")) => no_titlebar = true,
             ("float", Some("true")) => always_on_top = true,
             ("background", Some("blur")) => background = true,
             _ => {}
@@ -146,13 +146,15 @@ pub fn run_app(
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
                 title: Some(title.clone().into()),
-                appears_transparent: transparent_titlebar,
-                traffic_light_position: if transparent_titlebar {
-                    Some(gpui::point(px(12.0), px(12.0)))
-                } else {
-                    None
-                },
+                appears_transparent: no_titlebar,
+                traffic_light_position: traffic_lights(no_titlebar),
             }),
+            // macOS and Windows hide the system titlebar with
+            // `appears_transparent` and let the program draw its own. Linux
+            // spells that `window_decorations` — the X11 backend reads only
+            // `titlebar.title`, so a program asking for `titlebar=none` there
+            // would otherwise get a decorated window *and* its own drawn bar.
+            window_decorations: client_decorations(no_titlebar),
             kind: if always_on_top {
                 gpui::WindowKind::Floating
             } else {
@@ -182,7 +184,7 @@ pub fn run_app(
 
         cx.activate(true);
 
-        // Closing the window (or pressing ⌘Q) is how these examples exit.
+        // Closing the window (or the desktop's quit shortcut) ends the app.
         cx.on_window_closed(|cx| {
             if cx.windows().len() <= 1 {
                 cx.quit();
@@ -190,11 +192,53 @@ pub fn run_app(
         })
         .detach();
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys([gpui::KeyBinding::new("cmd-q", Quit, None)]);
+        cx.bind_keys([gpui::KeyBinding::new(quit_keystroke(), Quit, None)]);
     });
 
     view::clear_dispatch();
     Ok(())
+}
+
+/// The traffic-light position is a macOS-only window option.
+#[cfg(target_os = "macos")]
+fn traffic_lights(no_titlebar: bool) -> Option<gpui::Point<gpui::Pixels>> {
+    if no_titlebar {
+        Some(gpui::point(px(12.0), px(12.0)))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn traffic_lights(_no_titlebar: bool) -> Option<gpui::Point<gpui::Pixels>> {
+    None
+}
+
+/// Hiding the system titlebar is `window_decorations` on Linux, and nothing at
+/// all off it — macOS and Windows use `appears_transparent` for the same thing.
+#[cfg(target_os = "linux")]
+fn client_decorations(no_titlebar: bool) -> Option<gpui::WindowDecorations> {
+    if no_titlebar {
+        Some(gpui::WindowDecorations::Client)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn client_decorations(_no_titlebar: bool) -> Option<gpui::WindowDecorations> {
+    None
+}
+
+/// ⌘Q on macOS, Ctrl+Q everywhere else.
+#[cfg(target_os = "macos")]
+fn quit_keystroke() -> &'static str {
+    "cmd-q"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quit_keystroke() -> &'static str {
+    "ctrl-q"
 }
 
 gpui::actions!(gpui_binding, [Quit]);

@@ -23,19 +23,32 @@ examples/ui/mod.gos          the chainable element type those programs use
 
 ## Requirements
 
-- **macOS on Apple silicon or Intel.** GPUI renders through Metal; it also
-  supports Linux, but these examples were built and run on an M2 Max.
-- **Xcode command-line tools** (`xcode-select --install`).
+- **macOS on Apple silicon or Intel, or Linux on X11.** GPUI renders through
+  Metal on macOS and through Vulkan or GLES on Linux. These examples were
+  written and verified on an M2 Max; the Linux configuration is described below
+  and has not been run end to end.
+- **macOS:** Xcode command-line tools (`xcode-select --install`).
+- **Linux:** the build and runtime packages listed under
+  [On Linux](#on-linux).
 - **Gosammer 0.66.0** — `gos --version`.
-- **Rust 1.85+** — GPUI needs a recent stable `rustc` and a Cargo that
-  understands edition 2024. `cargo --version`.
+- **A Rust toolchain.** GPUI needs a recent stable `rustc` and a Cargo that
+  understands edition 2024, so 1.85 is the floor for the binding crate.
+  Building `gos` itself from source wants 1.95 — see its
+  [install page](https://gossamer-lang.org/docs/install/).
 
-You do **not** need the full Metal Toolchain component. GPUI normally compiles
-its shaders at build time with `xcrun metal`, which is what
+On macOS you do **not** need the full Metal Toolchain component. GPUI normally
+compiles its shaders at build time with `xcrun metal`, which is what
 `xcodebuild -downloadComponent MetalToolchain` installs; the binding crate
 turns on GPUI's `runtime_shaders` feature instead, so the shader source is
 handed to Metal when the window is created. See
 [`gpui-binding/Cargo.toml`](gpui-binding/Cargo.toml).
+
+**The first run is slow.** `gos run` against a project with `[rust-bindings]`
+builds a per-project runner with Cargo, and that means compiling GPUI — a few
+hundred crates, several minutes. The result is cached per machine under
+`$XDG_CACHE_HOME/gossamer/runners/`, so every run after the first starts
+immediately. A debug-profile GPUI is unoptimised, which shows in the animation
+examples.
 
 ## Run an example
 
@@ -49,22 +62,81 @@ or directly:
 gos run --main-thread examples/04_interaction.gos
 ```
 
-`--main-thread` is not optional. GPUI builds an AppKit application, and AppKit
-insists on the process main thread; `gos run` otherwise executes the program on
-its own `gos-vm` thread. Gosammer has the flag precisely for native libraries
-that mandate the main thread. Without it GPUI stops with
-`must construct App on main thread`.
+`--main-thread` is not optional, on either platform. GPUI drives a native event
+loop — AppKit on macOS, X11 on Linux — and both insist on the process main
+thread; `gos run` otherwise executes the program on its own `gos-vm` thread.
+Gosammer has the flag precisely for native libraries that mandate the main
+thread. Without it GPUI stops with `must construct App on main thread`.
 
-**The first run is slow.** `gos run` against a project with `[rust-bindings]`
-builds a per-project runner with Cargo, and that means compiling GPUI — a few
-hundred crates, several minutes. The result is cached under
-`$XDG_CACHE_HOME/gossamer/runners/`, so every run after the first starts
-immediately. A debug-profile GPUI is unoptimised, which shows in the animation
-examples; `./build.sh` produces something much smoother.
+The argument can be a number, a name, or a path; `--print` resolves it without
+launching anything:
 
 ```sh
 ./run.sh                         # list the examples
+./run.sh 04                      # examples/04_interaction.gos
+./run.sh 04_interaction          # the same
+./run.sh --print 04              # just print the path it would run
 ```
+
+## On Linux
+
+The Gossamer side is platform-neutral — every `.gos` file, including
+`examples/ui/mod.gos`, runs unchanged. What differs is all in the binding crate
+and the two scripts, and it is already wired up:
+
+- [`gpui-binding/Cargo.toml`](gpui-binding/Cargo.toml) takes gpui's **X11
+  backend alone** on Linux (`default-features = false, features = ["x11"]`).
+  gpui gates its Linux windowing backends independently, and its default
+  features would otherwise pull the whole Wayland stack, which a Cinnamon
+  desktop does not use. The `runtime_shaders` feature is macOS-only and is
+  gated to match.
+- The binding binds **Ctrl+Q** off macOS and ⌘Q on it.
+- `titlebar=none` (example 10) becomes `window_decorations: Client` on Linux.
+  The X11 backend reads only `titlebar.title`, so without that the window would
+  get server-side decorations *and* example 10's own drawn titlebar.
+- [`tools/cc-gpui.sh`](tools/cc-gpui.sh) branches on `uname`, adding the Apple
+  frameworks on macOS and nothing on Linux — where most of GPUI's dependencies
+  resolve through `dlopen` and no `-dev` packages are needed to link.
+
+### Packages
+
+`gos run` needs no LLVM: the [install page](https://gossamer-lang.org/docs/install/)
+is explicit that only `gos build` wants LLVM 18–22. So the minimum is `gos`
+0.66.0, a Rust toolchain, and GPUI's Linux build dependencies.
+
+Of GPUI's dependency tree, only `x11`, `freetype-sys` and
+`yeslogic-fontconfig-sys` shell out to `pkg-config`, and the last of those is
+dlopen'd through `zed-font-kit`'s `source-fontconfig-dlopen` feature — as are
+`xkbcommon`, `libxcb` and the Vulkan loader. That leaves a short list:
+
+```sh
+sudo apt-get install -y build-essential pkg-config     libx11-dev libxcb1-dev libxext-dev libxrender-dev     libxcursor-dev libxinput-dev libfreetype-dev
+```
+
+plus, at runtime, a Vulkan driver (`mesa-vulkan-drivers`, or your GPU vendor's)
+and `libxkbcommon-x11-0`. Add `libfontconfig1-dev` if a build actually asks for
+it. Mint ships fonts; the examples set sizes and weights but never families.
+
+### What is not verified
+
+The Linux path has not been run end to end — it was written from the source and
+the dependency graph, on a Mac. Open questions, in rough order of risk:
+
+1. Whether GPUI 0.2.2's Linux backend builds and runs at all. Zed develops on
+   Linux, so it should; 0.2.2 is a snapshot, so it is not certain.
+2. Vulkan versus GLES. `blade-graphics` ships `vulkan/`, `gles/` and `metal/`
+   backends. A machine with working Mesa/Vulkan is the happy path.
+3. The exact package list above, which is derived from reading build scripts
+   rather than from a build. Whatever the compiler asks for wins.
+4. Whether the two codegen bugs below reproduce on x86_64.
+5. Your session type. Mint 22.3 Cinnamon is X11 by default, which is what this
+   configuration targets; a Wayland session would need the `wayland` feature
+   back.
+
+**Do not cross-compile.** `gos build --target x86_64-unknown-linux-gnu` from
+macOS needs an external sysroot and sits outside Gosammer's support contract.
+Build natively on each machine from the same repo; the runner cache is
+per-machine and regenerates cleanly.
 
 ## Building a native binary — currently blocked
 

@@ -4,6 +4,7 @@
 #
 #   ./build.sh 04            # -> target/debug/learn-gpui
 #   ./build.sh 04 --release
+#   ./build.sh --print 04    # just resolve the argument
 #
 # NOTE: `gos build` currently miscompiles this shape — the binary links but
 # aborts at startup with a misaligned-pointer panic in the runtime. Use
@@ -11,9 +12,9 @@
 # problem is real and will need solving once the codegen half is fixed.
 #
 # `gos build` links the binary itself and has no way to write `-framework …`
-# into that link line, so a GPUI binary comes out with CoreFoundation,
-# CoreGraphics, AppKit and Metal symbols undefined. It does read $CC, so
-# tools/cc-gpui.sh supplies the frameworks on the way past.
+# (macOS) or `-l…` for the windowing libraries (Linux) into that link line, so
+# a GPUI binary comes out with those symbols undefined. It does read $CC, so
+# tools/cc-gpui.sh supplies them on the way past.
 
 set -euo pipefail
 
@@ -25,19 +26,48 @@ if [ $# -eq 0 ]; then
     printf '  %s\n' "$(basename "$file" .gos)"
   done
   echo
-  echo "usage: ./build.sh <number|path> [--release]"
+  echo "usage: ./build.sh <number|name|path> [--release]"
   exit 0
 fi
 
-case "$1" in
-  */*|*.gos) file="$1" ;;
-  *) file="examples/$1"*.gos ;;
-esac
+print_only=0
+if [ "$1" = "--print" ] || [ "$1" = "-n" ]; then
+  print_only=1
+  shift
+fi
+
+if [ $# -eq 0 ]; then
+  echo "build.sh: no example given" >&2
+  exit 1
+fi
+
+# See run.sh for why the glob needs a `for` loop rather than an assignment.
+resolve() {
+  local want="$1" found=()
+  [ -f "$want" ] && { printf '%s' "$want"; return 0; }
+  [ -f "examples/$want" ] && { printf '%s' "examples/$want"; return 0; }
+  [ -f "examples/$want.gos" ] && { printf '%s' "examples/$want.gos"; return 0; }
+  for candidate in examples/"$want"*.gos; do
+    [ -f "$candidate" ] && found+=("$candidate")
+  done
+  case "${#found[@]}" in
+    1) printf '%s' "${found[0]}" ;;
+    0) return 1 ;;
+    *) echo "build.sh: '$want' matches more than one example:" >&2
+       printf '  %s\n' "${found[@]}" >&2
+       return 1 ;;
+  esac
+}
+
+if ! file=$(resolve "$1"); then
+  echo "build.sh: no example matches '$1'" >&2
+  exit 1
+fi
 shift || true
 
-if [ ! -f "$file" ]; then
-  echo "build.sh: no example matches that" >&2
-  exit 1
+if [ "$print_only" = 1 ]; then
+  printf '%s\n' "$file"
+  exit 0
 fi
 
 CC="$PWD/tools/cc-gpui.sh" exec gos build "$file" "$@"

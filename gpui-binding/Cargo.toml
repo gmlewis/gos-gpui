@@ -15,10 +15,19 @@ crate-type = ["rlib"]
 # tracks the version stated in `project.toml`.
 gossamer-binding = "0.66.0"
 
-# Zed's GPU-accelerated UI framework.
+# Zed's GPU-accelerated UI framework, configured per platform.
 #
-# `runtime_shaders` compiles gpui's Metal shader source when the
-# renderer is created instead of shelling out to `xcrun metal` at
-# build time, so this crate builds on a Mac without the full
-# Metal Toolchain component installed.
+# macOS takes the defaults plus `runtime_shaders`, which compiles gpui's Metal
+# shader source when the renderer is created instead of shelling out to
+# `xcrun metal` at build time — so this crate builds without the full Metal
+# Toolchain component installed.
+#
+# Linux takes the X11 backend alone. gpui gates its Linux windowing backends
+# independently (`src/platform/linux.rs`), and its default features would
+# otherwise pull the whole Wayland stack, which a Cinnamon desktop does not
+# use. `x11` brings `font-kit`, `cosmic-text` and `blade-graphics` with it.
+[target.'cfg(target_os = "macos")'.dependencies]
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui = { version = "0.2.2", default-features = false, features = ["x11"] }
