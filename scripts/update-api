@@ -1,0 +1,541 @@
+#!/usr/bin/env -S gos run
+// update-api - keep `gpui-binding` in step with the published `gpui` crate.
+//
+//   ./scripts/update-api            report only; changes nothing
+//   ./scripts/update-api --apply    bump the pin, keeping a backup
+//   ./scripts/update-api --check    check and triage the current pin
+//   ./scripts/update-api --revert   put the backup back
+//   ./scripts/update-api --from-log PATH   triage a saved check log
+//
+// `gpui` publishes to crates.io as pre-1.0 versions, so a patch bump may break
+// a signature (it has: `handler_for` in 0.2.2, `layout_line` in 0.2.1). This
+// script answers three questions in order:
+//
+//   1. What is the newest published `gpui`, and are we on it?
+//   2. If not, what does the bump cost - which errors does it produce, in which
+//      files, and of what kind?
+//   3. Which of those could a script fix, and which are always a human's?
+//
+// It deliberately does NOT generate API. Measured against this binding, a
+// signature-driven generator reaches about 16% of the remaining work and would
+// be actively wrong about the style surface - it would emit 2,915 functions
+// where the token language needs 45. See API-COVERAGE.md.
+//
+// `gpui-macros` is checked too, and stops the run: it generates 82 of the
+// methods this binding calls from prefix/suffix tables, so if its surface moves
+// the style language needs a person, not a compiler.
+
+use std::env
+use std::fs
+use std::http
+use std::encoding::json
+use std::process
+use std::strings
+
+const MANIFEST: &str = "gpui-binding/Cargo.toml"
+// The binding is not a standalone crate: `gossamer-binding` is injected when
+// `gos` builds it, so a bare `cargo check` inside `gpui-binding/` cannot
+// resolve its dependencies. Checking a program that uses the binding compiles
+// it the way the toolchain does, and reports its errors with the binding's own
+// paths.
+//
+// It must be a program with a `main` - a module file such as
+// `examples/ui/mod.gos` is not an entry point and `use gpui` will not resolve
+// there on its own.
+const PROBE: &str = "examples/07_hello_world.gos"
+// The manifest as it was before `--apply`, so `--revert` has something to put back.
+const BACKUP: &str = "gpui-binding/Cargo.toml.before-update-api"
+const CRATE_API: &str = "https://crates.io/api/v1/crates/gpui"
+const MACROS_API: &str = "https://crates.io/api/v1/crates/gpui-macros"
+
+// The files a bump always lands in, worst first. Each holds something no
+// rename can fix: a hand-written trait impl, or a struct literal with no
+// `..Default::default()` to absorb an added field.
+/// The files a bump always lands in, worst first. A function rather than a
+/// constant because Gossamer will not store references in one.
+fn human_files() -> Vec<String> {
+    Vec::from(["editor.rs", "app.rs", "style.rs", "view.rs", "path.rs"])
+}
+
+/// The newest published version of a crate, or "" when the registry cannot be
+/// reached or answers something unexpected. Says which on stderr, so a failure
+/// here is diagnosable rather than mysterious.
+fn newest(api: String, what: String) -> String {
+    let response = match http::get(api, Vec::from([])) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln("  {}: request failed: {}", what, e)
+            return ""
+        }
+    }
+    if response.status != 200 {
+        eprintln("  {}: the registry answered {}", what, response.status)
+        return ""
+    }
+    let document = match json::parse(response.body) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln("  {}: the registry answered something unparseable: {}", what, e)
+            return ""
+        }
+    }
+    let about = match json::get(document, "crate") {
+        Some(c) => c,
+        None => {
+            eprintln("  {}: the answer carried no \"crate\" object", what)
+            return ""
+        }
+    }
+    match json::get(about, "newest_version") {
+        Some(v) => json::as_str(v).unwrap_or(""),
+        None => {
+            eprintln("  {}: the \"crate\" object carried no newest_version", what)
+            ""
+        }
+    }
+}
+
+/// The version pinned for `name` in `manifest`, or "" when it is not there.
+///
+/// Reads the `name = { version = "x.y.z", ... }` form this workspace uses.
+fn pinned(manifest: String, name: String) -> String {
+    let text = match fs::read_to_string(manifest) {
+        Ok(t) => t,
+        Err(_) => return "",
+    }
+    let needle = name + " = { version = \""
+    let after_needle = strings::split(text, needle)
+    if after_needle.len() < 2 {
+        return ""
+    }
+    let after_version = strings::split(after_needle[1], "\"")
+    if after_version.len() < 2 {
+        return ""
+    }
+    after_version[0]
+}
+
+/// `text` with every `name = { version = "from" ... }` line retargeted to `to`.
+///
+/// Line-wise on purpose: a blind replace of the version string would also hit
+/// a dependency that happens to share it. Joins without adding a trailing
+/// newline, so a manifest that does not end in one keeps not ending in one.
+fn retarget(text: String, name: String, from: String, to: String) -> String {
+    let old = "version = \"" + from + "\""
+    let new = "version = \"" + to + "\""
+    let prefix = name + " = "
+    let mut out = ""
+    let mut first = true
+    for line in strings::split(text, "\n") {
+        let mut piece = line
+        if strings::starts_with(strings::trim(line), prefix) {
+            piece = strings::replace(line, old, new)
+        }
+        if first {
+            first = false
+        } else {
+            out = out + "\n"
+        }
+        out = out + piece
+    }
+    out
+}
+
+/// What kind of change a `cargo` diagnostic is, or "" when the line is not one.
+///
+/// This is the triage the whole script exists for. A rename is a script's job;
+/// a trait method set or a struct literal is always a person's.
+fn classify(line: String) -> String {
+    if strings::contains(line, "E0599") {
+        return "rename or removal  - mechanical candidate"
+    }
+    if strings::contains(line, "E0432") {
+        return "unresolved import   - mechanical candidate"
+    }
+    if strings::contains(line, "E0433") {
+        return "unresolved path     - mechanical candidate"
+    }
+    if strings::contains(line, "E0061") {
+        return "signature changed   - needs judgement"
+    }
+    if strings::contains(line, "E0308") {
+        return "type mismatch       - needs judgement"
+    }
+    if strings::contains(line, "E0407") {
+        return "trait method set    - ALWAYS a human"
+    }
+    if strings::contains(line, "E0560") {
+        return "struct literal      - ALWAYS a human"
+    }
+    if strings::starts_with(strings::trim(line), "error") {
+        return "unclassified        - read it"
+    }
+    ""
+}
+
+/// The `path` from a cargo `--> path:line:col` location line, or "".
+fn location(line: String) -> String {
+    let trimmed = strings::trim(line)
+    if !strings::starts_with(trimmed, "-->") {
+        return ""
+    }
+    let after = strings::trim(strings::replace(trimmed, "-->", ""))
+    let parts = strings::split(after, ":")
+    if parts.is_empty() {
+        return ""
+    }
+    parts[0]
+}
+
+/// The value given after `want` on the command line, or "".
+fn value_of(args: Vec<String>, want: String) -> String {
+    let mut i = 0
+    for arg in args {
+        if arg == want {
+            let next = i + 1
+            if next < args.len() {
+                return args[next]
+            }
+        }
+        i = i + 1
+    }
+    ""
+}
+
+/// True when the program was given `want`.
+fn asked_for(args: Vec<String>, want: String) -> bool {
+    for arg in args {
+        if arg == want {
+            return true
+        }
+    }
+    false
+}
+
+/// Runs `gos check` over the probe and answers its combined output.
+///
+/// The child must run with `GOSSAMER_IN_RUNNER` **removed**, not emptied: the
+/// toolchain tests it with `var_os(..).is_some()` to detect re-entry, and skips
+/// the whole binding dispatch when it is set - so a check started from inside a
+/// running program cannot resolve the binding's own modules and reports
+/// `module \`gpui\` does not exist`. `env -u` is how it goes away; an empty
+/// value would not, because presence is what is tested.
+fn run_check(root: String) -> String {
+    match process::run_in(
+        "env",
+        Vec::from(["-u", "GOSSAMER_IN_RUNNER", "gos", "check", *PROBE]),
+        root,
+        Vec::from([]),
+    ) {
+        Ok(out) => out.stdout + "\n" + out.stderr,
+        Err(e) => {
+            eprintln("update-api: could not run gos: {}", e)
+            process::exit(2)
+        }
+    }
+}
+
+/// Whether a diagnostic's path is inside the binding.
+fn in_binding(at: String) -> bool {
+    strings::contains(at, "gpui-binding/")
+}
+
+/// Reports the bump's cost, from a check log and its exit code.
+///
+/// Only diagnostics inside `gpui-binding/` are the binding's. Anything else is
+/// the probe program failing to check at all - a wrong probe, a missing
+/// toolchain, a fetch that failed - and is reported as this script's problem
+/// rather than as fallout from the bump.
+fn worklist(log: String, code: i64, verbose: bool) {
+    let mut kinds: Vec<String> = Vec::from([])
+    let mut counts: Vec<i64> = Vec::from([])
+    let mut files: Vec<String> = Vec::from([])
+    let mut file_counts: Vec<i64> = Vec::from([])
+    let mut elsewhere: Vec<String> = Vec::from([])
+    let mut total = 0
+    let mut pending = ""
+    for line in strings::split(log, "\n") {
+        let kind = classify(line)
+        if kind != "" {
+            pending = kind
+            continue
+        }
+        let at = location(line)
+        if at == "" {
+            continue
+        }
+        if pending == "" {
+            continue
+        }
+        let owned = pending
+        pending = ""
+        if !in_binding(at) {
+            elsewhere = push_string(elsewhere, at + "   " + owned)
+            continue
+        }
+        total = total + 1
+        let at_kind = index_of(kinds, owned)
+        if at_kind < 0 {
+            kinds = push_string(kinds, owned)
+            counts = push_int(counts, 1)
+        } else {
+            counts[at_kind] = counts[at_kind] + 1
+        }
+        let at_file = index_of(files, at)
+        if at_file < 0 {
+            files = push_string(files, at)
+            file_counts = push_int(file_counts, 1)
+        } else {
+            file_counts[at_file] = file_counts[at_file] + 1
+        }
+    }
+
+    if elsewhere.len() > 0 {
+        println("  {} diagnostic(s) OUTSIDE the binding - the probe did not check:", elsewhere.len())
+        println("")
+        for at in elsewhere {
+            println("      {}", at)
+        }
+        println("")
+        println("  That is this script's problem, not the bump's. Check that {} is a", *PROBE)
+        println("  program with a `main` that uses the binding, and that `gos check {}`", *PROBE)
+        println("  is clean on its own, then re-run.")
+        println("")
+        return
+    }
+
+    if total == 0 {
+        if code != 0 {
+            println("  the check exited {} without a diagnostic inside the binding.", code)
+            println("")
+            for line in strings::split(log, "\n") {
+                if strings::trim(line) != "" {
+                    println("    {}", line)
+                }
+            }
+            println("")
+            println("  Nothing was concluded.")
+        } else {
+            println("  the binding still compiles. Nothing to do.")
+        }
+        return
+    }
+
+    println("  {} diagnostic(s) in the binding.", total)
+    println("")
+    let mut i = 0
+    for kind in kinds {
+        println("    {:3}  {}", counts[i], kind)
+        i = i + 1
+    }
+    println("")
+    println("  by file:")
+    let mut j = 0
+    for at in files {
+        let mut flag = "   "
+        for human in human_files() {
+            if strings::ends_with(at, human) {
+                flag = " ! "
+            }
+        }
+        println("   {} {:4}  {}", flag, file_counts[j], at)
+        j = j + 1
+    }
+    println("")
+    println("  ( ! marks a file that always needs a person: a hand-written trait")
+    println("    impl, or a struct literal with no ..Default to absorb a field.)")
+    if verbose {
+        println("")
+        println("  raw diagnostics:")
+        for line in strings::split(log, "\n") {
+            if strings::trim(line) != "" {
+                println("    {}", line)
+            }
+        }
+    } else {
+        println("")
+        println("  Pass --verbose for the raw diagnostics.")
+    }
+}
+
+/// The index of `want` in `items`, or -1.
+fn index_of(items: Vec<String>, want: String) -> i64 {
+    let mut i = 0
+    for item in items {
+        if item == want {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+fn push_string(items: Vec<String>, item: String) -> Vec<String> {
+    let mut out = items
+    out.push(item)
+    out
+}
+
+fn push_int(items: Vec<i64>, item: i64) -> Vec<i64> {
+    let mut out = items
+    out.push(item)
+    out
+}
+
+fn main() {
+    let args = env::args()
+    let apply = asked_for(args, "--apply")
+    let check = asked_for(args, "--check")
+    let revert = asked_for(args, "--revert")
+    let verbose = asked_for(args, "--verbose")
+    let from_log = value_of(args, "--from-log")
+
+    // `--from-log PATH` runs the triage over a saved log and stops. It exists so
+    // the classifier can be exercised without paying for a rebuild.
+    if from_log != "" {
+        let saved = match fs::read_to_string(from_log) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln("update-api: cannot read {}: {}", from_log, e)
+                process::exit(2)
+            }
+        }
+        println("update-api - triaging {}", from_log)
+        println("")
+        worklist(saved, 0, verbose)
+        return
+    }
+
+    let root = match env::current_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln("update-api: cannot find the working directory: {}", e)
+            process::exit(2)
+        }
+    }
+
+    println("update-api - is gpui-binding still in step with gpui?")
+    println("")
+
+    let want = newest(*CRATE_API, "gpui")
+    let want_macros = newest(*MACROS_API, "gpui-macros")
+    let have = pinned(*MANIFEST, "gpui")
+
+    println("  pinned   gpui {}", have)
+    if want != "" {
+        println("  newest   gpui {}", want)
+    }
+    if want_macros != "" {
+        println("  newest   gpui-macros {}", want_macros)
+    }
+    println("")
+
+    if want == "" {
+        eprintln("update-api: could not read the newest version, so there is nothing to")
+        eprintln("            compare against. The pinned version above is what the build")
+        eprintln("            uses; re-run when the registry is reachable.")
+        process::exit(2)
+    }
+
+    // `--check` and `--revert` have work to do whatever the pin says.
+    if have == want && !check && !revert {
+        println("Up to date. Nothing to do.")
+        println("")
+        println("  The binding tracks {}, the newest published release, so this is the", want)
+        println("  cheap answer and the script stops here. Run it again after the next")
+        println("  release; the crate published three versions in its first thirteen days.")
+        return
+    }
+
+    if have != want {
+        println("{} -> {} is available.", have, want)
+        println("")
+    }
+
+    if want_macros != "" && want_macros != want {
+        println("NOTE: gpui-macros is at {} while gpui is at {}.", want_macros, want)
+        println("")
+        println("  They are versioned in lockstep, so this is unexpected and worth a look")
+        println("  before you trust a clean build: gpui-macros generates 82 of the methods")
+        println("  this binding calls, from prefix/suffix tables, and a compiler cannot")
+        println("  tell a rename there from a change of meaning.")
+        println("")
+    }
+
+    if apply {
+        if have == want {
+            println("Already on {}, the newest release. There is nothing to bump.", want)
+            return
+        }
+        let original = match fs::read_to_string(*MANIFEST) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln("update-api: cannot read {}: {}", *MANIFEST, e)
+                process::exit(2)
+            }
+        }
+        match fs::write(*BACKUP, original.as_bytes()) {
+            Ok(_) => ()
+            Err(e) => {
+                eprintln("update-api: cannot write the backup {}: {}", *BACKUP, e)
+                process::exit(2)
+            }
+        }
+        let bumped = retarget(original, "gpui", have, want)
+        match fs::write(*MANIFEST, bumped.as_bytes()) {
+            Ok(_) => ()
+            Err(e) => {
+                eprintln("update-api: cannot write {}: {}", *MANIFEST, e)
+                process::exit(2)
+            }
+        }
+        println("Bumped {} from {} to {}.", *MANIFEST, have, want)
+        println("")
+        println("  A backup of the old manifest is at {}; `--revert` puts it back.", *BACKUP)
+        println("")
+        println("  Now check it:")
+        println("")
+        println("      ./scripts/update-api --check")
+        println("")
+        println("  This step is deliberately a separate run. Checking in the same")
+        println("  process that rewrote the manifest does not reliably resolve the")
+        println("  binding's own modules - the toolchain is still settling caches for")
+        println("  a dependency version it has never built. A fresh run checks cleanly.")
+        return
+    }
+
+    if revert {
+        let saved = match fs::read_to_string(*BACKUP) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln("update-api: no backup to revert to ({}): {}", *BACKUP, e)
+                process::exit(2)
+            }
+        }
+        match fs::write(*MANIFEST, saved.as_bytes()) {
+            Ok(_) => println("Restored {} from {}.", *MANIFEST, *BACKUP)
+            Err(e) => {
+                eprintln("update-api: cannot write {}: {}", *MANIFEST, e)
+                process::exit(2)
+            }
+        }
+        return
+    }
+
+    if !check {
+        println("Nothing has changed. To bring the binding up to date:")
+        println("")
+        println("    ./scripts/update-api --apply     bump {} to {}", *MANIFEST, want)
+        println("    ./scripts/update-api --check     compile and triage the fallout")
+        println("")
+        println("  --apply keeps a backup and changes nothing else; --revert undoes it.")
+        return
+    }
+
+    println("Checking {} - this compiles the binding, and so builds gpui itself,", *PROBE)
+    println("which takes minutes rather than seconds.")
+    println("")
+
+    let log = run_check(root)
+    worklist(log, 0, verbose)
+}

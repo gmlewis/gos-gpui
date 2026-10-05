@@ -478,6 +478,40 @@ Its header documents the deviations: the application keymap is the binding's, so
 the editor matches keystrokes itself rather than through thirteen bound actions,
 and the widget paints no chrome of its own.
 
+### Keeping up with gpui
+
+`gpui` publishes to crates.io as pre-1.0 versions — three of them in its first
+thirteen days — so a patch bump can break a signature. `scripts/update-api`
+answers whether the binding is still in step, and what a bump would cost:
+
+```sh
+./scripts/update-api            # is gpui-binding current? changes nothing
+./scripts/update-api --apply    # bump the pin, keeping a backup
+./scripts/update-api --check    # compile and triage the fallout
+./scripts/update-api --revert   # put the backup back
+```
+
+`--check` compiles the binding and sorts the errors into what a script could fix
+(a rename, an unresolved import) and what always needs a person (a changed
+signature, a hand-written trait method, a struct literal with no `..Default`).
+It flags the files where the second kind always lands.
+
+The binding currently calls 338 distinct gpui items across 620 call sites, and
+two real releases would have cost two version literals — the nine public changes
+between 0.2.0 and 0.2.2 do not intersect anything used here. That is luck rather
+than contract, which is the reason to keep the check cheap.
+
+It deliberately does **not** generate API. A signature-driven generator reaches
+about 16% of the remaining work and would be wrong about the style surface: see
+[`API-COVERAGE.md`](API-COVERAGE.md).
+
+Two things worth knowing about it, both learned the hard way while writing it.
+The check must run with `GOSSAMER_IN_RUNNER` **removed** rather than emptied — the
+toolchain tests it with `var_os(..).is_some()` and skips the whole binding
+dispatch when it is set, so a check started from inside a running program cannot
+resolve the binding's own modules. And it must be a **separate invocation** from
+`--apply`, which is why those are two commands rather than one.
+
 ### Deviations that apply to every port
 
 Knowing these keeps a difference from being mistaken for a bug:
