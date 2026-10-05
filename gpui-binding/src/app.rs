@@ -13,7 +13,7 @@ use gpui::{
     TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 
-use gossamer_binding::{NativeDispatch, PersistentCallback};
+use gossamer_binding::{NativeDispatch, RetainedCallback};
 
 use crate::store::{self, Request};
 use crate::view;
@@ -21,7 +21,7 @@ use crate::view;
 /// The single root view. It owns the Gossamer view callback and rebuilds the
 /// element tree from scratch on every frame.
 pub struct Root {
-    view: PersistentCallback,
+    view: RetainedCallback,
 }
 
 impl Render for Root {
@@ -48,7 +48,7 @@ impl Render for Root {
 }
 
 // Windows a frame asked for. Kept here rather than in `store::Request`
-// because a `static Mutex` would demand `PersistentCallback: Send`.
+// because a `static Mutex` would demand a `Send` callback.
 thread_local! {
     static PENDING_OPEN: RefCell<Vec<PendingOpen>> = const { RefCell::new(Vec::new()) };
 }
@@ -61,7 +61,7 @@ pub struct PendingOpen {
     pub w: f64,
     pub h: f64,
     pub options: String,
-    pub view: PersistentCallback,
+    pub view: RetainedCallback,
 }
 
 /// Queues a window. It is opened after the current frame, never during it:
@@ -298,7 +298,7 @@ pub fn run_app(
     width: f64,
     height: f64,
     options: &str,
-    view: PersistentCallback,
+    view: RetainedCallback,
 ) -> Result<(), String> {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::SeqCst) {

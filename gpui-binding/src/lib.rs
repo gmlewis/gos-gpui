@@ -71,12 +71,14 @@ gossamer_binding::register_module!(
     /// element — end it with `ui::column(..)` or another element, not with a
     /// bare statement.
     cb_fn run(d, title: String, width: f64, height: f64, view: PersistentCallback) -> Result<(), String> {
-        app::run_app(d, title, width, height, "", view)
+        // Retained: the view is invoked once per frame, for the whole life of
+        // the app, which outlasts the call that handed it over.
+        app::run_app(d, title, width, height, "", view.retain())
     }
 
     /// `run`, with window options: `"resizable=false titlebar=none float=true background=blur"`.
     cb_fn run_with(d, title: String, width: f64, height: f64, options: String, view: PersistentCallback) -> Result<(), String> {
-        app::run_app(d, title, width, height, &options, view)
+        app::run_app(d, title, width, height, &options, view.retain())
     }
 
     /// Close the window and end the program.
@@ -521,7 +523,9 @@ gossamer_binding::register_module!(
     /// screen, is called with the row's index, and answers that row's element.
     cb_fn list(_d, id: String, count: i64, row_height: f64, style: String, build: PersistentCallback) -> i64 {
         view::push(
-            Kind::Virtual { count: count.max(0) as usize, build, row_height },
+            // Retained: rows are built while the list lays out, after this
+            // call has returned.
+            Kind::Virtual { count: count.max(0) as usize, build: build.retain(), row_height },
             style,
             id,
         )
@@ -539,7 +543,9 @@ gossamer_binding::register_module!(
     /// frame being built.
     cb_fn open_window(d, title: String, x: f64, y: f64, w: f64, h: f64, options: String, view: PersistentCallback) -> () {
         let _ = d;
-        app::queue_window(app::PendingOpen { title, x, y, w, h, options, view })
+        // Retained: the window opens after the frame that asked for it, and
+        // its view is invoked from then on.
+        app::queue_window(app::PendingOpen { title, x, y, w, h, options, view: view.retain() })
     }
 
     /// Close the window this frame belongs to.

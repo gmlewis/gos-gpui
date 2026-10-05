@@ -19,7 +19,7 @@ use gpui::{
     ElementId, EntityId, FocusHandle, KeyDownEvent, MouseButton, Pixels, SharedString, Svg, Window,
 };
 
-use gossamer_binding::{NativeDispatch, PersistentCallback, Value};
+use gossamer_binding::{NativeDispatch, RetainedCallback, Value};
 
 use crate::editor;
 use crate::path;
@@ -56,7 +56,7 @@ pub fn clear_dispatch() {
 
 /// Calls back into a Gossamer closure — the view callback, or a list's row
 /// builder — and answers what it answered.
-pub fn invoke(view: &PersistentCallback, args: Vec<Value>) -> Result<Value, String> {
+pub fn invoke(view: &RetainedCallback, args: Vec<Value>) -> Result<Value, String> {
     let Some(raw) = DISPATCH.with(|cell| cell.get()) else {
         return Err("a Gossamer callback was asked to run outside gpui::run".into());
     };
@@ -86,7 +86,9 @@ pub enum Kind {
     Spacer(f64),
     /// A `uniform_list`: `build` is called once per *visible* row and answers
     /// that row's element handle.
-    Virtual { count: usize, build: PersistentCallback, row_height: f64 },
+    /// The row builder. A retained callback: a list is built during
+    /// layout, after `gpui::list` has returned.
+    Virtual { count: usize, build: RetainedCallback, row_height: f64 },
     /// A `canvas` painted by one of the routines below.
     Canvas { painter: String, phase: f64 },
     /// A `canvas` that paints built paths, in order.

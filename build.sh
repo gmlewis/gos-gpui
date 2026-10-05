@@ -6,10 +6,11 @@
 #   ./build.sh 04 --release
 #   ./build.sh --print 04    # just resolve the argument
 #
-# NOTE: `gos build` currently miscompiles this shape — the binary links but
-# aborts at startup with a misaligned-pointer panic in the runtime. Use
-# `./run.sh` instead. This script is kept because the *linker* half of the
-# problem is real and will need solving once the codegen half is fixed.
+# NOTE: `gos build` used to miscompile this shape — the binary linked but
+# aborted at startup with a misaligned-pointer panic in the runtime. That is
+# fixed as of `gos` 0.66.0 rebuilt on this machine, so a native build renders
+# the same pixels `./run.sh` does. The *linker* half of the problem is still
+# real and is why the wrapper below is required.
 #
 # `gos build` links the binary itself and has no way to write `-framework …`
 # (macOS) or `-l…` for the windowing libraries (Linux) into that link line, so

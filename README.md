@@ -7,9 +7,10 @@ that publishes the framework behind a flat, Gossamer-shaped module called
 `gpui` — and a small Gossamer module, `ui`, that puts a chainable `El` type on
 top of it.
 
-All twenty-seven are ported and runnable. See
-[Porting status](#porting-status), and [`PORTING.md`](PORTING.md) for the ABI
-decisions and the bugs the port itself surfaced.
+All twenty-seven are ported and runnable. See [Porting status](#porting-status) for the per-example detail,
+[`PORTING.md`](PORTING.md) for the ABI decisions and the bugs the port itself
+surfaced, and [`API-COVERAGE.md`](API-COVERAGE.md) for how much of gpui is
+reachable from Gossamer and what the rest would take.
 
 ```
 examples/01_animation.gos    …    examples/27_window.gos
@@ -174,17 +175,19 @@ per-machine and regenerates cleanly.
 ## Building a native binary — currently blocked
 
 ```sh
-./build.sh 07 --release        # links, but the binary aborts at startup
+./build.sh 07                  # a native binary, same pixels as ./run.sh 07
+./build.sh 07 --release        # and optimised
 ```
 
-**Use `run.sh` for now.** `gos build` produces a binary that aborts before the
-window appears, with a misaligned-pointer panic inside the runtime
-(`c_abi/bufio.rs`). It does so for every shape tried, including a program that
-uses no part of the `ui` module — see [Notes and limits](#notes-and-limits).
-Nothing about it is specific to these examples; `gos run` is the working tier.
+**Both tiers work now.** `gos build` used to produce a binary that aborted
+before the window appeared, with a misaligned-pointer panic inside the runtime
+(`c_abi/bufio.rs`); as of `gos` 0.66.0 as rebuilt on this machine it links and
+renders, and `07_hello_world` draws its swatches at the same panel geometry and
+the same colours as `gos run` and as upstream — see
+[Notes and limits](#notes-and-limits).
 
-The linker half of the problem is real and separate, and is worth keeping for
-when the codegen half is fixed. `gos build` links the binary itself, and its
+One half of the old problem was real and is still there to be solved. `gos build`
+links the binary itself, and its
 linker plan can only emit `-L` and `-l` — there is no manifest key for
 `-framework`, and `-lAppKit` does not resolve because AppKit is a framework
 rather than a `libAppKit.tbd`. Left alone the link fails with a wall of
@@ -521,12 +524,13 @@ Knowing these keeps a difference from being mistaken for a bug:
   a container at once — `ui::row(..).children((0..n).map(build).collect())` —
   which is tidier anyway.
 
-  *On the native tier* (`gos build`), a binary built from a program that only
-  creates elements through the binding and hands the frame its root aborts the
-  same way, before any window appears. It reproduces on a twenty-line program
-  with no `ui` module and no element chaining, and survives `gos clean` and a
-  full rebuild, so it is not a stale artefact. This is why `run.sh` is the
-  supported path and `build.sh` is not.
+  *On the native tier* (`gos build`), the same shape used to abort before any
+  window appeared, reproducing on a twenty-line program with no `ui` module and
+  surviving `gos clean`. **That is fixed** as of `gos` 0.66.0 rebuilt on this
+  machine: `./build.sh 07` links and renders, and the swatches land where the
+  interpreter puts them. So `build.sh` is now a supported path alongside
+  `run.sh` — with the caveat that its linker plan still needs `$CC` pointed at
+  `tools/cc-gpui.sh`, which `build.sh` does.
 - **Every frame is rebuilt from scratch.** GPUI is hybrid immediate/retained,
   and this binding takes the immediate half: a custom `Render` impl re-invokes
   the Gossamer callback and describes the whole window again, rather than
