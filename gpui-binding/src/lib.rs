@@ -474,8 +474,12 @@ gossamer_binding::register_module!(
         )
     }
 
-    /// Raise every keystroke the window receives as `"<id>|<unparsed>"`,
-    /// whether or not a focused element handled it. Installed once.
+    /// Raise keystrokes as `"<id>|<unparsed>"`. Installed once.
+    ///
+    /// Not quite upstream's `cx.observe_keystrokes`: gpui stops the observer at
+    /// the first handler that stops propagation, and the text editor does, so
+    /// the keys it consumes — backspace, the arrows, and the rest — do not
+    /// reach this. Keys nothing handled do.
     fn observe_keystrokes(id: String) {
         store::request(store::Request::ObserveKeys { id })
     }

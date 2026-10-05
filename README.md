@@ -53,13 +53,13 @@ examples.
 ## Run an example
 
 ```sh
-./run.sh 04                       # or: ./run.sh examples/04_interaction.gos
+./run.sh 04                       # or: ./run.sh examples/04_gif_viewer.gos
 ```
 
 or directly:
 
 ```sh
-gos run --main-thread examples/04_interaction.gos
+gos run --main-thread examples/04_gif_viewer.gos
 ```
 
 `--main-thread` is not optional, on either platform. GPUI drives a native event
@@ -92,9 +92,9 @@ misbehaves here, running the upstream example for it separates three cases:
 
 ```sh
 ./tools/upstream-examples.sh list
-./tools/upstream-examples.sh run hello_world      # ~ our 01_hello
-./tools/upstream-examples.sh run uniform_list     # ~ our 06_lists
-./tools/upstream-examples.sh run input            # ~ our 05_forms
+./tools/upstream-examples.sh run hello_world      # ~ our 07_hello_world
+./tools/upstream-examples.sh run uniform_list     # ~ our 24_uniform_list
+./tools/upstream-examples.sh run input            # ~ our 09_input
 ./tools/upstream-examples.sh build painting       # compile without running
 ```
 
@@ -271,7 +271,7 @@ it is where the chaining lives.
 | `ui::image(path, style)` / `ui::icon(path, style)` | a raster image / an SVG tinted by `color=` |
 | `ui::rect(style)` | an empty styled box |
 | `ui::divider(style)` / `ui::spacer(size)` | |
-| `ui::draw(painter, phase, style)` | a directly painted surface: `"bars"`, `"wave"` or `"stripes"` |
+| `ui::draw(painter, phase, style)` | a directly painted surface: `"bars"`, `"wave"`, `"stripes"` or `"prism"` |
 | `ui::list(id, count, row_height, style, build)` | a virtualised list; `build` takes the row index and answers that row's element |
 
 ### On any element

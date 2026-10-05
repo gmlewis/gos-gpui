@@ -3,9 +3,9 @@
 # Run one of the examples.
 #
 #   ./run.sh                # lists the examples
-#   ./run.sh 04             # runs examples/04_interaction.gos
-#   ./run.sh 04_interaction # the same, by name
-#   ./run.sh examples/06_lists.gos
+#   ./run.sh 04             # runs examples/04_gif_viewer.gos
+#   ./run.sh 04_gif_viewer  # the same, by name
+#   ./run.sh examples/06_grid_layout.gos
 #
 # `--main-thread` is not optional: GPUI drives a native event loop — AppKit on
 # macOS, X11 on Linux — and both insist on the process main thread. `gos run`

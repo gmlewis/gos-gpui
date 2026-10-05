@@ -72,6 +72,18 @@ pub fn queue_window(pending: PendingOpen) {
     PENDING_OPEN.with(|q| q.borrow_mut().push(pending));
 }
 
+/// Installs the default colours for the window's actual appearance.
+///
+/// `App::init_colors` installs `Colors::default()`, which is `Colors::light()`
+/// whatever the system is set to — so `gpui::default_color("background")`
+/// answers `#ffffff` on a dark-mode desktop unless this runs. `Colors` also
+/// carries no appearance of its own, so the only way to know is to ask a
+/// window.
+fn install_appearance_colors(window: &mut Window, cx: &mut App) {
+    let colors = gpui::colors::Colors::for_appearance(window);
+    cx.set_global(gpui::colors::GlobalColors(std::sync::Arc::new(colors)));
+}
+
 /// Installed repeating timers, keyed by the event id they emit.
 static TICKS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
@@ -201,7 +213,8 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
                     &request.options,
                 );
                 let view = request.view.clone();
-                let _ = cx.open_window(options, move |_window, cx| {
+                let _ = cx.open_window(options, move |window, cx| {
+                    install_appearance_colors(window, cx);
                     cx.new(|_| Root { view: view.clone() })
                 });
             }
@@ -325,6 +338,9 @@ pub fn run_app(
     Application::new().run(move |cx: &mut App| {
         // Before any window exists: opening one draws it once, and that first
         // frame reads the default colours.
+        // A fallback for frames drawn before a window exists. `init_colors`
+        // installs the *light* set unconditionally, so the real scheme is
+        // installed per window below, where `appearance()` is knowable.
         cx.init_colors();
         view::set_keyboard_layout(cx.keyboard_layout().name().to_string());
         let bounds = Bounds::centered(None, size(px(width as f32), px(height as f32)), cx);
@@ -355,7 +371,8 @@ pub fn run_app(
             ..Default::default()
         };
 
-        let opened = cx.open_window(options, move |_window, cx| {
+        let opened = cx.open_window(options, move |window, cx| {
+            install_appearance_colors(window, cx);
             cx.new(|_| Root { view: root_view.clone() })
         });
 
