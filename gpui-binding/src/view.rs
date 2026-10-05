@@ -1,9 +1,13 @@
-//! The element tree, the immediate-mode builder, and the translation from a
-//! Gossamer-described tree into real GPUI elements.
+//! The described element tree, and its translation into real GPUI elements.
 //!
-//! Gossamer never sees a GPUI type. It appends *descriptions* — [`El`] — to a
-//! thread-local builder while the view callback runs, and this module turns
-//! the finished tree into a GPUI element tree at the end of the frame.
+//! Gossamer never sees a GPUI type. `gpui::column(style)` and friends append a
+//! description — an [`El`] — to a per-frame arena and answer its `i64` handle;
+//! `gpui::child(parent, child)` links one handle under another, and the view
+//! callback ends by answering the root's handle. This module turns that
+//! described tree into a GPUI element tree once the frame is built.
+//!
+//! Handles are plain integers in Gossamer, so the ergonomic layer — a type
+//! with `.child(...)` methods — lives on the Gossamer side, in `examples/ui`.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -11,9 +15,8 @@ use std::path::PathBuf;
 
 use gpui::prelude::*;
 use gpui::{
-    canvas, div, fill, img, point, px, relative, svg, uniform_list, AnyElement, App,
-    Bounds, ElementId, EntityId, FocusHandle, KeyDownEvent, MouseButton, Pixels, SharedString,
-    Svg, Window,
+    canvas, div, fill, img, point, px, relative, svg, uniform_list, AnyElement, App, Bounds,
+    ElementId, EntityId, FocusHandle, KeyDownEvent, MouseButton, Pixels, SharedString, Svg, Window,
 };
 
 use gossamer_binding::{NativeDispatch, PersistentCallback, Value};
@@ -49,10 +52,11 @@ pub fn clear_dispatch() {
     DISPATCH.with(|cell| cell.set(None));
 }
 
-/// Calls back into the Gossamer view callback.
+/// Calls back into a Gossamer closure — the view callback, or a list's row
+/// builder — and answers what it answered.
 pub fn invoke(view: &PersistentCallback, args: Vec<Value>) -> Result<Value, String> {
     let Some(raw) = DISPATCH.with(|cell| cell.get()) else {
-        return Err("the view callback was asked to run outside gpui::run".into());
+        return Err("a Gossamer callback was asked to run outside gpui::run".into());
     };
     // SAFETY: see `stash_dispatch`. `raw` stays live for the whole run loop,
     // and every frame is built on the UI thread, one at a time.
@@ -78,7 +82,8 @@ pub enum Kind {
     Icon(String),
     Divider,
     Spacer(f64),
-    /// A `uniform_list`: `build` is called once per *visible* row.
+    /// A `uniform_list`: `build` is called once per *visible* row and answers
+    /// that row's element handle.
     Virtual { count: usize, build: PersistentCallback, row_height: f64 },
     /// A `canvas` painted by one of the routines below.
     Canvas { painter: String, phase: f64 },
@@ -88,85 +93,140 @@ pub struct El {
     pub kind: Kind,
     pub style: String,
     pub id: String,
-    pub children: Vec<El>,
+    pub children: Vec<usize>,
 }
 
 impl El {
-    fn new(kind: Kind, style: String, id: String) -> Self {
-        Self { kind, style, id, children: Vec::new() }
+    fn blank() -> Self {
+        Self { kind: Kind::Plain, style: String::new(), id: String::new(), children: Vec::new() }
     }
 }
 
 // ---------------------------------------------------------------------------
-// the builder
+// the arena of described elements
 // ---------------------------------------------------------------------------
 
-struct Builder {
-    stack: Vec<Vec<El>>,
+struct Arena {
+    els: Vec<El>,
     errors: Vec<String>,
     next_id: u64,
 }
 
-impl Builder {
+impl Arena {
     fn new() -> Self {
-        Self { stack: vec![Vec::new()], errors: Vec::new(), next_id: 0 }
+        Self { els: vec![El::blank()], errors: Vec::new(), next_id: 0 }
     }
 
     fn reset(&mut self) {
-        self.stack.clear();
-        self.stack.push(Vec::new());
+        self.els.truncate(1);
         self.errors.clear();
     }
 
-    fn open(&mut self) {
-        self.stack.push(Vec::new());
-    }
-
-    fn close(&mut self, kind: Kind, style: String, id: String) {
-        let children = self.stack.pop().unwrap_or_default();
-        if self.stack.is_empty() {
-            self.errors.push("element closed with no open container".into());
-            self.stack.push(Vec::new());
-            return;
-        }
-        let id = if id.is_empty() { self.auto_id() } else { id };
-        let mut el = El::new(kind, style, id);
-        el.children = children;
-        self.stack.last_mut().unwrap().push(el);
-    }
-
-    fn leaf(&mut self, kind: Kind, style: String, id: String) {
-        let id = if id.is_empty() { self.auto_id() } else { id };
-        self.stack.last_mut().unwrap().push(El::new(kind, style, id));
-    }
-
-    fn auto_id(&mut self) -> String {
-        self.next_id += 1;
-        format!("gpui-auto-{}", self.next_id)
+    fn push(&mut self, kind: Kind, style: String, id: String) -> i64 {
+        let id = if id.is_empty() {
+            self.next_id += 1;
+            format!("gpui-auto-{}", self.next_id)
+        } else {
+            id
+        };
+        self.els.push(El { kind, style, id, children: Vec::new() });
+        (self.els.len() - 1) as i64
     }
 }
 
 thread_local! {
-    static START: std::cell::OnceCell<std::time::Instant> = const { std::cell::OnceCell::new() };
-    static BUILDER: RefCell<Builder> = RefCell::new(Builder::new());
+    static ARENA: RefCell<Arena> = RefCell::new(Arena::new());
     static FRAME: Cell<u64> = const { Cell::new(0) };
+    static START: std::cell::OnceCell<std::time::Instant> = const { std::cell::OnceCell::new() };
+    static ROOT: Cell<i64> = const { Cell::new(0) };
     static REPORTED: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
 }
 
-/// Clears the build stack for a new frame, counting the frame.
+/// Starts a frame: an empty arena, and one more frame on the clock.
 pub fn reset() {
-    reset_tree();
+    ARENA.with(|a| a.borrow_mut().reset());
+    ROOT.with(|r| r.set(0));
     FRAME.with(|f| f.set(f.get() + 1));
 }
 
-/// Clears the build stack without counting a frame — used when a nested
-/// builder (a virtualised list's row callback) runs mid-frame.
-pub fn reset_tree() {
-    BUILDER.with(|b| b.borrow_mut().reset());
+/// Names the element this frame should render as the window's root.
+pub fn set_root(handle: i64) {
+    ROOT.with(|r| r.set(handle));
 }
 
-/// Typos in a style string are reported once, on screen, rather than
-/// silently doing nothing.
+/// The root the frame named, or `None` when it named none.
+pub fn named_root() -> Option<i64> {
+    ROOT.with(|r| r.get()).checked_abs().filter(|h| *h > 0)
+}
+
+pub fn frame_number() -> u64 {
+    FRAME.with(|f| f.get())
+}
+
+pub fn seconds_since_start() -> f64 {
+    START.with(|s| s.get_or_init(std::time::Instant::now).elapsed().as_secs_f64())
+}
+
+/// Appends one described element and answers its handle.
+pub fn push(kind: Kind, style: String, id: String) -> i64 {
+    check_style(&style);
+    ARENA.with(|a| a.borrow_mut().push(kind, style, id))
+}
+
+/// Links `child` under `parent`, and answers `parent` so the call can start a
+/// chain.
+pub fn child(parent: i64, child: i64) -> i64 {
+    ARENA.with(|a| {
+        let mut a = a.borrow_mut();
+        link(&mut a, parent, child);
+    });
+    parent
+}
+
+/// Links a whole run of children, in order, and answers `parent`.
+pub fn children(parent: i64, nodes: Vec<i64>) -> i64 {
+    ARENA.with(|a| {
+        let mut a = a.borrow_mut();
+        for node in nodes {
+            link(&mut a, parent, node);
+        }
+    });
+    parent
+}
+
+fn link(arena: &mut Arena, parent: i64, child: i64) {
+    let last = arena.els.len().saturating_sub(1);
+    let target = usize::try_from(parent)
+        .ok()
+        .filter(|p| *p > 0 && *p <= last)
+        .unwrap_or(last);
+    if let Some(el) = arena.els.get_mut(target) {
+        el.children.push(usize::try_from(child).unwrap_or(0));
+    }
+}
+
+/// The arena's current length, so a list's row builder can hand its elements
+/// back once the row has been turned into a real GPUI element.
+pub fn mark() -> usize {
+    ARENA.with(|a| a.borrow().els.len())
+}
+
+pub fn release_to(mark: usize) {
+    ARENA.with(|a| {
+        let mut a = a.borrow_mut();
+        if mark >= 1 && mark <= a.els.len() {
+            a.els.truncate(mark);
+        }
+    });
+}
+
+pub fn note_error(message: impl Into<String>) {
+    let message = message.into();
+    ARENA.with(|a| a.borrow_mut().errors.push(message));
+}
+
+/// Typos in a style string are reported once, on screen, rather than silently
+/// doing nothing.
 fn check_style(style: &str) {
     let unknown = style::unknown_tokens(style);
     if unknown.is_empty() {
@@ -183,96 +243,60 @@ fn check_style(style: &str) {
     }
 }
 
-pub fn frame_number() -> u64 {
-    FRAME.with(|f| f.get())
+/// Copies one described element out of the arena, so nothing borrows it while
+/// a nested callback re-enters.
+fn snapshot(handle: i64) -> Option<El> {
+    ARENA.with(|a| {
+        let arena = a.borrow();
+        let el = usize::try_from(handle).ok().and_then(|h| arena.els.get(h))?;
+        Some(El {
+            kind: match &el.kind {
+                Kind::Plain => Kind::Plain,
+                Kind::Text(s) => Kind::Text(s.clone()),
+                Kind::Button(s) => Kind::Button(s.clone()),
+                Kind::Checkbox { label, checked } => {
+                    Kind::Checkbox { label: label.clone(), checked: *checked }
+                }
+                Kind::Input { placeholder } => Kind::Input { placeholder: placeholder.clone() },
+                Kind::Slider { min, max } => Kind::Slider { min: *min, max: *max },
+                Kind::Progress(v) => Kind::Progress(*v),
+                Kind::Image(s) => Kind::Image(s.clone()),
+                Kind::Icon(s) => Kind::Icon(s.clone()),
+                Kind::Divider => Kind::Divider,
+                Kind::Spacer(s) => Kind::Spacer(*s),
+                Kind::Virtual { count, build, row_height } => {
+                    Kind::Virtual { count: *count, build: build.clone(), row_height: *row_height }
+                }
+                Kind::Canvas { painter, phase } => {
+                    Kind::Canvas { painter: painter.clone(), phase: *phase }
+                }
+            },
+            style: el.style.clone(),
+            id: el.id.clone(),
+            children: el.children.clone(),
+        })
+    })
 }
 
-pub fn seconds_since_start() -> f64 {
-    START.with(|s| s.get_or_init(std::time::Instant::now).elapsed().as_secs_f64())
-}
-
-pub fn open() {
-    BUILDER.with(|b| b.borrow_mut().open());
-}
-
-pub fn close(kind: Kind, style: String, id: String) {
-    BUILDER.with(|b| b.borrow_mut().close(kind, style, id));
-}
-
-pub fn leaf(kind: Kind, style: String, id: String) {
-    check_style(&style);
-    BUILDER.with(|b| b.borrow_mut().leaf(kind, style, id));
-}
-
-pub fn note_error(message: impl Into<String>) {
-    BUILDER.with(|b| b.borrow_mut().errors.push(message.into()));
-}
-
-/// A container built by calling `build` with the freshly opened scope on top.
-pub fn container(
-    dispatch: &mut dyn NativeDispatch,
-    kind: Kind,
-    style: String,
-    id: String,
-    build: &PersistentCallback,
-) {
-    check_style(&style);
-    open();
-    if let Err(e) = build.invoke(dispatch, vec![]) {
-        note_error(format!("building a child of `{id}` failed: {e:?}"));
-    }
-    close(kind, style, id);
-}
-
-/// Finishes the frame and converts the described tree into GPUI elements.
-pub fn finish(window: &mut Window, cx: &mut App, entity: EntityId) -> AnyElement {
-    let (root, errors) = BUILDER.with(|b| {
-        let mut b = b.borrow_mut();
-        let errors = std::mem::take(&mut b.errors);
-        let root = b.stack.pop().and_then(|mut v| {
-            if v.len() == 1 {
-                v.pop()
-            } else {
-                let mut holder = El::new(Kind::Plain, "flex col w=full h=full".into(), "root".into());
-                holder.children = v;
-                Some(holder)
-            }
-        });
-        (root, errors)
-    });
+/// Turns the frame the view callback described into GPUI elements.
+pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: EntityId) -> AnyElement {
+    let errors = ARENA.with(|a| std::mem::take(&mut a.borrow_mut().errors));
 
     let mut column = div().flex().flex_col().size_full();
-    if !errors.is_empty() {
-        column = column.child(error_card(errors.join("\n")));
-    }
-    let body: AnyElement = match root {
-        Some(ref el) => render(el, window, cx, entity),
-        None => error_card("the view callback produced nothing to render".into()),
-    };
-
-    if store::get_flag("~keys", false) {
-        // The window itself listens for keystrokes, so a program can use the
-        // keyboard without owning a GPUI element. It takes focus once; a click
-        // into a text field moves focus there until focus comes back.
-        let handle = focus_for("~root", cx);
-        if frame_number() <= 2 && !handle.is_focused(window) {
-            window.focus(&handle);
-        }
-        return div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .id(ElementId::Name("~root".into()))
-            .track_focus(&handle)
-            .on_key_down(|event: &KeyDownEvent, _window, _cx| {
-                store::push_event_with("key", event.keystroke.key.clone());
-            })
-            .child(column)
-            .child(body)
-            .into_any_element();
+    for message in errors {
+        column = column.child(error_card(message));
     }
 
-    column.child(body).into_any_element()
+    match root.and_then(snapshot) {
+        Some(el) => column.child(render(&el, window, cx, entity)).into_any_element(),
+        None => column
+            .child(error_card(
+                "the view callback answered no root element — end it with an element, \
+                 such as `ui::column(..)`, rather than a bare statement"
+                    .into(),
+            ))
+            .into_any_element(),
+    }
 }
 
 fn error_card(message: String) -> AnyElement {
@@ -306,8 +330,12 @@ fn focus_for(id: &str, cx: &mut App) -> FocusHandle {
 pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> AnyElement {
     match &el.kind {
         Kind::Plain => {
-            let children: Vec<AnyElement> =
-                el.children.iter().map(|c| render(c, window, cx, entity)).collect();
+            let children: Vec<AnyElement> = el
+                .children
+                .iter()
+                .filter_map(|h| snapshot(*h as i64))
+                .map(|child| render(&child, window, cx, entity))
+                .collect();
             let base = style::apply(div(), &el.style);
             match style::scroll_axis(&el.style) {
                 Some("x") => base
@@ -395,7 +423,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 div().flex().flex_row().items_center().gap(px(1.0)).min_h(px(28.0)).cursor_text(),
                 &el.style,
             );
-            let field = field
+            field
                 .id(ElementId::Name(el.id.clone().into()))
                 .track_focus(&handle)
                 .child(if shown_colour == "inherit" {
@@ -434,8 +462,8 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         }
                     }
                     cx.notify(entity);
-                });
-            field.into_any_element()
+                })
+                .into_any_element()
         }
 
         Kind::Slider { min, max } => {
@@ -448,16 +476,16 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let track_key = key.clone();
             let down_key = key.clone();
             let move_key = key.clone();
-            let min_for = move |key: &str, x: Pixels| {
+            let fraction = move |key: &str, x: Pixels| {
                 let bounds = SLIDER_BOUNDS.with(|b| b.borrow().get(key).copied());
                 let Some(bounds) = bounds else { return None };
                 let width = f32::from(bounds.size.width).max(1.0);
                 let offset = f32::from(x - bounds.origin.x);
                 Some((offset / width) as f64)
             };
-            let min_for_down = min_for.clone();
-            let min_for_move = min_for.clone();
-            let _ = min_for;
+            let fraction_down = fraction.clone();
+            let fraction_move = fraction.clone();
+            let _ = fraction;
 
             let fill_bar = div()
                 .absolute()
@@ -493,7 +521,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             .child(fill_bar)
             .child(knob)
             .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
-                if let Some(frac) = min_for_down(&down_key, event.position.x) {
+                if let Some(frac) = fraction_down(&down_key, event.position.x) {
                     store::set_float(&down_key, min + frac * span);
                     store::push_event_with(&down_key, format!("{:.3}", min + frac * span));
                     cx.notify(entity);
@@ -503,7 +531,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 if !event.dragging() {
                     return;
                 }
-                if let Some(frac) = min_for_move(&move_key, event.position.x) {
+                if let Some(frac) = fraction_move(&move_key, event.position.x) {
                     store::set_float(&move_key, min + frac * span);
                     store::push_event_with(&move_key, format!("{:.3}", min + frac * span));
                     cx.notify(entity);
@@ -513,9 +541,14 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
         }
 
         Kind::Progress(value) => {
-            let frac = (value.clamp(0.0, 1.0)) as f32;
+            let frac = value.clamp(0.0, 1.0) as f32;
             let outer = style::apply(
-                div().relative().h(px(10.0)).w_full().rounded(px(999.0)).bg(style::colour("#313244")),
+                div()
+                    .relative()
+                    .h(px(10.0))
+                    .w_full()
+                    .rounded(px(999.0))
+                    .bg(style::colour("#313244")),
                 &el.style,
             );
             outer
@@ -539,11 +572,10 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             style::apply(icon, &el.style).into_any_element()
         }
 
-        Kind::Divider => style::apply(
-            div().h(px(1.0)).w_full().bg(style::colour("#313244")),
-            &el.style,
-        )
-        .into_any_element(),
+        Kind::Divider => {
+            style::apply(div().h(px(1.0)).w_full().bg(style::colour("#313244")), &el.style)
+                .into_any_element()
+        }
 
         Kind::Spacer(size) => {
             style::apply(div().h(px(*size as f32)).w_full(), &el.style).into_any_element()
@@ -553,36 +585,44 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let count = *count;
             let row_height = *row_height;
             let build = build.clone();
-            let list = uniform_list(
-                ElementId::Name(el.id.clone().into()),
-                count,
+            let list = uniform_list(ElementId::Name(el.id.clone().into()), count, {
                 move |range, window, cx| {
                     let mut rows = Vec::with_capacity(range.len());
                     for index in range {
-                        reset_tree();
-                        if let Err(e) = invoke(&build, vec![Value::Int(index as i64)]) {
-                            note_error(format!("building list row {index} failed: {e}"));
-                        }
-                        let (row, errors) = BUILDER.with(|b| {
-                            let mut b = b.borrow_mut();
-                            (b.stack.pop().and_then(|mut v| v.pop()), std::mem::take(&mut b.errors))
-                        });
-                        let _ = errors;
-                        let row = match row {
-                            Some(row) => render(&row, window, cx, entity),
-                            None => div().child("").into_any_element(),
+                        // The row builder appends its own elements to the
+                        // arena. They are only needed until the row has been
+                        // turned into a real GPUI element, so the arena is
+                        // handed back straight afterwards.
+                        let mark = mark();
+                        let row = match invoke(&build, vec![Value::Int(index as i64)]) {
+                            Ok(Value::Int(handle)) if handle > 0 => snapshot(handle),
+                            Ok(_) => {
+                                note_error(format!(
+                                    "the row builder for row {index} answered no element"
+                                ));
+                                None
+                            }
+                            Err(e) => {
+                                note_error(format!("the row builder for row {index} failed: {e}"));
+                                None
+                            }
                         };
+                        let element = match row {
+                            Some(row) => render(&row, window, cx, entity),
+                            None => div().into_any_element(),
+                        };
+                        release_to(mark);
                         rows.push(
                             div()
                                 .h(px(row_height as f32))
                                 .w_full()
-                                .child(row)
+                                .child(element)
                                 .into_any_element(),
                         );
                     }
                     rows
-                },
-            );
+                }
+            });
             style::apply(list, &el.style).into_any_element()
         }
 

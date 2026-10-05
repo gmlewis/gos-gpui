@@ -5,6 +5,11 @@
 #   ./build.sh 04            # -> target/debug/learn-gpui
 #   ./build.sh 04 --release
 #
+# NOTE: `gos build` currently miscompiles this shape — the binary links but
+# aborts at startup with a misaligned-pointer panic in the runtime. Use
+# `./run.sh` instead. This script is kept because the *linker* half of the
+# problem is real and will need solving once the codegen half is fixed.
+#
 # `gos build` links the binary itself and has no way to write `-framework …`
 # into that link line, so a GPUI binary comes out with CoreFoundation,
 # CoreGraphics, AppKit and Metal symbols undefined. It does read $CC, so

@@ -4,7 +4,8 @@ Ten programs that open real [GPUI](https://gpui.rs) windows on macOS, written
 in [Gossamer](https://gossamer-lang.org/) and ranging from a twenty-line hello
 to a dashboard with a custom titlebar, a virtualised activity list and a live
 timer. GPUI is Rust, so the two are joined by a `[rust-bindings]` crate that
-publishes the framework behind a flat, Gossamer-shaped module called `gpui`.
+publishes the framework behind a flat, Gossamer-shaped module called `gpui` —
+and a small Gossamer module, `ui`, that puts a chainable `El` type on top of it.
 
 ```
 examples/01_hello.gos        one window, one block of text
@@ -17,6 +18,7 @@ examples/07_animation.gos    a frame loop, custom painting, progress
 examples/08_async.gos        repeating timers and background work
 examples/09_theme.gos        a light and a dark palette
 examples/10_dashboard.gos    all of the above, as one application
+examples/ui/mod.gos          the chainable element type those programs use
 ```
 
 ## Requirements
@@ -64,93 +66,154 @@ examples; `./build.sh` produces something much smoother.
 ./run.sh                         # list the examples
 ```
 
-## Build a native binary
+## Building a native binary — currently blocked
 
 ```sh
-./build.sh 07 --release
-./target/release/learn-gpui
+./build.sh 07 --release        # links, but the binary aborts at startup
 ```
 
-Gosammer's `gos build` links the binary itself, and its linker plan can only
-emit `-L` and `-l` — there is no manifest key for `-framework`, and `-lAppKit`
-does not resolve because AppKit is a framework rather than a `libAppKit.tbd`.
-Left alone the link fails with a wall of undefined `_CFStringCreateWithBytes`,
-`_CGBitmapContextCreate`, `_CGSSetWindowBackgroundBlurRadius` and friends.
+**Use `run.sh` for now.** `gos build` produces a binary that aborts before the
+window appears, with a misaligned-pointer panic inside the runtime
+(`c_abi/bufio.rs`). It does so for every shape tried, including a program that
+uses no part of the `ui` module — see [Notes and limits](#notes-and-limits).
+Nothing about it is specific to these examples; `gos run` is the working tier.
 
-`gos build` does honour `$CC`, so [`tools/cc-gpui.sh`](tools/cc-gpui.sh) is a
-one-line `cc` wrapper that adds the frameworks GPUI names and then re-execs.
-`build.sh` sets it for you. This is a workaround for a toolchain gap, not
-something the binding crate can fix from inside a `[rust-bindings]` entry.
+The linker half of the problem is real and separate, and is worth keeping for
+when the codegen half is fixed. `gos build` links the binary itself, and its
+linker plan can only emit `-L` and `-l` — there is no manifest key for
+`-framework`, and `-lAppKit` does not resolve because AppKit is a framework
+rather than a `libAppKit.tbd`. Left alone the link fails with a wall of
+undefined `_CFStringCreateWithBytes`, `_CGBitmapContextCreate`,
+`_CGSSetWindowBackgroundBlurRadius` and friends. `gos build` does honour `$CC`,
+so [`tools/cc-gpui.sh`](tools/cc-gpui.sh) is a one-line `cc` wrapper that adds
+the frameworks GPUI names and then re-execs; `build.sh` sets it for you.
 
-## How it fits together
+## Describing a window
 
-```
-project.toml            the Gossamer project; names the binding
-gpui-binding/           the Rust crate that wraps the gpui crate
-  src/lib.rs              the binding functions Gossamer calls
-  src/style.rs            the "key=value" style language
-  src/store.rs            app state, the event queue, pending requests
-  src/view.rs             the described element tree, and its translation to GPUI
-  src/app.rs              the Application, the root view, timers
-examples/*.gos          the programs
-run.sh, build.sh        wrappers that supply the flags Gosammer needs
-tools/cc-gpui.sh        a cc that links the Apple frameworks
-```
+A frame is a chain. The view callback describes the window it wants right now
+and hands the finished tree over:
 
-GPUI is *hybrid* immediate and retained: you implement `Render` for a type and
-GPUI calls it once per frame to get the whole element tree. The binding turns
-that into the shape a Gossamer callback can actually hold, because a Gossamer
-closure is **call-scoped** — it is only valid until the binding function that
-received it returns. `gpui::run` never returns until the program quits, so the
-view callback stays valid for exactly as long as GPUI keeps asking for frames.
-Every frame looks like this:
+```gossamer
+use gpui
+use ui
 
-```
-   Gossamer            binding                              GPUI
-   ────────            ───────                              ────
-   gpui::run(…, || {   stash the dispatch, open a window,
-     …               →  then block in Application::run   →   asks Root to render
-     take_events()   ←  drain the queue                     ←
-     set_int(…)          write the store
-     column("…", || {    push a build scope
-       text(…)           push a described node
-     })                  pop the scope
-     …                ←  turn the described tree into elements
-   })                  →  hand them back                  →   lays out and paints
+fn main() {
+    gpui::run("Counter", 420.0, 260.0, || {
+        gpui::take_events() |> handle
+
+        let count = gpui::state_int("count", 0)
+
+        ui::column("gap=10 p=20 bg=#181825 size=full")
+            .text(f"count = {count}", "font=2xl bold color=#cdd6f4")
+            .child(ui::row("gap=8")
+                .button("inc", "+1", "px=14 py=8 rounded=8 bg=#89b4fa hover=bg:#a6e3fa")
+                .button("reset", "reset", "px=14 py=8 rounded=8 bg=#313244"))
+            |> ui::root
+    })
+}
 ```
 
-`gpui::run` returns when the window is closed, when the program calls
-`gpui::quit()`, or on ⌘Q. It answers `Result<(), String>`, which is `Err` if
-something stopped the app before it started.
+Three Gosammer features do the work here, and none of them needed anything from
+the Rust side:
+
+- **`.` chaining.** `ui::El` is a `newtype` over the binding's `i64` handle, and
+  `impl El` gives it one method per leaf. `.child(..)`, `.text(..)`,
+  `.button(..)` each answer the receiver, so a chain never needs a temporary —
+  exactly the shape GPUI's own Rust builder has.
+- **`|>` piping.** `ui::root` is a plain function, and the frame's last act is
+  feeding the tree to it. `gpui::take_events() |> handle` is the same move for
+  the frame's first act, and `data |> on_key` for a keystroke.
+- **`map` and `children`.** A run of siblings is one step:
+  `ui::row("gap=8").children(hues.map(swatch))`.
+
+```
+gpui::take_events() |> handle          the frame's events
+ui::column(..).text(..).button(..)     the frame's window
+    |> ui::root
+```
+
+There is nothing to redraw by hand: a widget that changes state calls back into
+GPUI, and GPUI schedules the next frame.
+
+## The `ui` module
+
+`examples/ui/mod.gos` is the ergonomic layer. It is small and worth reading —
+it is where the chaining lives.
+
+### Containers
+
+| | |
+|---|---|
+| `ui::column(style)` | a flex column |
+| `ui::row(style)` | a flex row |
+| `ui::panel(style)` | a box with no direction of its own |
+| `ui::stack(style)` | children stack; place them with `absolute top=… left=…` |
+| `ui::scroll(style)` | a vertically scrolling box |
+
+### Leaves
+
+| | |
+|---|---|
+| `ui::text(content, style)` | |
+| `ui::button(id, label, style)` | |
+| `ui::checkbox(id, label, checked, style)` | |
+| `ui::input(key, placeholder, style)` | single line; the value lives in state under `key` |
+| `ui::slider(key, min, max, style)` | the value lives in state under `key`, as a float |
+| `ui::progress(value, style)` | `0.0 ..= 1.0` |
+| `ui::image(path, style)` / `ui::icon(path, style)` | a raster image / an SVG tinted by `color=` |
+| `ui::rect(style)` | an empty styled box |
+| `ui::divider(style)` / `ui::spacer(size)` | |
+| `ui::draw(painter, phase, style)` | a directly painted surface: `"bars"`, `"wave"` or `"stripes"` |
+| `ui::list(id, count, row_height, style, build)` | a virtualised list; `build` takes the row index and answers that row's element |
+
+### On any element
+
+| | |
+|---|---|
+| `.child(el)` | hang one element under this one |
+| `.children(els)` | hang a `Vec<El>` under this one, in order |
+| `.text(..)`, `.button(..)`, `.input(..)`, `.slider(..)`, `.checkbox(..)`, `.progress(..)`, `.icon(..)`, `.image(..)`, `.rect(..)`, `.divider(..)`, `.spacer(..)`, `.draw(..)`, `.list(..)` | shorthand for `.child(ui::…)` — this is what takes the `ui::` prefix off every leaf inside a chain |
+
+### Finishing
+
+`ui::root(el)` names `el` as the window's root for this frame. Written as the
+last link of the chain, `… |> ui::root`.
 
 ## The `gpui` module
+
+`gpui` is the binding underneath. Everything it answers is an `i64` handle into
+a per-frame arena, which is why `ui` exists; a program can also use it directly.
 
 ### Running
 
 | | |
 |---|---|
-| `gpui::run(title, width, height, view)` | Open a window and run until it closes. `view` is `\|\| { … }`. |
-| `gpui::run_with(title, width, height, options, view)` | `options` is `"resizable=false titlebar=none float=true background=blur"`. |
-| `gpui::quit()` | Close the window and end the program. |
-| `gpui::frame()` | Frames painted so far. |
-| `gpui::now()` | Seconds since the program started, as a float. |
+| `gpui::run(title, width, height, view)` | open a window and run until it closes; `view` is `\|\| { … }` |
+| `gpui::run_with(title, width, height, options, view)` | `options` is `"resizable=false titlebar=none float=true background=blur"` |
+| `gpui::root(element)` | name the frame's root |
+| `gpui::quit()` | close the window and end the program |
+| `gpui::frame()` / `gpui::now()` | frames painted / seconds since start |
 
 ### Making things happen
 
 | | |
 |---|---|
-| `gpui::animate()` | Ask for another frame as soon as this one is on screen. Call it while you want a frame loop; stop calling it to park. |
-| `gpui::tick(id, ms)` | Raise the event `id` every `ms` milliseconds. Installed once, then left running. |
-| `gpui::task(id, ms)` | Do slow work off the UI thread for `ms`, then raise `id` and leave a description under `"<id>.result"`. |
-| `gpui::on_keys(true)` | Route keystrokes to the program as `"key\|<name>"` events. |
+| `gpui::animate()` | ask for another frame as soon as this one is on screen. Call it while you want a frame loop; stop calling it to park. |
+| `gpui::tick(id, ms)` | raise the event `id` every `ms` milliseconds. Installed once, then left running. |
+| `gpui::task(id, ms)` | do slow work off the UI thread for `ms`, then raise `id` and leave a description under `"<id>.result"`. |
+| `gpui::on_keys(true)` | route keystrokes to the program as `"key\|<name>"` events. |
 
 ### Events
 
 ```gossamer
-for event in gpui::take_events() {
-    let id, data = gpui::event_parts(event)
-    if id == "inc" { … }
+fn handle(events: Vec<String>) {
+    for event in events {
+        let id, data = gpui::event_parts(event)
+        if id == "inc" { … }
+    }
 }
+
+gpui::take_events() |> handle
 ```
 
 `take_events` drains everything raised since the previous frame. An entry is
@@ -158,14 +221,12 @@ for event in gpui::take_events() {
 first half (it consumes the event, so `event_parts` is the one to reach for when
 you want both).
 
-Built-in events:
-
 | source | event | payload |
 |---|---|---|
-| `gpui::button(id, …)` | `id` | — |
-| `gpui::checkbox(id, …)` | `id` | `"on"` / `"off"` — the flag under `id` is already toggled |
-| `gpui::input(key, …)` | `key` | `"submit"`, `"cancel"`, `"focus"` |
-| `gpui::slider(key, …)` | `key` | the new value, as text like `"0.420"` |
+| `ui::button(id, …)` | `id` | — |
+| `ui::checkbox(id, …)` | `id` | `"on"` / `"off"` — the flag under `id` is already toggled |
+| `ui::input(key, …)` | `key` | `"submit"`, `"cancel"`, `"focus"` |
+| `ui::slider(key, …)` | `key` | the new value, as text like `"0.420"` |
 | `gpui::tick(id, …)` | `id` | — |
 | `gpui::task(id, …)` | `id` | — |
 | `gpui::on_keys(true)` | `"key"` | `"up"`, `"space"`, `"a"`, … |
@@ -194,44 +255,8 @@ does.
 | `gpui::list_all(key)` / `list_replace(key, values)` | |
 | `gpui::list_clear(key)` | |
 
-A widget that changes state calls back into GPUI and GPUI schedules the next
-frame. Calling `set_int` from inside the view needs no notification at all: the
-tree you are about to build already reads the new value.
-
-### Layout
-
-Each of these takes a style string and a `|| { … }` that describes its
-children.
-
-| | |
-|---|---|
-| `gpui::column(style, build)` | a flex column |
-| `gpui::row(style, build)` | a flex row |
-| `gpui::panel(style, build)` | a box with no direction of its own |
-| `gpui::stack(style, build)` | children stack; place them with `absolute top=… left=…` |
-| `gpui::scroll(style, build)` | a vertically scrolling box |
-| `gpui::list(id, count, row_height, style, build)` | a virtualised list; `build` is called with the row index, for visible rows only |
-
-### Leaves
-
-| | |
-|---|---|
-| `gpui::text(content, style)` | |
-| `gpui::button(id, label, style)` | |
-| `gpui::checkbox(id, label, checked, style)` | |
-| `gpui::input(key, placeholder, style)` | single line; the value lives in state under `key` |
-| `gpui::slider(key, min, max, style)` | the value lives in state under `key`, as a float |
-| `gpui::progress(value, style)` | `0.0 ..= 1.0` |
-| `gpui::image(path, style)` / `gpui::icon(path, style)` | a raster image / an SVG tinted by `color=` |
-| `gpui::rect(style)` | an empty styled box |
-| `gpui::divider(style)` / `gpui::spacer(size)` | |
-| `gpui::draw(painter, phase, style)` | a directly painted surface: `"bars"`, `"wave"` or `"stripes"` |
-
-### Theme
-
-`gpui::set_theme(name)` and `gpui::theme()` just record and read a name — the
-palette itself is ordinary data the program computes per frame, which is what
-`examples/09_theme.gos` does.
+Calling `set_int` from inside the view needs no notification at all: the tree
+you are about to build already reads the new value.
 
 ## The style language
 
@@ -239,15 +264,16 @@ A style is a whitespace-separated list of `key=value` tokens, each mapping
 straight onto one of GPUI's Tailwind-shaped `Styled` helpers.
 
 ```gossamer
-gpui::row("flex gap=10 p=16 bg=#181825 rounded=14 border=1 bordercolor=#313244", || { … })
+ui::row("flex gap=10 p=16 bg=#181825 rounded=14 border=1 bordercolor=#313244")
+    .text("hi", "font=sm color=#cdd6f4")
 ```
 
 A token the binding does not recognise is reported on stderr and drawn as a
 banner in the window, once, rather than being ignored.
 
 **Display and direction** — `flex`, `col`, `row`, `wrap`, `nowrap`, `grid`,
-`block`, `hidden`, `visible`, `absolute`, `relative`, `flex=1|auto|initial|none`,
-`grow`, `shrink`.
+`block`, `hidden`, `visible`, `absolute`, `relative`,
+`flex=1|auto|initial|none`, `grow`, `shrink`.
 
 **Spacing** — `gap=`, `gapx=`, `gapy=`, `p=`, `px=`, `py=`, `pt=`, `pb=`, `pl=`,
 `pr=`, `m=`, `mx=`, `my=`, `mt=`, `mb=`, `ml=`, `mr=`, `auto` (horizontal auto
@@ -260,8 +286,8 @@ percentage like `50%`. Also `minw=`, `maxw=`, `minh=`, `maxh=`, `basis=`.
 percentage.
 
 **Alignment** — `justify=start|center|end|between|around` along the main axis;
-`items=start|center|end|baseline` across it; `content=` for a wrapped
-container; `align=left|center|right` for the text inside.
+`items=start|center|end|baseline` across it; `content=` for a wrapped container;
+`align=left|center|right` for the text inside.
 
 **Paint** — `bg=` and `color=` take `#rgb`, `#rrggbb`, `#rrggbbaa`, or one of
 `white black red green blue yellow orange cyan pink purple transparent`.
@@ -282,17 +308,18 @@ pointer is over the element or the button is down. A refinement is itself a
 style, with `_` standing in for the spaces:
 
 ```gossamer
-gpui::button("inc", "+1", "bg=#89b4fa color=#11111b hover=bg:#a6e3fa active=bg:#74c7ec_opacity:0.9")
+.button("inc", "+1", "bg=#89b4fa color=#11111b hover=bg:#a6e3fa active=bg:#74c7ec_opacity:0.9")
 ```
 
 ## The examples
 
-**01 — hello.** The smallest complete program: one window, one callback, one
-column. Shows the shape every other example keeps.
+**01 — hello.** The smallest complete program: one window, one chain, one
+`|> ui::root`. Shows the shape every other example keeps.
 
 **02 — styling.** A swatch book: the fourteen Catppuccin hues as gradient-ready
 boxes, four gradient and shadow treatments, eight corners and borders, and the
-whole type scale from `xs` to `3xl` with weights, italics and decorations.
+whole type scale from `xs` to `3xl`. The palette and the scale are built with
+one `map` each.
 
 **03 — layout.** A header/body/footer column with `flex=1` in the middle; every
 `justify` and `items` value side by side; `gap=4` against `gap=12`; nested
@@ -301,8 +328,9 @@ absolutely-positioned children in a `stack`.
 
 **04 — interaction.** Buttons that raise events, `hover=` and `active=`
 refinements, a slider writing straight into state, a checkbox showing and
-hiding a panel, and `gpui::on_keys` wiring ↑ ↓ r space to the same actions.
-Ends with a live "last event" readout.
+hiding a panel, and `gpui::on_keys` wiring ↑ ↓ r space to the same actions. The
+frame's events go through `gpui::take_events() |> handle`; a keystroke goes
+through `data |> on_key`.
 
 **05 — forms.** Two text fields with focus and a caret, Return to submit,
 Escape to cancel, live-derived text from what you have typed, and an editable
@@ -317,31 +345,58 @@ custom-painted canvases (bars via `paint_quad`, a curve via `paint_path`), a
 scrolling stripe pattern, boxes moved by absolute positioning every frame, and
 two progress bars on the clock — with a checkbox that parks the loop.
 
-**08 — async.** `gpui::tick` runs a clock and feeds an event log;
-`gpui::task` runs 1.8 seconds of work on GPUI's background executor while the
-window keeps painting, then drops its result into state. Includes a spinner
-that only animates while the job is in flight.
+**08 — async.** `gpui::tick` runs a clock and feeds an event log; `gpui::task`
+runs 1.8 seconds of work on GPUI's background executor while the window keeps
+painting, then drops its result into state. Includes a spinner that only
+animates while the job is in flight.
 
 **09 — theme.** One view, two palettes. Cards, a gradient hero panel, four
 shadow depths, a settings list and a slider, all interpolated from a `Palette`
-value chosen per frame.
+value chosen per frame. The four shadow panels are one step:
+`ui::row(..).children(#[0, 1, 2, 3].map(|step| depth(step, p)))`.
 
 **10 — dashboard.** `run_with(…, "titlebar=none")`, a sidebar that switches
 panes, a live clock and metrics on a timer, a virtualised activity list, custom
 charts, animated progress, a filter field, a status bar, and keyboard shortcuts
-for the panes, the theme and the filter.
+for the panes, the theme and the filter. The two heavier panes are separate
+functions answering an `El`, so the frame body stays a short chain.
 
 ## Notes and limits
 
 - **One window, one callback.** `gpui::run` may be called once per process, and
   the app ends when its window closes.
-- **The row builder runs during layout.** A `gpui::list` callback is invoked
-  while GPUI is laying out, not while your view is building, so keep it to
-  reads and element descriptions.
+- **A binding method cannot take a closure.** That is why `ui::list` is a method
+  taking an `Fn(i64) -> El`: it lives in Gossamer, where closures are ordinary
+  parameters.
+- **`.into()` needs a target.** An `El` and an `i64` are different types to the
+  checker, and the target of `.into()` comes from the use site, so the
+  conversions inside `ui` are written as `let handle: i64 = el.into()`.
+- **A view callback that names no root shows an error card** rather than a blank
+  window.
+- **The row builder runs during layout.** A `list` callback is invoked while
+  GPUI is laying out, not while your view is building, so keep it to reads and
+  element descriptions.
+- **Two codegen bugs, found while writing these.** Both are Gosammer's, and
+  both show up as a call that lands on the wrong runtime symbol.
+
+  *On the JIT tier* (`gos run`), a `for` loop that carries an element handle and
+  calls a helper per iteration mis-compiles. The program aborts with
+  `misaligned pointer dereference` in `c_abi/bufio.rs`. `gos run --no-jit` runs
+  the same program correctly, which is how the tier was pinned down. The
+  examples avoid the shape by collecting a run of siblings and hanging them off
+  a container at once — `ui::row(..).children((0..n).map(build).collect())` —
+  which is tidier anyway.
+
+  *On the native tier* (`gos build`), a binary built from a program that only
+  creates elements through the binding and hands the frame its root aborts the
+  same way, before any window appears. It reproduces on a twenty-line program
+  with no `ui` module and no element chaining, and survives `gos clean` and a
+  full rebuild, so it is not a stale artefact. This is why `run.sh` is the
+  supported path and `build.sh` is not.
 - **Fonts are whatever the machine has.** GPUI picks its own UI font; the
   examples set sizes and weights but not families.
 - **A panic in a binding is caught at the boundary.** It prints to stderr and
-  the frame loses that element rather than taking the program down, so watch
-  the terminal while an example runs.
+  the frame loses that element rather than taking the program down, so watch the
+  terminal while an example runs.
 - **Colours are managed by the display.** A screenshot of `#181825` reads back
   as `#171721` on a P3 panel; nothing in the binding or in GPUI is off.

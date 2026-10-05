@@ -28,17 +28,20 @@ impl Render for Root {
         let entity = cx.entity().entity_id();
 
         view::reset();
+        // A frame names its root with `gpui::root`, or simply answers the
+        // element it wants; one that does neither reports itself.
         if let Err(e) = view::invoke(&self.view, vec![]) {
             view::note_error(format!("the view callback failed: {e}"));
         }
-        let root: AnyElement = view::finish(window, cx, entity);
+        let root: Option<i64> = view::named_root();
+        let element: AnyElement = view::finish(root, window, cx, entity);
 
         if process_requests(window, cx, entity) {
             // The program asked to keep animating: line up the next frame.
             window.request_animation_frame();
         }
 
-        root
+        element
     }
 }
 

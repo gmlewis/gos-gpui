@@ -1,0 +1,177 @@
+// `ui` — a chainable way to describe a window.
+//
+// The `gpui` binding answers `i64` handles into a per-frame arena. Handles are
+// plain integers in Gossamer, so this module gives them a name of their own —
+// `El`, a `newtype` over `i64` — and hangs the chaining methods on that. The
+// result reads the way GPUI's own Rust builder does:
+//
+//     ui::column("gap=10 p=20")
+//         .text("hello", "font=2xl")
+//         .child(ui::row("gap=8")
+//             .button("inc", "+1", "px=14 py=8")
+//             .button("reset", "reset", "px=14 py=8"))
+//         |> ui::root
+//
+// Two things are worth noticing, because they are the language doing the work
+// rather than the binding:
+//
+//   * `.child(..)` answers its receiver, so a chain never needs a temporary.
+//   * A method whose name matches a leaf — `.text`, `.button`, `.input` — is
+//     shorthand for `.child(ui::text(..))`, which is what takes the `ui::`
+//     prefix off every leaf inside a chain.
+
+use gpui
+
+/// A handle to one element, distinct from every other `i64`.
+pub newtype El = i64
+
+impl El {
+    // ---- nesting ------------------------------------------------------
+
+    /// Hang `child` under this element.
+    pub fn child(&self, child: El) -> El {
+        let parent: i64 = self.into()
+        let kid: i64 = child.into()
+        gpui::child(parent, kid).into()
+    }
+
+    /// Hang a whole run of elements under this one, in order — the shape a
+    /// `map` or a collected run wants to end in:
+    ///
+    ///     ui::row("gap=8").children(#[0, 1, 2].map(|i| chip(i)))
+    pub fn children(&self, nodes: Vec<El>) -> El {
+        let parent: i64 = self.into()
+        let handles: Vec<i64> = nodes.map(handle_of)
+        gpui::children(parent, handles).into()
+    }
+
+    // ---- leaves -------------------------------------------------------
+
+    pub fn text(&self, content: String, style: String) -> El {
+        self.child(text(content, style))
+    }
+
+    pub fn button(&self, id: String, label: String, style: String) -> El {
+        self.child(button(id, label, style))
+    }
+
+    pub fn checkbox(&self, id: String, label: String, checked: bool, style: String) -> El {
+        self.child(checkbox(id, label, checked, style))
+    }
+
+    pub fn input(&self, key: String, placeholder: String, style: String) -> El {
+        self.child(input(key, placeholder, style))
+    }
+
+    pub fn slider(&self, key: String, min: f64, max: f64, style: String) -> El {
+        self.child(slider(key, min, max, style))
+    }
+
+    pub fn progress(&self, value: f64, style: String) -> El {
+        self.child(progress(value, style))
+    }
+
+    pub fn icon(&self, path: String, style: String) -> El {
+        self.child(icon(path, style))
+    }
+
+    pub fn image(&self, path: String, style: String) -> El {
+        self.child(image(path, style))
+    }
+
+    pub fn rect(&self, style: String) -> El {
+        self.child(rect(style))
+    }
+
+    pub fn divider(&self, style: String) -> El {
+        self.child(divider(style))
+    }
+
+    pub fn spacer(&self, size: f64) -> El {
+        self.child(spacer(size))
+    }
+
+    pub fn draw(&self, painter: String, phase: f64, style: String) -> El {
+        self.child(draw(painter, phase, style))
+    }
+
+    /// A virtualised list. `build` is called with a row's index, for the rows
+    /// on screen only, and answers that row's element.
+    pub fn list(
+        &self,
+        id: String,
+        count: i64,
+        row_height: f64,
+        style: String,
+        build: Fn(i64) -> El,
+    ) -> El {
+        self.child(list(id, count, row_height, style, build))
+    }
+}
+
+/// The handle inside an `El`, for a run of them.
+pub fn handle_of(el: El) -> i64 { el.into() }
+
+// ---- containers -------------------------------------------------------
+
+pub fn column(style: String) -> El { gpui::column(style).into() }
+
+pub fn row(style: String) -> El { gpui::row(style).into() }
+
+pub fn panel(style: String) -> El { gpui::panel(style).into() }
+
+pub fn stack(style: String) -> El { gpui::stack(style).into() }
+
+pub fn scroll(style: String) -> El { gpui::scroll(style).into() }
+
+// ---- leaves -----------------------------------------------------------
+
+pub fn text(content: String, style: String) -> El { gpui::text(content, style).into() }
+
+pub fn button(id: String, label: String, style: String) -> El {
+    gpui::button(id, label, style).into()
+}
+
+pub fn checkbox(id: String, label: String, checked: bool, style: String) -> El {
+    gpui::checkbox(id, label, checked, style).into()
+}
+
+pub fn input(key: String, placeholder: String, style: String) -> El {
+    gpui::input(key, placeholder, style).into()
+}
+
+pub fn slider(key: String, min: f64, max: f64, style: String) -> El {
+    gpui::slider(key, min, max, style).into()
+}
+
+pub fn progress(value: f64, style: String) -> El { gpui::progress(value, style).into() }
+
+pub fn icon(path: String, style: String) -> El { gpui::icon(path, style).into() }
+
+pub fn image(path: String, style: String) -> El { gpui::image(path, style).into() }
+
+pub fn rect(style: String) -> El { gpui::rect(style).into() }
+
+pub fn divider(style: String) -> El { gpui::divider(style).into() }
+
+pub fn spacer(size: f64) -> El { gpui::spacer(size).into() }
+
+pub fn draw(painter: String, phase: f64, style: String) -> El {
+    gpui::draw(painter, phase, style).into()
+}
+
+/// A virtualised list. `build` is called with a row's index, for the rows on
+/// screen only, and answers that row's element — which is why it takes a
+/// closure where the other leaves take a style string.
+pub fn list(id: String, count: i64, row_height: f64, style: String, build: Fn(i64) -> El) -> El {
+    gpui::list(id, count, row_height, style, build).into()
+}
+
+// ---- the last step ----------------------------------------------------
+
+/// Name `el` as the window's root for this frame. A frame is a chain, so this
+/// is its last link: `… |> ui::root`.
+pub fn root(el: El) {
+    let handle: i64 = el.into()
+    gpui::root(handle)
+}

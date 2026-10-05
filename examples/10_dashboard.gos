@@ -11,8 +11,9 @@
 use gpui
 use std::math
 use std::process
+use ui
 
-const EVENTS: i64 = 5000
+const EVENTS: i64 = 5_000
 
 struct Theme {
     name: String
@@ -60,65 +61,147 @@ fn light_theme() -> Theme {
     }
 }
 
-fn nav(label: String, pane: String, active: String, t: Theme) {
-    let chosen = pane == active
-    let style = if chosen {
+fn nav(label: String, pane: String, active: String, t: Theme) -> ui::El {
+    let style = if pane == active {
         f"w=full px=12 py=9 rounded=9 bg={t.accent} color={t.accent_ink} font=sm semibold"
     } else {
         f"w=full px=12 py=9 rounded=9 bg=#00000000 color={t.dim} font=sm hover=bg:{t.raised}"
     }
-    gpui::button(f"nav-{pane}", label, style)
+    ui::button(f"nav-{pane}", label, style)
 }
 
-fn metric(label: String, value: String, hint: String, t: Theme) {
+fn metric(label: String, value: String, hint: String, t: Theme) -> ui::El {
     let style = f"flex=1 gap=4 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}"
-    gpui::column(style, || {
-        gpui::text(label, f"font=xs color={t.dim}")
-        gpui::text(value, f"font=2xl bold color={t.text}")
-        gpui::text(hint, f"font=xs color={t.dim}")
-    })
+    ui::column(style)
+        .text(label, f"font=xs color={t.dim}")
+        .text(value, f"font=2xl bold color={t.text}")
+        .text(hint, f"font=xs color={t.dim}")
 }
 
-fn progress_row(label: String, value: f64, t: Theme) {
-    gpui::row("w=full gap=10 items=center", || {
-        gpui::text(label, f"font=xs color={t.dim} w=140")
-        gpui::progress(value, "flex=1")
-        gpui::text(f"{value * 100.0:.0}%", f"font=xs color={t.text} w=44 align=right")
-    })
+fn progress_row(label: String, value: f64, t: Theme) -> ui::El {
+    ui::row("w=full gap=10 items=center")
+        .text(label, f"font=xs color={t.dim} w=140")
+        .progress(value, "flex=1")
+        .text(f"{value * 100.0:.0}%", f"font=xs color={t.text} w=44 align=right")
+}
+
+/// One row of the activity list.
+fn event_row(index: i64, t: Theme) -> ui::El {
+    let n = EVENTS - 1 - index
+    let kind = n % 4
+    let tag = ["read", "write", "cache", "warn"][kind]
+    let colour = if kind == 3 { t.warn } else { t.good }
+    let style = f"w=full h=full px=14 items=center font=xs bg=#00000000 color={colour} hover=bg:{t.raised}"
+    ui::button(f"event-{index}", f"#{n}  {tag}   node-{(n * 7) % 32}   {n * 3 % 900}ms", style)
+}
+
+fn sidebar(pane: String, t: Theme) -> ui::El {
+    ui::column(f"w=190 h=full gap=4 p=12 bg={t.surface} border=1 bordercolor={t.line}")
+        .text("VIEWS", f"font=xs color={t.dim} px=12 pb=4")
+        .child(nav("Overview", "overview", pane, t))
+        .child(nav("Activity", "activity", pane, t))
+        .child(nav("Settings", "settings", pane, t))
+        .spacer(10.0)
+        .text("KEYS", f"font=xs color={t.dim} px=12 pb=4")
+        .child(ui::column("gap=3 px=12")
+            .text("1 2 3   switch pane", f"font=xs color={t.dim}")
+            .text("d       toggle theme", f"font=xs color={t.dim}"))
+        .spacer(6.0)
+        .rect("flex=1")
+        .text(gpui::state_text("log", "waiting for the first sample"), f"font=xs color={t.dim}")
+}
+
+fn overview(t: Theme, seconds: f64, load: f64, samples: i64, visitors: i64) -> ui::El {
+    let pulse = math::sin(seconds * 1.4) * 0.5 + 0.5
+    ui::column(f"flex=1 h=full p=18 gap=14 bg={t.backdrop} overflow=y")
+        .text("Overview", f"font=2xl bold color={t.text}")
+        .child(ui::row("w=full gap=12")
+            .child(metric("live load", f"{load * 100.0:.1}%", f"{samples} samples", t))
+            .child(metric("visitors", f"{visitors}", "last 5 minutes", t))
+            .child(metric("uptime", f"{seconds:.0}s", "this window", t)))
+        .child(ui::column(f"w=full gap=10 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}")
+            .child(ui::row("w=full justify=between items=baseline")
+                .text("throughput", f"font=sm semibold color={t.text}")
+                .text(f"{load * 100.0:.1}% of capacity", f"font=xs color={t.dim}"))
+            .draw("bars", seconds * 1.8, "w=full h=120")
+            .draw("wave", seconds * 2.4, "w=full h=54 rounded=10 overflow=hidden"))
+        .child(ui::column(f"w=full gap=12 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}")
+            .child(progress_row("cache hit rate", load, t))
+            .child(progress_row("queue depth", pulse, t))
+            .child(progress_row("worker saturation", (pulse + 0.55) / 2.0, t)))
+}
+
+fn activity(t: Theme, filter: String) -> ui::El {
+    let style = f"w=full h=380 bg={t.surface} rounded=12 border=1 bordercolor={t.line}"
+    ui::column(f"flex=1 h=full p=18 gap=14 bg={t.backdrop}")
+        .child(ui::row("w=full justify=between items=center")
+            .text("Activity", f"font=2xl bold color={t.text}")
+            .text(f"{EVENTS} events", f"font=xs color={t.dim}"))
+        .input("filter", "filter the rows below", f"w=full px=12 py=8 bg={t.surface} rounded=9 border=1 bordercolor={t.line} color={t.text}")
+        .list("events", EVENTS, 30.0, style, |index| event_row(index, t))
+        .text(f"showing all {EVENTS} rows — GPUI builds only the visible ones", f"font=xs color={t.dim}")
+}
+
+fn settings(t: Theme, filter: String, retention: i64, sweep: f64) -> ui::El {
+    let note = if filter == "" { "no filter yet" } else { f"filtering on \"{filter}\"" }
+    ui::column(f"flex=1 h=full p=18 gap=14 bg={t.backdrop} overflow=y")
+        .text("Settings", f"font=2xl bold color={t.text}")
+        .child(ui::column(f"w=full gap=14 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}")
+            .child(ui::row("w=full justify=between items=center")
+                .text("sample interval", f"font=sm color={t.text}")
+                .text("1.2s", f"font=xs color={t.dim}"))
+            .divider("")
+            .child(ui::row("w=full justify=between items=center")
+                .text("chart smoothing", f"font=sm color={t.text}")
+                .text(f"{(1.0 - sweep) * 100.0:.0}%", f"font=xs color={t.dim}"))
+            .slider("smoothing", 0.0, 1.0, f"w=full bg={t.raised} rounded=full")
+            .child(ui::row("w=full justify=between items=center")
+                .text("retention window", f"font=sm color={t.text}")
+                .text(f"{retention} days", f"font=xs color={t.dim}"))
+            .slider("retention", 1.0, 90.0, f"w=full bg={t.raised} rounded=full")
+            .divider("")
+            .child(ui::row("w=full gap=12 items=center")
+                .checkbox("alerts", "page on call", true, f"font=sm color={t.text}")
+                .checkbox("digest", "daily digest", false, f"font=sm color={t.text}"))
+            .input("filter", "filter the activity list", f"w=full px=12 py=8 bg={t.raised} rounded=9 border=1 bordercolor={t.line} color={t.text}")
+            .text(note, f"font=xs color={t.dim}"))
+        .button("theme", "toggle theme", f"px=16 py=9 rounded=9 bg={t.raised} color={t.text} font=sm hover=bg:{t.line}")
+}
+
+fn handle(events: Vec<String>) {
+    for event in events {
+        let id, data = gpui::event_parts(event)
+        if id == "nav" {
+            gpui::set_text("pane", data)
+        } else if id == "theme" {
+            gpui::set_bool("dark", data == "on")
+        } else if id == "metrics" {
+            // A fresh sample every 1.2 seconds.
+            let n = gpui::state_int("samples", 0) + 1
+            gpui::set_int("samples", n)
+            let wobble = math::sin(n as f64 * 0.7) * 12.0
+            gpui::set_float("load", 0.45 + wobble / 100.0 + (n % 5) as f64 * 0.03)
+            gpui::set_int("visitors", 1200 + n * 7 % 400)
+            gpui::set_text("log", f"sampled at {gpui::now():.1}s")
+        } else if id == "key" {
+            if data == "1" {
+                gpui::set_text("pane", "overview")
+            } else if data == "2" {
+                gpui::set_text("pane", "activity")
+            } else if data == "3" {
+                gpui::set_text("pane", "settings")
+            } else if data == "d" {
+                gpui::set_bool("dark", !gpui::state_bool("dark", true))
+            }
+        } else if id == "filter" && data == "cancel" {
+            gpui::set_text("filter", "")
+        }
+    }
 }
 
 fn main() {
     let outcome = gpui::run_with("Dashboard", 960.0, 660.0, "titlebar=none", || {
-        // ---- events ------------------------------------------------------
-        for event in gpui::take_events() {
-            let id, data = gpui::event_parts(event)
-            if id == "nav" {
-                gpui::set_text("pane", data)
-            } else if id == "theme" {
-                gpui::set_bool("dark", data == "on")
-            } else if id == "metrics" {
-                // A fresh sample every 1.2 seconds.
-                let n = gpui::state_int("samples", 0) + 1
-                gpui::set_int("samples", n)
-                let wobble = math::sin(n as f64 * 0.7) * 12.0
-                gpui::set_float("load", 0.45 + wobble / 100.0 + (n % 5) as f64 * 0.03)
-                gpui::set_int("visitors", 1200 + n * 7 % 400)
-                gpui::set_text("log", f"sampled at {gpui::now():.1}s")
-            } else if id == "key" {
-                if data == "1" {
-                    gpui::set_text("pane", "overview")
-                } else if data == "2" {
-                    gpui::set_text("pane", "activity")
-                } else if data == "3" {
-                    gpui::set_text("pane", "settings")
-                } else if data == "d" {
-                    gpui::set_bool("dark", !gpui::state_bool("dark", true))
-                }
-            } else if id == "filter" && data == "cancel" {
-                gpui::set_text("filter", "")
-            }
-        }
-
+        gpui::take_events() |> handle
         gpui::tick("metrics", 1200)
         gpui::on_keys(true)
         gpui::animate()
@@ -132,133 +215,35 @@ fn main() {
         let load = gpui::state_float("load", 0.42)
         let visitors = gpui::state_int("visitors", 1284)
         let filter = gpui::state_text("filter", "")
-        let pulse = math::sin(seconds * 1.4) * 0.5 + 0.5
         let sweep = (seconds * 0.8) % 1.0
 
-        gpui::column(f"size=full bg={t.backdrop}", || {
+        let content = if pane == "overview" {
+            overview(t, seconds, load, samples, visitors)
+        } else if pane == "activity" {
+            activity(t, filter)
+        } else {
+            settings(t, filter, retention, sweep)
+        }
 
-            // ---- custom titlebar ------------------------------------------
-            gpui::row(f"w=full h=44 items=center gap=10 bg={t.surface} border=1 bordercolor={t.line}", || {
-                gpui::spacer(70.0)
-                gpui::text("Operations", f"font=sm semibold color={t.text}")
-                gpui::text(f"{t.name} · {seconds:.0}s", f"font=xs color={t.dim} flex=1")
-                gpui::checkbox("theme", "dark", dark, f"font=xs color={t.dim} pr=14")
-            })
-
-            gpui::row("flex=1 w=full", || {
-
-                // ---- sidebar -------------------------------------------------
-                gpui::column(f"w=190 h=full gap=4 p=12 bg={t.surface} border=1 bordercolor={t.line}", || {
-                    gpui::text("VIEWS", f"font=xs color={t.dim} px=12 pb=4")
-                    nav("Overview", "overview", pane, t)
-                    nav("Activity", "activity", pane, t)
-                    nav("Settings", "settings", pane, t)
-                    gpui::spacer(10.0)
-                    gpui::text("KEYS", f"font=xs color={t.dim} px=12 pb=4")
-                    gpui::column("gap=3 px=12", || {
-                        gpui::text("1 2 3   switch pane", f"font=xs color={t.dim}")
-                        gpui::text("d       toggle theme", f"font=xs color={t.dim}")
-                    })
-                    gpui::spacer(6.0)
-                    gpui::rect("flex=1")
-                    gpui::text(gpui::state_text("log", "waiting for the first sample"), f"font=xs color={t.dim}")
-                })
-
-                // ---- content -----------------------------------------------------
-                gpui::column(f"flex=1 h=full p=18 gap=14 bg={t.backdrop} overflow=y", || {
-
-                    if pane == "overview" {
-                        gpui::text("Overview", f"font=2xl bold color={t.text}")
-
-                        gpui::row("w=full gap=12", || {
-                            metric("live load", f"{load * 100.0:.1}%", f"{samples} samples", t)
-                            metric("visitors", f"{visitors}", "last 5 minutes", t)
-                            metric("uptime", f"{seconds:.0}s", "this window", t)
-                        })
-
-                        gpui::column(f"w=full gap=10 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}", || {
-                            gpui::row("w=full justify=between items=baseline", || {
-                                gpui::text("throughput", f"font=sm semibold color={t.text}")
-                                gpui::text(f"{load * 100.0:.1}% of capacity", f"font=xs color={t.dim}")
-                            })
-                            gpui::draw("bars", seconds * 1.8, "w=full h=120")
-                            gpui::draw("wave", seconds * 2.4, "w=full h=54 rounded=10 overflow=hidden")
-                        })
-
-                        gpui::column(f"w=full gap=12 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}", || {
-                            progress_row("cache hit rate", load, t)
-                            progress_row("queue depth", pulse, t)
-                            progress_row("worker saturation", (pulse + 0.55) / 2.0, t)
-                        })
-
-                    } else if pane == "activity" {
-                        gpui::row("w=full justify=between items=center", || {
-                            gpui::text("Activity", f"font=2xl bold color={t.text}")
-                            gpui::text(f"{EVENTS} events", f"font=xs color={t.dim}")
-                        })
-
-                        gpui::input("filter", "filter the rows below", f"w=full px=12 py=8 bg={t.surface} rounded=9 border=1 bordercolor={t.line} color={t.text}")
-
-                        let list_style = f"w=full h=380 bg={t.surface} rounded=12 border=1 bordercolor={t.line}"
-                        gpui::list("events", EVENTS, 30.0, list_style, |index| {
-                            let n = EVENTS - 1 - index
-                            let kind = n % 4
-                            let tag = ["read", "write", "cache", "warn"][kind]
-                            let colour = if kind == 3 { t.warn } else { t.good }
-                            let label = f"#{n}  {tag}   node-{(n * 7) % 32}   {n * 3 % 900}ms"
-                            let style = f"w=full h=full px=14 items=center font=xs bg=#00000000 color={colour} hover=bg:{t.raised}"
-                            gpui::button(f"event-{index}", label, style)
-                        })
-
-                    } else {
-                        gpui::text("Settings", f"font=2xl bold color={t.text}")
-
-                        gpui::column(f"w=full gap=14 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}", || {
-                            gpui::row("w=full justify=between items=center", || {
-                                gpui::text("sample interval", f"font=sm color={t.text}")
-                                gpui::text("1.2s", f"font=xs color={t.dim}")
-                            })
-                            gpui::divider("")
-                            gpui::row("w=full justify=between items=center", || {
-                                gpui::text("chart smoothing", f"font=sm color={t.text}")
-                                gpui::text(f"{(1.0 - sweep) * 100.0:.0}%", f"font=xs color={t.dim}")
-                            })
-                            gpui::slider("smoothing", 0.0, 1.0, f"w=full bg={t.raised} rounded=full")
-
-                            gpui::row("w=full justify=between items=center", || {
-                                gpui::text("retention window", f"font=sm color={t.text}")
-                                gpui::text(f"{retention} days", f"font=xs color={t.dim}")
-                            })
-                            gpui::slider("retention", 1.0, 90.0, f"w=full bg={t.raised} rounded=full")
-
-                            gpui::divider("")
-
-                            gpui::row("w=full gap=12 items=center", || {
-                                gpui::checkbox("alerts", "page on call", true, f"font=sm color={t.text}")
-                                gpui::checkbox("digest", "daily digest", false, f"font=sm color={t.text}")
-                            })
-
-                            gpui::input("filter", "filter the activity list", f"w=full px=12 py=8 bg={t.raised} rounded=9 border=1 bordercolor={t.line} color={t.text}")
-                            let note = if filter == "" { "no filter yet" } else { f"filtering on \"{filter}\"" }
-                            gpui::text(note, f"font=xs color={t.dim}")
-                        })
-
-                        gpui::row("w=full gap=10", || {
-                            gpui::button("theme", "toggle theme", f"px=16 py=9 rounded=9 bg={t.raised} color={t.text} font=sm hover=bg:{t.line}")
-                        })
-                    }
-                })
-            })
-
-            // ---- status bar ------------------------------------------------------
-            gpui::row(f"w=full h=28 items=center gap=16 px=14 bg={t.surface} border=1 bordercolor={t.line}", || {
-                gpui::text(f"pane {pane}", f"font=xs color={t.dim}")
-                gpui::text(f"frame {gpui::frame()}", f"font=xs color={t.dim}")
-                gpui::text(f"{samples} samples", f"font=xs color={t.dim}")
-                gpui::text(f"filter \"{filter}\"", f"font=xs color={t.dim}")
-                gpui::text(f"gpui · {t.name}", f"font=xs color={t.dim} flex=1 align=right")
-            })
-        })
+        ui::column(f"size=full bg={t.backdrop}")
+            // ---- custom titlebar ----------------------------------------
+            .child(ui::row(f"w=full h=44 items=center gap=10 bg={t.surface} border=1 bordercolor={t.line}")
+                .spacer(70.0)
+                .text("Operations", f"font=sm semibold color={t.text}")
+                .text(f"{t.name} · {seconds:.0}s", f"font=xs color={t.dim} flex=1")
+                .checkbox("theme", "dark", dark, f"font=xs color={t.dim} pr=14"))
+            // ---- sidebar and pane -----------------------------------------
+            .child(ui::row("flex=1 w=full")
+                .child(sidebar(pane, t))
+                .child(content))
+            // ---- status bar --------------------------------------------------
+            .child(ui::row(f"w=full h=28 items=center gap=16 px=14 bg={t.surface} border=1 bordercolor={t.line}")
+                .text(f"pane {pane}", f"font=xs color={t.dim}")
+                .text(f"frame {gpui::frame()}", f"font=xs color={t.dim}")
+                .text(f"{samples} samples", f"font=xs color={t.dim}")
+                .text(f"filter \"{filter}\"", f"font=xs color={t.dim}")
+                .text(f"gpui · {t.name}", f"font=xs color={t.dim} flex=1 align=right"))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

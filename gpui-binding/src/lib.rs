@@ -1,29 +1,35 @@
 //! `gpui` — Zed's GPU-accelerated UI framework, exposed to Gossamer.
 //!
-//! A Gossamer program describes its window once per frame, in the middle of
-//! painting it. The shape is:
+//! A Gossamer program describes its window once per frame, and the view
+//! callback *answers* the element it wants as the root:
 //!
 //! ```gossamer
 //! use gpui
+//! use ui
 //!
 //! fn main() {
 //!     gpui::run("Counter", 420.0, 260.0, || {
 //!         for event in gpui::take_events() {
-//!             if gpui::event_id(event) == "inc" {
+//!             let id, _data = gpui::event_parts(event)
+//!             if id == "inc" {
 //!                 gpui::set_int("count", gpui::state_int("count", 0) + 1)
 //!             }
 //!         }
-//!         gpui::column("flex gap=10 p=20 bg=#181825 w=full h=full", || {
-//!             gpui::text(f"count = {gpui::state_int(\"count\", 0)}", "font=2xl color=#cdd6f4")
-//!             gpui::button("inc", "+1", "px=14 py=8 rounded=8 bg=#89b4fa color=#11111b hover=bg:#a6e3fa")
-//!         })
+//!         ui::column("gap=10 p=20 bg=#181825 w=full h=full")
+//!             .text(f"count = {gpui::state_int(\"count\", 0)}", "font=2xl color=#cdd6f4")
+//!             .button("inc", "+1", "px=14 py=8 rounded=8 bg=#89b4fa hover=bg:#a6e3fa")
 //!     })
 //! }
 //! ```
 //!
-//! `run` blocks for the life of the program: GPUI calls the view callback
-//! once per frame, and the callback stays valid throughout, which is exactly
-//! the lifetime a Gossamer callback has.
+//! `run` blocks for the life of the program: GPUI calls the view callback once
+//! per frame, and the callback stays valid throughout, which is exactly the
+//! lifetime a Gossamer callback has.
+//!
+//! Each constructor here answers an `i64` *handle* into a per-frame arena.
+//! Handles are plain integers in Gossamer, so the `.child(..)` chaining that
+//! makes these examples read well lives on the Gossamer side, in `ui`, built
+//! on `gpui::child`.
 
 // Imports must live outside the `register_module!` block: the macro lifts the
 // binding bodies into a generated module that reaches the surrounding scope
@@ -47,7 +53,9 @@ gossamer_binding::register_module!(
 
     /// Open a window and run the event loop until the program quits.
     ///
-    /// `view` is called once per frame and must describe the whole window.
+    /// `view` is called once per frame and must *answer* the window's root
+    /// element — end it with `ui::column(..)` or another element, not with a
+    /// bare statement.
     cb_fn run(d, title: String, width: f64, height: f64, view: PersistentCallback) -> Result<(), String> {
         app::run_app(d, title, width, height, "", view)
     }
@@ -94,13 +102,16 @@ gossamer_binding::register_module!(
 
     /// Every event raised since the previous frame, drained.
     ///
-    /// An entry is `"id"` or `"id|payload"`; use [`gpui::event_id`] and
-    /// [`gpui::event_data`] to split one.
+    /// An entry is `"id"` or `"id|payload"`; use [`gpui::event_parts`] to split
+    /// one, or [`gpui::event_id`] when only the id is wanted.
     fn take_events() -> Vec<String> {
         store::take_events()
     }
 
     /// The event's id: everything before the first `|`.
+    ///
+    /// Consumes the event, so reach for [`gpui::event_parts`] when both halves
+    /// are wanted.
     fn event_id(event: String) -> String {
         match event.split_once('|') {
             Some((id, _)) => id.to_string(),
@@ -109,9 +120,6 @@ gossamer_binding::register_module!(
     }
 
     /// Split an event into `(id, payload)` in one step.
-    ///
-    /// `event_id` consumes its argument, so reaching for both halves of the
-    /// same event means taking a copy; this takes it once.
     fn event_parts(event: String) -> (String, String) {
         match event.split_once('|') {
             Some((id, data)) => (id.to_string(), data.to_string()),
@@ -213,47 +221,51 @@ gossamer_binding::register_module!(
     }
 
     // -----------------------------------------------------------------
-    // layout
+    // containers
     // -----------------------------------------------------------------
 
-    /// A column container. `style` is a GPUI style string; see the README.
-    cb_fn column(d, style: String, build: PersistentCallback) -> () {
-        let style = format!("flex col {}", style);
-        view::container(d, Kind::Plain, style, String::new(), &build)
+    /// A column container.
+    fn column(style: String) -> i64 {
+        view::push(Kind::Plain, format!("flex col {}", style), String::new())
     }
 
     /// A row container.
-    cb_fn row(d, style: String, build: PersistentCallback) -> () {
-        let style = format!("flex row {}", style);
-        view::container(d, Kind::Plain, style, String::new(), &build)
+    fn row(style: String) -> i64 {
+        view::push(Kind::Plain, format!("flex row {}", style), String::new())
     }
 
     /// A container with no flex direction of its own.
-    cb_fn panel(d, style: String, build: PersistentCallback) -> () {
-        view::container(d, Kind::Plain, style, String::new(), &build)
+    fn panel(style: String) -> i64 {
+        view::push(Kind::Plain, style, String::new())
     }
 
     /// A container whose children stack on top of one another; position them
     /// with `absolute top=… left=…`.
-    cb_fn stack(d, style: String, build: PersistentCallback) -> () {
-        let style = format!("relative {}", style);
-        view::container(d, Kind::Plain, style, String::new(), &build)
+    fn stack(style: String) -> i64 {
+        view::push(Kind::Plain, format!("relative {}", style), String::new())
     }
 
     /// A vertically scrolling area.
-    cb_fn scroll(d, style: String, build: PersistentCallback) -> () {
-        let style = format!("flex col overflow=y {}", style);
-        view::container(d, Kind::Plain, style, String::new(), &build)
+    fn scroll(style: String) -> i64 {
+        view::push(Kind::Plain, format!("flex col overflow=y {}", style), String::new())
     }
 
-    /// A virtualised list of `count` rows: `build` runs only for the rows on
-    /// screen, and is called with the row's index.
-    cb_fn list(_d, id: String, count: i64, row_height: f64, style: String, build: PersistentCallback) -> () {
-        view::leaf(
-            Kind::Virtual { count: count.max(0) as usize, build, row_height },
-            style,
-            id,
-        )
+    /// Name `element` as the window's root for this frame.
+    ///
+    /// The frame's last act; `|> gpui::root` reads well at the end of a chain.
+    fn root(element: i64) {
+        view::set_root(element)
+    }
+
+    /// Hang `node` under `parent`, and answer `parent` so a chain can carry
+    /// on from it.
+    fn child(parent: i64, node: i64) -> i64 {
+        view::child(parent, node)
+    }
+
+    /// Hang a whole run of elements under `parent`, in order.
+    fn children(parent: i64, nodes: Vec<i64>) -> i64 {
+        view::children(parent, nodes)
     }
 
     // -----------------------------------------------------------------
@@ -261,71 +273,81 @@ gossamer_binding::register_module!(
     // -----------------------------------------------------------------
 
     /// A run of text.
-    fn text(content: String, style: String) {
-        view::leaf(Kind::Text(content), style, String::new())
+    fn text(content: String, style: String) -> i64 {
+        view::push(Kind::Text(content), style, String::new())
     }
 
     /// A clickable button. Clicking raises the event `id`.
-    fn button(id: String, label: String, style: String) {
-        view::leaf(Kind::Button(label), style, id)
+    fn button(id: String, label: String, style: String) -> i64 {
+        view::push(Kind::Button(label), style, id)
     }
 
     /// A checkbox that toggles the flag stored under `id` and raises `id`.
-    fn checkbox(id: String, label: String, checked: bool, style: String) {
-        view::leaf(Kind::Checkbox { label, checked }, style, id)
+    fn checkbox(id: String, label: String, checked: bool, style: String) -> i64 {
+        view::push(Kind::Checkbox { label, checked }, style, id)
     }
 
     /// A single-line text field backed by the string stored under `key`.
     ///
     /// Raises `<key>|submit` on Return and `<key>|cancel` on Escape.
-    fn input(key: String, placeholder: String, style: String) {
-        view::leaf(Kind::Input { placeholder }, style, key)
+    fn input(key: String, placeholder: String, style: String) -> i64 {
+        view::push(Kind::Input { placeholder }, style, key)
     }
 
     /// A draggable slider between `min` and `max`, backed by the float stored
     /// under `key`. Raises `<key>|<value>` while it moves.
-    fn slider(key: String, min: f64, max: f64, style: String) {
-        view::leaf(Kind::Slider { min, max }, style, key)
+    fn slider(key: String, min: f64, max: f64, style: String) -> i64 {
+        view::push(Kind::Slider { min, max }, style, key)
     }
 
     /// A progress bar showing `value` in `0.0 ..= 1.0`.
-    fn progress(value: f64, style: String) {
-        view::leaf(Kind::Progress(value), style, String::new())
+    fn progress(value: f64, style: String) -> i64 {
+        view::push(Kind::Progress(value), style, String::new())
     }
 
     /// A raster image loaded from a file path.
-    fn image(path: String, style: String) {
-        view::leaf(Kind::Image(path), style, String::new())
+    fn image(path: String, style: String) -> i64 {
+        view::push(Kind::Image(path), style, String::new())
     }
 
     /// An SVG, tinted by the style's `color=`.
-    fn icon(path: String, style: String) {
-        view::leaf(Kind::Icon(path), style, String::new())
+    fn icon(path: String, style: String) -> i64 {
+        view::push(Kind::Icon(path), style, String::new())
     }
 
     /// An empty styled box — a swatch, a bar, a coloured block.
-    fn rect(style: String) {
-        view::leaf(Kind::Plain, style, String::new())
+    fn rect(style: String) -> i64 {
+        view::push(Kind::Plain, style, String::new())
     }
 
     /// A one-pixel horizontal rule.
-    fn divider(style: String) {
-        view::leaf(Kind::Divider, style, String::new())
+    fn divider(style: String) -> i64 {
+        view::push(Kind::Divider, style, String::new())
     }
 
     /// Vertical space.
-    fn spacer(size: f64) {
-        view::leaf(Kind::Spacer(size), String::new(), String::new())
+    fn spacer(size: f64) -> i64 {
+        view::push(Kind::Spacer(size), String::new(), String::new())
     }
 
     /// A directly painted surface. `painter` is one of `"bars"`, `"wave"` or
     /// `"stripes"`; `phase` drives its animation.
-    fn draw(painter: String, phase: f64, style: String) {
-        view::leaf(Kind::Canvas { painter, phase }, style, String::new())
+    fn draw(painter: String, phase: f64, style: String) -> i64 {
+        view::push(Kind::Canvas { painter, phase }, style, String::new())
+    }
+
+    /// A virtualised list of `count` rows: `build` runs only for the rows on
+    /// screen, is called with the row's index, and answers that row's element.
+    cb_fn list(_d, id: String, count: i64, row_height: f64, style: String, build: PersistentCallback) -> i64 {
+        view::push(
+            Kind::Virtual { count: count.max(0) as usize, build, row_height },
+            style,
+            id,
+        )
     }
 
     // -----------------------------------------------------------------
-    // theme
+    // window
     // -----------------------------------------------------------------
 
     /// Route every keystroke to the program as a `"key|<name>"` event.

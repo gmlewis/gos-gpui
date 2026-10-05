@@ -4,7 +4,7 @@
 // so the view callback runs at the display's refresh rate. Read the clock with
 // `gpui::now()` and everything follows.
 //
-// `gpui::draw(painter, phase, style)` hands a rectangle to GPUI's immediate
+// `ui::draw(painter, phase, style)` hands a rectangle to GPUI's immediate
 // painting API — `Window::paint_quad` and `Window::paint_path` — so the bars
 // and the curve below are real GPU draws, not nested boxes.
 //
@@ -13,13 +13,21 @@
 use gpui
 use std::math
 use std::process
+use ui
 
-fn caption(text: String) {
-    gpui::text(text, "font=sm semibold color=#9399b2")
+fn caption(content: String) -> ui::El {
+    ui::text(content, "font=sm semibold color=#9399b2")
+}
+
+fn gauge(label: String, value: f64) -> ui::El {
+    ui::row("w=full gap=10 items=center")
+        .text(label, "font=xs color=#6c7086 w=48")
+        .progress(value, "flex=1")
+        .text(f"{value * 100.0:.0}%", "font=xs color=#a6adc8 w=44 align=right")
 }
 
 fn main() {
-    let outcome = gpui::run("Animation", 760.0, 690.0, || {
+    let outcome = gpui::run("Animation", 760.0, 700.0, || {
         // Ask for the next frame unless the checkbox below has turned the
         // animation off. This is the whole frame loop.
         let painting = gpui::state_bool("paint", true)
@@ -30,71 +38,54 @@ fn main() {
         let t = gpui::now()
         let phase = t * 1.8
 
-        // A box bouncing on a sine. `bounce` runs 0 at the floor to 1 at the top.
+        // A box bouncing on a sine: `bounce` runs 0 at the floor, 1 at the top.
         let bounce = math::sin(t * 2.0) * 0.5 + 0.5
         let bounce_top = 20.0 + (1.0 - bounce) * 110.0
         let bounce_left = 20.0 + (t % 1.6) / 1.6 * 540.0
 
         // A slow pulse and a four-second breathe, both used as progress.
-        let pulse = math::sin(t * 1.2) * 0.5 + 0.5
         let saw = (t % 4.0) / 4.0
+        let pulse = math::sin(t * 1.2) * 0.5 + 0.5
         let breath = if saw < 0.5 { saw * 2.0 } else { 2.0 - saw * 2.0 }
 
-        gpui::column("size=full bg=#1e1e2e p=22 gap=16", || {
-
-            gpui::row("w=full justify=between items=baseline", || {
-                gpui::text("Animation", "font=2xl bold color=#cdd6f4")
-                gpui::text(f"{t:.1}s  ·  frame {gpui::frame()}", "font=xs color=#585b70")
-            })
-
-            // ---- two painters ---------------------------------------------
-            caption("drawn with paint_quad and paint_path")
-            gpui::row("w=full gap=14", || {
-                gpui::panel("flex=1 gap=6 bg=#181825 rounded=14 p=12", || {
-                    gpui::text("bars", "font=xs color=#6c7086")
-                    gpui::draw("bars", phase, "w=full h=104")
-                })
-                gpui::panel("flex=1 gap=6 bg=#181825 rounded=14 p=12", || {
-                    gpui::text("wave", "font=xs color=#6c7086")
-                    gpui::draw("wave", phase, "w=full h=104")
-                })
-            })
-
-            caption("a scrolling pattern, clipped to its box")
-            gpui::draw("stripes", phase, "w=full h=48 rounded=12 overflow=hidden")
-
-            // ---- a moving box ------------------------------------------------
-            caption("absolute positioning over a canvas")
-            gpui::stack("w=full h=160 bg=#181825 rounded=14 overflow=hidden", || {
-                gpui::rect(f"absolute size=52 rounded=12 bg=#89b4fa shadow=lg left={bounce_left} top={bounce_top}")
-                gpui::rect(f"absolute size=30 rounded=full bg=#f38ba8 opacity=0.75 left={560.0 - bounce_left * 0.7} top={40.0 + breath * 80.0}")
-                gpui::text("ordinary elements, repositioned every frame", "absolute left=20 bottom=10 font=xs color=#585b70")
-            })
-
-            // ---- progress bars --------------------------------------------------
-            caption("progress bars driven by the same clock")
-            gpui::column("w=full gap=10 bg=#181825 rounded=14 p=16", || {
-                gpui::row("w=full gap=10 items=center", || {
-                    gpui::text("pulse", "font=xs color=#6c7086 w=48")
-                    gpui::progress(pulse, "flex=1")
-                    gpui::text(f"{pulse * 100.0:.0}%", "font=xs color=#a6adc8 w=44 align=right")
-                })
-                gpui::row("w=full gap=10 items=center", || {
-                    gpui::text("breath", "font=xs color=#6c7086 w=48")
-                    gpui::progress(breath, "flex=1")
-                    gpui::text(f"{breath * 100.0:.0}%", "font=xs color=#a6adc8 w=44 align=right")
-                })
-            })
-
-            // ---- the frame loop's off switch ---------------------------------------
-            gpui::row("w=full gap=10 items=center bg=#181825 rounded=12 px=16 py=10", || {
-                gpui::checkbox("paint", "keep animating", painting, "font=sm color=#cdd6f4")
-                gpui::text(
-                    if painting { "asking GPUI for another frame each time" } else { "parked — the window still responds" }
-                    "font=xs color=#585b70"
-                )
-            })
-        })
+        ui::column("size=full bg=#1e1e2e p=22 gap=16")
+            .child(ui::row("w=full justify=between items=baseline")
+                .text("Animation", "font=2xl bold color=#cdd6f4")
+                .text(f"{t:.1}s  ·  frame {gpui::frame()}", "font=xs color=#585b70"))
+            // ---- two painters -------------------------------------------
+            .child(caption("drawn with paint_quad and paint_path"))
+            .child(ui::row("w=full gap=14")
+                .child(ui::panel("flex=1 gap=6 bg=#181825 rounded=14 p=12")
+                    .text("bars", "font=xs color=#6c7086")
+                    .draw("bars", phase, "w=full h=104"))
+                .child(ui::panel("flex=1 gap=6 bg=#181825 rounded=14 p=12")
+                    .text("wave", "font=xs color=#6c7086")
+                    .draw("wave", phase, "w=full h=104")))
+            .child(caption("a scrolling pattern, clipped to its box"))
+            .draw("stripes", phase, "w=full h=48 rounded=12 overflow=hidden")
+            // ---- moving boxes --------------------------------------------
+            .child(caption("absolute positioning over a canvas"))
+            .child(ui::stack("w=full h=160 bg=#181825 rounded=14 overflow=hidden")
+                .rect(f"absolute size=52 rounded=12 bg=#89b4fa shadow=lg left={bounce_left} top={bounce_top}")
+                .rect(f"absolute size=30 rounded=full bg=#f38ba8 opacity=0.75 left={560.0 - bounce_left * 0.7} top={40.0 + breath * 80.0}")
+                .text("ordinary elements, repositioned every frame", "absolute left=20 bottom=10 font=xs color=#585b70"))
+            // ---- progress bars --------------------------------------------
+            .child(caption("progress bars driven by the same clock"))
+            .child(ui::column("w=full gap=10 bg=#181825 rounded=14 p=16")
+                .child(gauge("pulse", pulse))
+                .child(gauge("breath", breath)))
+            // ---- the frame loop's off switch --------------------------------
+            .child(ui::row("w=full gap=10 items=center bg=#181825 rounded=12 px=16 py=10")
+                .checkbox("paint", "keep animating", painting, "font=sm color=#cdd6f4")
+                .text(
+                    if painting {
+                        "asking GPUI for another frame each time"
+                    } else {
+                        "parked — the window still responds"
+                    },
+                    "font=xs color=#585b70",
+                ))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {
