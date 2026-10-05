@@ -1,0 +1,43 @@
+// 23 - tree        upstream: tools/upstream/examples/tree.rs
+//
+// Fifty levels of nested divs, each 2px of padding and one of four colours,
+// cycling. Upstream reads the depth from `GPUI_TREE_DEPTH`; so does this port.
+//
+// The point of the example is that deep hierarchies lay out at all, so a
+// difference here — missing levels, wrong colours, a stack overflow — is worth
+// chasing.
+
+use gpui
+use std::env
+use std::process
+use ui
+
+const DEFAULT_DEPTH: i64 = 50
+
+/// Upstream cycles `[red, blue, green, yellow]`, but its iterator yields one
+/// colour per div *including* the innermost, and the nesting is built outside
+/// in — so the outermost div gets the colour after the innermost's.
+fn nest(depth: i64, level: i64) -> ui::El {
+    let colours = ["red", "blue", "green", "yellow"]
+    let colour = colours[(level % 4) as i64]
+    if level == 0 {
+        ui::rect(f"p=2 bg={colour}")
+    } else {
+        ui::panel(f"p=2 bg={colour}").child(nest(depth, level - 1))
+    }
+}
+
+fn main() {
+    let depth = env::var("GPUI_TREE_DEPTH")
+        .map(|raw| raw.to_i64().unwrap_or(DEFAULT_DEPTH))
+        .unwrap_or(DEFAULT_DEPTH)
+
+    let outcome = gpui::run("23 - tree", 300.0, 300.0, || {
+        nest(depth, depth) |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

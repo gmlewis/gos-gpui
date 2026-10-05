@@ -1,0 +1,41 @@
+// 15 - pattern        upstream: tools/upstream/examples/pattern.rs
+//
+// GPUI's repeating diagonal-slash backgrounds, at two tile sizes, next to a
+// flat fill and a 45-degree gradient so the three fills can be compared.
+//
+// `pattern_slash(colour, width, interval)` is the `slash=` style token:
+// `slash=#ff0000,4.5,4.5`.
+
+use gpui
+use std::process
+use ui
+
+fn slash(colour: String, width: String, interval: String, extra: String) -> ui::El {
+    ui::rect(f"{extra} slash={colour},{width},{interval} border=1 bordercolor=blue")
+}
+
+fn main() {
+    let outcome = gpui::run("15 - pattern", 600.0, 600.0, || {
+        ui::panel("flex col gap=12 bg=white size=600 justify=center items=center shadow=lg font=xl color=black")
+            .text("Pattern Example", "")
+            .child(ui::column("flex col border=1 bordercolor=blue")
+                .child(slash("red", "4.5", "4.5", "w=54 h=18"))
+                .child(slash("red", "4.5", "4.5", "w=54 h=18"))
+                .child(slash("red", "4.5", "4.5", "w=54 h=18"))
+                .child(slash("red", "4.5", "9", "w=54 h=18")))
+            .child(ui::column("flex col border=1 bordercolor=blue bg=#00800029")
+                .text("Elements the same height should align", "")
+                .child(slash("red", "9.333", "9.333", "w=256 h=56"))
+                .child(slash("green", "9.333", "9.333", "w=256 h=56"))
+                .child(slash("blue", "9.333", "9.333", "w=256 h=56"))
+                .child(slash("yellow", "9.333", "9.333", "w=256 h=26")))
+            .child(ui::rect("border=1 bordercolor=blue w=240 h=40 bg=red"))
+            .child(ui::rect("border=1 bordercolor=blue w=240 h=40 grad=45,red,blue"))
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

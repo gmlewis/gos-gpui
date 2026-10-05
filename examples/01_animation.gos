@@ -1,0 +1,61 @@
+// 01 - animation        upstream: tools/upstream/examples/animation.rs
+//
+// A spinning arrow SVG over a "Hello Animation" heading, with a second panel
+// below. Upstream uses `with_animation(..)` with a 2s repeating
+// `bounce(ease_in_out)`; this port drives the same rotation from the frame
+// clock with `gpui::animate()`, and reproduces `ease_in_out` and `bounce`
+// exactly (they are four lines each in GPUI's animation.rs).
+//
+// Difference to watch for: upstream's animation is run by GPUI's animation
+// driver, which only asks for frames while the animation is live. This port
+// asks for a frame every frame, so it repaints continuously.
+
+use gpui
+use std::process
+use ui
+
+const ARROW: &str = "examples/assets/arrow_circle.svg";
+const PERIOD: f64 = 2.0;
+
+fn ease_in_out(delta: f64) -> f64 {
+    if delta < 0.5 {
+        2.0 * delta * delta
+    } else {
+        let x = -2.0 * delta + 2.0
+        1.0 - x * x / 2.0
+    }
+}
+
+/// GPUI's `bounce(ease_in_out)`: run the easing forward, then backward.
+/// (`bounce` is generic over its easing; Gossamer spells that as a bound, so
+/// the one composition upstream asks for is written out instead.)
+fn bounce_ease_in_out(delta: f64) -> f64 {
+    if delta < 0.5 {
+        ease_in_out(delta * 2.0)
+    } else {
+        ease_in_out((1.0 - delta) * 2.0)
+    }
+}
+
+fn main() {
+    let outcome = gpui::run("01 - animation", 300.0, 300.0, || {
+        gpui::animate()
+
+        let delta = (gpui::now() % PERIOD) / PERIOD
+        let degrees = bounce_ease_in_out(delta) * 360.0
+
+        ui::panel("flex col size=full bg=white color=black justify=around")
+            .child(ui::column("flex col size=full justify=around")
+                .child(ui::column("overflow=y h=150 w=full flex=1 justify=center items=center font=xl gap=16")
+                    .text("Hello Animation", "")
+                    .icon(ARROW, f"size=80 overflow=hidden color=black rotate={degrees}"))
+                .child(ui::panel("flex h=64 w_full p=8 justify=center items=center border=1 bordercolor=#0000001a bg=#0000000d")
+                    .text("Other Panel", "")))
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

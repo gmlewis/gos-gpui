@@ -1,0 +1,37 @@
+// 07 - hello_world        upstream: tools/upstream/examples/hello_world.rs
+//
+// Faithful port. A 500x500 grey panel with a heading and six coloured,
+// dashed-bordered squares.
+//
+// The only structural difference from upstream is that a Gossamer frame is
+// rebuilt every frame rather than held in an entity; the element tree is the
+// same.
+
+use gpui
+use std::process
+use ui
+
+/// One swatch: `size_8` is 8 × 4px.
+fn square(colour: String, border: String) -> ui::El {
+    ui::rect(f"size=32 bg={colour} border=1 dashed rounded=md bordercolor={border}")
+}
+
+fn main() {
+    let outcome = gpui::run("07 - hello_world", 500.0, 500.0, || {
+        ui::panel("flex col gap=12 bg=#505050 size=500 justify=center items=center shadow=lg border=1 bordercolor=#0000ff font=xl color=#ffffff")
+            .text("Hello, World!", "")
+            .child(ui::row("gap=8")
+                .child(square("red", "white"))
+                .child(square("green", "white"))
+                .child(square("blue", "white"))
+                .child(square("yellow", "white"))
+                .child(square("black", "white"))
+                .child(square("white", "black")))
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

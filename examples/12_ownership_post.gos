@@ -1,0 +1,35 @@
+// 12 - ownership_post        upstream: tools/upstream/examples/ownership_post.rs (35 lines)
+//
+// NOT PORTED YET. A companion to Zed's ownership blog post: parent/child entities and subscription.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run ownership_post
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("12 - ownership_post", 620.0, 420.0, || {
+        status::missing(
+            "12 - ownership_post",
+            "upstream: examples/ownership_post.rs (35 lines)",
+            #[
+            "cx.emit / cx.subscribe — GPUI's observable entity model",
+            "Entity parent/child ownership",
+            "(the binding rebuilds the tree each frame and has no entity graph)",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

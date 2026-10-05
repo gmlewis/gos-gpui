@@ -1,0 +1,36 @@
+// 26 - window_shadow        upstream: tools/upstream/examples/window_shadow.rs (227 lines)
+//
+// NOT PORTED YET. A window-level shadow that follows the pointer, with a client inset and hitboxes.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run window_shadow
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("26 - window_shadow", 680.0, 520.0, || {
+        status::missing(
+            "26 - window_shadow",
+            "upstream: examples/window_shadow.rs (227 lines)",
+            #[
+            "window.insert_hitbox(..)",
+            "window.mouse_position()",
+            "window.set_client_inset(..)",
+            "cx.observe_window_appearance(..) and cx.stop_propagation()",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

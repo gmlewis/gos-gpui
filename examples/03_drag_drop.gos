@@ -1,0 +1,35 @@
+// 03 - drag_drop        upstream: tools/upstream/examples/drag_drop.rs (137 lines)
+//
+// NOT PORTED YET. Dragging a coloured square onto a named drop target.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run drag_drop
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("03 - drag_drop", 600.0, 400.0, || {
+        status::missing(
+            "03 - drag_drop",
+            "upstream: examples/drag_drop.rs (137 lines)",
+            #[
+            "on_drag / on_drop — drag payloads between elements",
+            "DragView / drag preview rendering",
+            "cx.listener(..) — a handler bound to the entity",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

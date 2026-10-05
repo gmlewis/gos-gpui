@@ -1,0 +1,35 @@
+// 02 - data_table        upstream: tools/upstream/examples/data_table.rs (473 lines)
+//
+// NOT PORTED YET. A resizable data table: columns, drag-resize, selection, header cells.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run data_table
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("02 - data_table", 720.0, 480.0, || {
+        status::missing(
+            "02 - data_table",
+            "upstream: examples/data_table.rs (473 lines)",
+            #[
+            "cx.processor(..) — a row builder that borrows the entity",
+            "window.on_mouse_event(..) — window-wide mouse observation",
+            "cx.entity() handles for per-column and per-row state",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

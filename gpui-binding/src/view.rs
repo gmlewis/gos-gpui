@@ -282,19 +282,28 @@ fn snapshot(handle: i64) -> Option<El> {
 pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: EntityId) -> AnyElement {
     let errors = ARENA.with(|a| std::mem::take(&mut a.borrow_mut().errors));
 
+    // A clean frame is handed straight to GPUI: the element the program
+    // described *is* the window's root, with nothing wrapped around it. The
+    // column only appears when there is something to report.
+    if errors.is_empty() {
+        return match root.and_then(snapshot) {
+            Some(el) => render(&el, window, cx, entity),
+            None => error_card(
+                "the view callback answered no root element — end it with an element, \
+                 such as `ui::column(..)`, rather than a bare statement"
+                    .into(),
+            ),
+        };
+    }
+
     let mut column = div().flex().flex_col().size_full();
     for message in errors {
         column = column.child(error_card(message));
     }
-
     match root.and_then(snapshot) {
         Some(el) => column.child(render(&el, window, cx, entity)).into_any_element(),
         None => column
-            .child(error_card(
-                "the view callback answered no root element — end it with an element, \
-                 such as `ui::column(..)`, rather than a bare statement"
-                    .into(),
-            ))
+            .child(error_card("the view callback answered no root element".into()))
             .into_any_element(),
     }
 }
@@ -337,17 +346,38 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 .map(|child| render(&child, window, cx, entity))
                 .collect();
             let base = style::apply(div(), &el.style);
+            let (hover, active) = style::interaction(&el.style);
             match style::scroll_axis(&el.style) {
-                Some("x") => base
-                    .id(ElementId::Name(el.id.clone().into()))
-                    .overflow_x_scroll()
-                    .children(children)
-                    .into_any_element(),
-                Some(_) => base
-                    .id(ElementId::Name(el.id.clone().into()))
-                    .overflow_y_scroll()
-                    .children(children)
-                    .into_any_element(),
+                Some("x") => {
+                    let scrolled = apply_interactions(
+                        base.id(ElementId::Name(el.id.clone().into())),
+                        &el.style,
+                    );
+                    scrolled.overflow_x_scroll().children(children).into_any_element()
+                }
+                Some("both") => {
+                    let scrolled = apply_interactions(
+                        base.id(ElementId::Name(el.id.clone().into())),
+                        &el.style,
+                    );
+                    scrolled.overflow_scroll().children(children).into_any_element()
+                }
+                Some(_) => {
+                    let scrolled = apply_interactions(
+                        base.id(ElementId::Name(el.id.clone().into())),
+                        &el.style,
+                    );
+                    scrolled.overflow_y_scroll().children(children).into_any_element()
+                }
+                // A plain box only becomes interactive when it asks to be, so
+                // the common case keeps a stateless element.
+                None if hover.is_some() || active.is_some() => {
+                    let interactive = apply_interactions(
+                        base.id(ElementId::Name(el.id.clone().into())),
+                        &el.style,
+                    );
+                    interactive.children(children).into_any_element()
+                }
                 None => base.children(children).into_any_element(),
             }
         }
@@ -569,7 +599,15 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
 
         Kind::Icon(path) => {
             let icon: Svg = svg().path(SharedString::from(path.clone()));
-            style::apply(icon, &el.style).into_any_element()
+            let icon = style::apply(icon, &el.style);
+            match style::rotation(&el.style) {
+                Some(degrees) => icon
+                    .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                        degrees.to_radians(),
+                    )))
+                    .into_any_element(),
+                None => icon.into_any_element(),
+            }
         }
 
         Kind::Divider => {
@@ -721,6 +759,34 @@ fn paint(painter: &str, bounds: Bounds<Pixels>, phase: f64, window: &mut Window)
                 ));
                 x += band * 2.0;
                 i += 1;
+            }
+        }
+        // gradient.rs paints a trapezoid with a gradient through
+        // `PathBuilder` + `paint_path`. Reproduced here as a painter so the
+        // example keeps its canvas.
+        "prism" => {
+            let band = 80.0_f32;
+            // Upstream positions this from `bounds.size.width`, not
+            // `bounds.origin.x` — reproduced as written.
+            let ox = width * 0.5 - width * 0.8 * 0.5;
+            let oy = y0;
+            let horizontal = band;
+            let vertical = 30.0_f32;
+            let mut builder = gpui::PathBuilder::fill();
+            builder.move_to(point(px(ox), px(oy + band)));
+            builder.line_to(point(px(ox + horizontal), px(oy + vertical)));
+            builder.line_to(point(px(ox + width * 0.8 - horizontal), px(oy + vertical)));
+            builder.line_to(point(px(ox + width * 0.8), px(oy + band)));
+            builder.line_to(point(px(ox), px(oy + band)));
+            if let Ok(path) = builder.build() {
+                window.paint_path(
+                    path,
+                    gpui::linear_gradient(
+                        180.0,
+                        gpui::linear_color_stop(style::colour("#ff0000"), 0.0),
+                        gpui::linear_color_stop(style::colour("#0000ff"), 1.0),
+                    ),
+                );
             }
         }
         _ => {

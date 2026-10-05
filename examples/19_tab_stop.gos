@@ -1,0 +1,36 @@
+// 19 - tab_stop        upstream: tools/upstream/examples/tab_stop.rs (155 lines)
+//
+// NOT PORTED YET. Tab and shift-tab moving focus between focusable boxes, with focus rings.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run tab_stop
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("19 - tab_stop", 620.0, 460.0, || {
+        status::missing(
+            "19 - tab_stop",
+            "upstream: examples/tab_stop.rs (155 lines)",
+            #[
+            "tab_stop / tab_index on an element",
+            "window.focus_next(..) / window.focus_prev(..)",
+            "cx.focus_handle() handed to the program",
+            "on_focus / on_blur style refinements",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

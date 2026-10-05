@@ -1,0 +1,36 @@
+// 27 - window        upstream: tools/upstream/examples/window.rs (269 lines)
+//
+// NOT PORTED YET. Every window option: popups, prompts, custom titlebars, resize, hide, fullscreen.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run window
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("27 - window", 720.0, 520.0, || {
+        status::missing(
+            "27 - window",
+            "upstream: examples/window.rs (269 lines)",
+            #[
+            "cx.open_window(..) more than once — the binding is single-window",
+            "WindowKind::PopUp, titlebar: None, show: false",
+            "window.prompt(..), window.resize(..), window.remove_window()",
+            "cx.hide(), cx.observe_window_bounds(..)",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

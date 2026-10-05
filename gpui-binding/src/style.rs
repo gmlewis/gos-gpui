@@ -84,6 +84,9 @@ fn is_known(key: &str) -> bool {
         | "lh" | "truncate"
         // behaviour
         | "cursor" | "overflow" | "debug"
+        // grid placement and decoration
+        | "gridcols" | "gridrows" | "colspan" | "rowspan" | "slash"
+        | "wavy" | "deco" | "decocolor" | "rotate"
         // interaction refinements (handled by `view`, listed here so they are
         // not reported as unknown)
         | "hover" | "active"
@@ -113,12 +116,32 @@ pub fn scroll_axis(spec: &str) -> Option<&'static str> {
         if key == "overflow" {
             match value.as_deref() {
                 Some("x") => return Some("x"),
-                Some("y") | Some("scroll") => return Some("y"),
+                Some("y") => return Some("y"),
+                // `overflow_scroll()` — a box that scrolls either way.
+                Some("scroll") | Some("both") => return Some("both"),
                 _ => {}
             }
         }
     }
     None
+}
+
+/// `rotate=<degrees>`, for the elements that can carry a transformation.
+pub fn rotation(spec: &str) -> Option<f32> {
+    tokens(spec)
+        .into_iter()
+        .find(|(key, _)| key == "rotate")
+        .and_then(|(_, value)| value)
+        .and_then(|value| value.parse::<f32>().ok())
+}
+
+/// `slash=#rrggbb,width,interval`.
+fn slash(v: &str) -> gpui::Background {
+    let parts: Vec<&str> = v.split(',').collect();
+    let colour = colour(parts.first().copied().unwrap_or("#ffffff"));
+    let width = parts.get(1).and_then(|w| w.parse::<f32>().ok()).unwrap_or(4.0);
+    let interval = parts.get(2).and_then(|i| i.parse::<f32>().ok()).unwrap_or(width);
+    gpui::pattern_slash(colour, width, interval)
 }
 
 /// `hover=bg:#313244 opacity:0.9` is awkward to nest inside a whitespace
@@ -208,6 +231,24 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         "left" => el.left(sized(v)),
 
         // ---- alignment ----------------------------------------------------
+        // ---- grid placement ----------------------------------------------
+        "gridcols" => el.grid_cols(num(v) as u16),
+        "gridrows" => el.grid_rows(num(v) as u16),
+        "colspan" => {
+            if v == "full" {
+                el.col_span_full()
+            } else {
+                el.col_span(num(v) as u16)
+            }
+        }
+        "rowspan" => {
+            if v == "full" {
+                el.row_span_full()
+            } else {
+                el.row_span(num(v) as u16)
+            }
+        }
+
         "justify" => match v {
             "start" => el.justify_start(),
             "end" => el.justify_end(),
@@ -239,6 +280,8 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         // ---- paint ---------------------------------------------------------
         "bg" => el.bg(colour(v)),
         "grad" => el.bg(gradient(v)),
+        // `slash=#rrggbb,width,interval` — GPUI's repeating diagonal pattern.
+        "slash" => el.bg(slash(v)),
         "color" => el.text_color(colour(v)),
         "opacity" => el.opacity(num(v) as f32),
 
@@ -284,6 +327,15 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         "italic" => el.italic(),
         "underline" => el.underline(),
         "strike" => el.line_through(),
+        "wavy" => el.text_decoration_wavy(),
+        "deco" => match v {
+            "1" => el.text_decoration_1(),
+            "2" => el.text_decoration_2(),
+            "4" => el.text_decoration_4(),
+            "8" => el.text_decoration_8(),
+            _ => el,
+        },
+        "decocolor" => el.text_decoration_color(colour(v)),
         "lh" => el.line_height(rems(num(v) as f32)),
         "truncate" => el.truncate(),
 
@@ -373,18 +425,49 @@ pub fn colour(v: &str) -> Hsla {
     }
 }
 
-/// `grad=angle,#from,#to`, or `grad=#from,#to` for a top-to-bottom gradient.
+/// `grad=angle,from,to`, `grad=from,to`, or the full
+/// `grad=angle,from,fromPct,to,toPct[,space]`.
+///
+/// `space` is `srgb` or `oklab`, matching GPUI's `ColorSpace`.
 fn gradient(v: &str) -> gpui::Background {
     let parts: Vec<&str> = v.split(',').collect();
-    let has_angle = parts.len() >= 3;
-    let angle = if has_angle { parts[0].parse::<f32>().unwrap_or(0.0) } else { 180.0 };
-    let from = *parts.get(usize::from(has_angle)).unwrap_or(&"#000000");
-    let to = *parts.get(usize::from(has_angle) + 1).unwrap_or(&"#ffffff");
-    gpui::linear_gradient(
+    let pct = |raw: Option<&&str>, fallback: f32| {
+        raw.and_then(|p| p.parse::<f32>().ok()).unwrap_or(fallback)
+    };
+    let angle = |raw: &str| raw.parse::<f32>().unwrap_or(0.0);
+
+    let (angle, from, from_pct, to, to_pct, space) = match parts.len() {
+        2 => (180.0, parts[0], 0.0, parts[1], 1.0, None),
+        3 => (angle(parts[0]), parts[1], 0.0, parts[2], 1.0, None),
+        4 => (angle(parts[0]), parts[1], 0.0, parts[2], 1.0, Some(parts[3])),
+        5 => (
+            angle(parts[0]),
+            parts[1],
+            pct(parts.get(2), 0.0),
+            parts[3],
+            pct(parts.get(4), 1.0),
+            None,
+        ),
+        _ => (
+            angle(parts.first().copied().unwrap_or("0")),
+            parts.get(1).copied().unwrap_or("#000000"),
+            pct(parts.get(2), 0.0),
+            parts.get(3).copied().unwrap_or("#ffffff"),
+            pct(parts.get(4), 1.0),
+            parts.get(5).copied(),
+        ),
+    };
+
+    let background = gpui::linear_gradient(
         angle,
-        gpui::linear_color_stop(colour(from), 0.0),
-        gpui::linear_color_stop(colour(to), 1.0),
-    )
+        gpui::linear_color_stop(colour(from), from_pct),
+        gpui::linear_color_stop(colour(to), to_pct),
+    );
+    match space {
+        Some("oklab") | Some("oklch") => background.color_space(gpui::ColorSpace::Oklab),
+        Some("srgb") => background.color_space(gpui::ColorSpace::Srgb),
+        _ => background,
+    }
 }
 
 fn weight(v: &str) -> FontWeight {

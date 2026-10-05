@@ -22,7 +22,9 @@ cd "$(dirname "$0")"
 
 if [ $# -eq 0 ]; then
   echo "examples:"
-  for file in examples/*.gos; do
+  # Only the numbered ports are examples; examples/status.gos and
+  # examples/ui/ are the shared scaffolding they import.
+  for file in examples/[0-9][0-9]_*.gos; do
     printf '  %s\n' "$(basename "$file" .gos)"
   done
   echo
@@ -42,13 +44,27 @@ if [ $# -eq 0 ]; then
 fi
 
 # See run.sh for why the glob needs a `for` loop rather than an assignment.
+# Only the numbered ports are examples; examples/status.gos is scaffolding the
+# examples import, and examples/ui/ is the chaining layer.
+is_example() {
+  case "$(basename "$1")" in
+    [0-9][0-9]_*.gos) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 resolve() {
   local want="$1" found=()
-  [ -f "$want" ] && { printf '%s' "$want"; return 0; }
-  [ -f "examples/$want" ] && { printf '%s' "examples/$want"; return 0; }
-  [ -f "examples/$want.gos" ] && { printf '%s' "examples/$want.gos"; return 0; }
+  if [ -f "$want" ]; then is_example "$want" && { printf '%s' "$want"; return 0; }; fi
+  if [ -f "examples/$want" ]; then
+    is_example "examples/$want" && { printf '%s' "examples/$want"; return 0; }
+  fi
+  if [ -f "examples/$want.gos" ]; then
+    is_example "examples/$want.gos" && { printf '%s' "examples/$want.gos"; return 0; }
+  fi
   for candidate in examples/"$want"*.gos; do
-    [ -f "$candidate" ] && found+=("$candidate")
+    [ -f "$candidate" ] || continue
+    is_example "$candidate" && found+=("$candidate")
   done
   case "${#found[@]}" in
     1) printf '%s' "${found[0]}" ;;

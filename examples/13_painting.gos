@@ -1,0 +1,36 @@
+// 13 - painting        upstream: tools/upstream/examples/painting.rs (463 lines)
+//
+// NOT PORTED YET. Direct painting: quads, paths, gradients, shadows and text drawn by hand.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run painting
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("13 - painting", 760.0, 620.0, || {
+        status::missing(
+            "13 - painting",
+            "upstream: examples/painting.rs (463 lines)",
+            #[
+            "constructing arbitrary PathBuilder paths from Gossamer",
+            "paint_quad with per-corner radii and borders from a script",
+            "gradients painted through a path",
+            "(the binding exposes three fixed painters: bars, wave, stripes, prism)",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

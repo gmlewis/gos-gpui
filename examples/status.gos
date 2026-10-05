@@ -1,0 +1,17 @@
+// Shared scaffolding for the examples that are not ported yet.
+//
+// Each of those files names the GPUI APIs its upstream example uses and the
+// binding does not expose, so the gap is visible on screen rather than in a
+// comment nobody runs.
+
+use ui
+
+pub fn missing(title: String, upstream: String, needs: Vec<String>) -> ui::El {
+    ui::column("size=full bg=#1e1e2e p=28 gap=16 justify=center items=center")
+        .text(title, "font=2xl bold color=#f9e2af")
+        .text("not ported yet", "font=sm semibold color=#f38ba8")
+        .text(upstream, "font=xs color=#6c7086")
+        .child(ui::column("gap=8 w=520 bg=#181825 rounded=12 p=18")
+            .text("what the binding is missing", "font=sm semibold color=#9399b2")
+            .children(needs.map(|line| ui::text(f"· {line}", "font=sm color=#cdd6f4"))))
+}

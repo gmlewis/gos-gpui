@@ -1,0 +1,73 @@
+// 05 - gradient        upstream: tools/upstream/examples/gradient.rs
+//
+// Linear gradients at a spread of angles, with the colour-space toggle that
+// upstream exposes: the button in the header switches between sRGB and Oklab
+// interpolation, and every swatch re-renders in it.
+//
+// The canvas trapezoid at the bottom is painted through the same
+// `PathBuilder` + `paint_path` call upstream makes, as the `prism` painter.
+// Upstream positions it from `bounds.size.width` rather than `origin.x`; that
+// is reproduced as written.
+
+use gpui
+use std::process
+use ui
+
+fn solid(colour: String) -> ui::El {
+    ui::rect(f"flex=1 size=full rounded=xl items=center justify=center bg={colour} color=white")
+        .text("Solid Color", "")
+}
+
+/// `flex_1 rounded_xl h_24` swatch — `h_24` is 96px.
+fn swatch(angle: String, from: String, to: String, space: String) -> ui::El {
+    ui::rect(f"flex=1 rounded=xl grad={angle},{from},{to},{space}")
+}
+
+fn half_swatch(angle: String, from: String, from_pct: String, to: String, to_pct: String, space: String) -> ui::El {
+    ui::rect(f"flex=1 rounded=xl grad={angle},{from},{from_pct},{to},{to_pct},{space}")
+}
+
+fn main() {
+    let outcome = gpui::run("05 - gradient", 700.0, 640.0, || {
+        for event in gpui::take_events() {
+            let id, _data = gpui::event_parts(event)
+            if id == "method" {
+                let now = gpui::state_text("space", "srgb")
+                gpui::set_text("space", if now == "srgb" { "oklab" } else { "srgb" })
+            }
+        }
+
+        let space = gpui::state_text("space", "srgb")
+
+        ui::panel("bg=white size=full p=16 flex col gap=12")
+            .child(ui::row("flex gap=8 justify=between items=center")
+                .text("Gradient Examples", "")
+                .child(ui::row("flex gap=8 items=center")
+                    .button("method", space, "flex px=12 py=4 font=sm bg=black color=white active=opacity:0.8")))
+            .child(ui::row("flex flex=1 gap=12")
+                .child(solid("red"))
+                .child(solid("blue")))
+            .child(ui::row("flex flex=1 gap=12 h=96 color=white")
+                .child(swatch("45", "red", "blue", space))
+                .child(swatch("135", "red", "green", space))
+                .child(swatch("225", "green", "blue", space))
+                .child(swatch("315", "green", "yellow", space)))
+            .child(ui::row("flex flex=1 gap=12 h=96 color=white")
+                .child(swatch("0", "red", "white", space))
+                .child(swatch("90", "blue", "white", space))
+                .child(swatch("180", "green", "white", space))
+                .child(swatch("360", "yellow", "white", space)))
+            .child(ui::rect(f"flex=1 rounded=xl grad=0,green,0.05,yellow,0.95,{space}"))
+            .child(ui::rect(f"flex=1 rounded=xl grad=90,blue,0.05,red,0.95,{space}"))
+            .child(ui::row("flex flex=1 gap=12")
+                .child(ui::rect(f"flex=1 rounded=xl grad=90,blue,0.5,red,0.5,{space}"))
+                .child(ui::rect(f"flex=1 rounded=xl grad=180,green,0,blue,0.5,{space}")))
+            .child(ui::rect("h=96").draw("prism", 0.0, "w=full h=96"))
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

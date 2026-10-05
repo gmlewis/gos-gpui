@@ -1,0 +1,38 @@
+// 09 - input        upstream: tools/upstream/examples/input.rs (746 lines)
+//
+// NOT PORTED YET. A full text editor: caret, selection, clipboard, IME, undo, key bindings.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run input
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("09 - input", 760.0, 560.0, || {
+        status::missing(
+            "09 - input",
+            "upstream: examples/input.rs (746 lines)",
+            #[
+            "EntityInputHandler + ElementInputHandler",
+            "window.handle_input / TextInputHandler plumbing",
+            "ClipboardItem, selection range, marked (IME) range",
+            "paint_text with shaped lines and cursors",
+            "cx.observe_keystrokes, cx.on_action, cx.bind_keys, key_context",
+            "(the binding's ui::input is a minimal single-line field, not this)",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

@@ -1,0 +1,26 @@
+// 10 - on_window_close_quit        upstream: tools/upstream/examples/on_window_close_quit.rs
+//
+// Upstream opens TWO windows and quits when the last one closes. This binding
+// is single-window, so the port exercises the behaviour it can: closing this
+// window — by the traffic lights or by the quit keystroke — ends the process.
+//
+// Deviation: upstream binds `cmd-w` to remove the focused window. The binding
+// owns its key bindings and binds the desktop quit shortcut instead (⌘Q on
+// macOS, Ctrl+Q elsewhere), so ⌘W is not wired here.
+
+use gpui
+use std::process
+use ui
+
+fn main() {
+    let outcome = gpui::run("10 - on_window_close_quit", 500.0, 500.0, || {
+        ui::panel("flex col gap=12 bg=#505050 size=500 justify=center items=center shadow=lg border=1 bordercolor=#0000ff font=xl color=#ffffff")
+            .text("Closing this window with the quit shortcut or the traffic lights should quit the application!", "")
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

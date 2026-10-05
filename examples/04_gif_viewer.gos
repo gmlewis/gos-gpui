@@ -1,0 +1,35 @@
+// 04 - gif_viewer        upstream: tools/upstream/examples/gif_viewer.rs (41 lines)
+//
+// NOT PORTED YET. An animated GIF, loaded through GPUI's asset loader.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run gif_viewer
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("04 - gif_viewer", 500.0, 500.0, || {
+        status::missing(
+            "04 - gif_viewer",
+            "upstream: examples/gif_viewer.rs (41 lines)",
+            #[
+            "Application::with_assets(..) + an AssetSource impl",
+            "img(..) resolving through that asset source",
+            "(the binding loads images from a filesystem path only)",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

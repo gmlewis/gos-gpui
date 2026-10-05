@@ -1,0 +1,31 @@
+// 06 - grid_layout        upstream: tools/upstream/examples/grid_layout.rs
+//
+// Faithful port of the "holy grail" layout: a 5x5 CSS grid with a full-width
+// header, a table of contents, the content block spanning three rows, an ad
+// column, and a full-width footer.
+
+use gpui
+use std::process
+use ui
+
+/// One grid cell. `border_dashed` + `rounded_md` are upstream's `block`.
+fn block(colour: String, extra: String) -> ui::El {
+    ui::rect(f"size=full bg={colour} border=1 dashed rounded=md bordercolor=white items=center {extra}")
+}
+
+fn main() {
+    let outcome = gpui::run("06 - grid_layout", 500.0, 500.0, || {
+        ui::panel("grid gap=4 bg=#505050 size=500 shadow=lg border=1 size=full gridcols=5 gridrows=5")
+            .child(block("white", "rowspan=1 colspan=full").text("Header", ""))
+            .child(block("red", "colspan=1 h=224").text("Table of contents", ""))
+            .child(block("green", "colspan=3 rowspan=3").text("Content", ""))
+            .child(block("blue", "colspan=1 rowspan=3").text("AD :(", "color=white"))
+            .child(block("black", "rowspan=1 colspan=full").text("Footer", "color=white"))
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

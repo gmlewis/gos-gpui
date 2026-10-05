@@ -1,0 +1,68 @@
+// 11 - opacity        upstream: tools/upstream/examples/opacity.rs
+//
+// Click the panel and it fades back in, 0.005 per frame. Everything is
+// stacked over "background text", which stays visible through it.
+//
+// Two deviations, both forced by the binding:
+//   * upstream's custom `BoxShadow` (offset 10,10, spread 5, blur 1) is not
+//     expressible in the style language; `shadow=lg` stands in.
+//   * asset paths point at examples/assets/ rather than the crate's own
+//     examples/image/, which the runner does not ship.
+
+use gpui
+use std::process
+use ui
+
+const APP_ICON: &str = "examples/assets/app-icon.png";
+const ARROW: &str = "examples/assets/arrow_circle.svg";
+const CAT: &str = "examples/assets/black-cat-typing.gif";
+
+fn emoji(face: String) -> ui::El {
+    ui::text(face, "hover=opacity:0.5")
+}
+
+fn main() {
+    let outcome = gpui::run("11 - opacity", 500.0, 500.0, || {
+        for event in gpui::take_events() {
+            let id, _data = gpui::event_parts(event)
+            if id == "panel" {
+                gpui::set_float("opacity", 0.0)
+                gpui::set_bool("animating", true)
+            }
+        }
+
+        // Upstream advances this inside `render`, one step per frame.
+        if gpui::state_bool("animating", false) {
+            let next = gpui::state_float("opacity", 0.5) + 0.005
+            if next >= 1.0 {
+                gpui::set_bool("animating", false)
+                gpui::set_float("opacity", 1.0)
+            } else {
+                gpui::set_float("opacity", next)
+                gpui::animate()
+            }
+        }
+
+        let opacity = gpui::state_float("opacity", 0.5)
+
+        ui::panel("flex row size=full bg=#e0e0e0 font=xl")
+            .child(ui::panel("flex size=full justify=center items=center border=1 color=blue")
+                .child(ui::panel("").text("This is background text.", "")))
+            .child(ui::panel(f"absolute top=32 left=32 right=32 bottom=32 opacity={opacity} flex justify=center items=center bg=white border=3 bordercolor=red color=yellow")
+                .child(ui::panel("flex col gap=8 justify=center items=center size=300 bg=blue border=3 bordercolor=black shadow=lg")
+                    .image(APP_ICON, "size=32")
+                    .text("Opacity Panel (Click to test)", "")
+                    .child(ui::panel("flex justify=center items=center p=16 bg=black color=white deco=2 wavy decocolor=red")
+                        .text(f"opacity: {opacity:.1}", ""))
+                    .icon(ARROW, "color=black font=2xl size=32")
+                    .child(ui::row("flex")
+                        .children(#["🎊", "✈️", "🎉", "🎈", "🎁", "🎂"].map(emoji)))
+                    .image(CAT, "size=48")))
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

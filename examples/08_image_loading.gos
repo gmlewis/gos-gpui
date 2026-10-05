@@ -1,0 +1,35 @@
+// 08 - image_loading        upstream: tools/upstream/examples/image_loading.rs (213 lines)
+//
+// NOT PORTED YET. Loading several images asynchronously, with a cache and an intentional failure.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run image_loading
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("08 - image_loading", 700.0, 520.0, || {
+        status::missing(
+            "08 - image_loading",
+            "upstream: examples/image_loading.rs (213 lines)",
+            #[
+            "cx.background_executor() image decoding",
+            "img(ImageSource::Custom(..)) / an image cache handle",
+            "log + env_logger wiring",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

@@ -1,0 +1,34 @@
+// 14 - paths_bench        upstream: tools/upstream/examples/paths_bench.rs (92 lines)
+//
+// NOT PORTED YET. A benchmark that repaints thousands of path vertices per frame.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run paths_bench
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("14 - paths_bench", 620.0, 480.0, || {
+        status::missing(
+            "14 - paths_bench",
+            "upstream: examples/paths_bench.rs (92 lines)",
+            #[
+            "a custom Element impl (request_layout / prepaint / paint)",
+            "paint_path over a large polyline built in the program",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

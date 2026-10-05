@@ -1,0 +1,35 @@
+// 20 - text_layout        upstream: tools/upstream/examples/text_layout.rs (96 lines)
+//
+// NOT PORTED YET. Shaping a line and painting it directly, with a shaped line and runs.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run text_layout
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("20 - text_layout", 700.0, 420.0, || {
+        status::missing(
+            "20 - text_layout",
+            "upstream: examples/text_layout.rs (96 lines)",
+            #[
+            "window.text_system() — a FontId, a font size, and a line width",
+            "TextLayout / LineLayout / ShapedLine",
+            "paint_text with TextRun slices",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

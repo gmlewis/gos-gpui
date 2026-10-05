@@ -1,25 +1,24 @@
 # gpui examples, written in Gossamer
 
-Ten programs that open real [GPUI](https://gpui.rs) windows on macOS, written
-in [Gossamer](https://gossamer-lang.org/) and ranging from a twenty-line hello
-to a dashboard with a custom titlebar, a virtualised activity list and a live
-timer. GPUI is Rust, so the two are joined by a `[rust-bindings]` crate that
-publishes the framework behind a flat, Gossamer-shaped module called `gpui` —
-and a small Gossamer module, `ui`, that puts a chainable `El` type on top of it.
+[GPUI](https://gpui.rs)'s own examples, ported to
+[Gossamer](https://gossamer-lang.org/) so each one can be run side by side with
+its original. GPUI is Rust, so the two are joined by a `[rust-bindings]` crate
+that publishes the framework behind a flat, Gossamer-shaped module called
+`gpui` — and a small Gossamer module, `ui`, that puts a chainable `El` type on
+top of it.
+
+Ten of the twenty-seven are ported and runnable; the other seventeen open a
+window naming exactly which GPUI API each is waiting on. See
+[Porting status](#porting-status).
 
 ```
-examples/01_hello.gos        one window, one block of text
-examples/02_styling.gos      fills, gradients, corners, borders, shadows, type
-examples/03_layout.gos       flexbox: direction, gap, growth, alignment, stacking
-examples/04_interaction.gos  events, state, buttons, a slider, the keyboard
-examples/05_forms.gos        text fields, focus, submit, an editable list
-examples/06_lists.gos        a virtualised list of 20,000 rows
-examples/07_animation.gos    a frame loop, custom painting, progress
-examples/08_async.gos        repeating timers and background work
-examples/09_theme.gos        a light and a dark palette
-examples/10_dashboard.gos    all of the above, as one application
-examples/ui/mod.gos          the chainable element type those programs use
+examples/01_animation.gos    …    examples/27_window.gos
 ```
+
+`examples/` holds **one numbered port per upstream example**, in the same order,
+so any port can be run against its original. `examples/status.gos` and
+`examples/ui/` are the shared scaffolding those programs import — they are not
+examples and `run.sh` will not accept them.
 
 ## Requirements
 
@@ -73,9 +72,9 @@ launching anything:
 
 ```sh
 ./run.sh                         # list the examples
-./run.sh 04                      # examples/04_interaction.gos
-./run.sh 04_interaction          # the same
-./run.sh --print 04              # just print the path it would run
+./run.sh 24                      # examples/24_uniform_list.gos
+./run.sh 24_uniform_list        # the same
+./run.sh --print 24              # just print the path it would run
 ```
 
 ## Comparing against upstream GPUI
@@ -417,55 +416,72 @@ style, with `_` standing in for the spaces:
 .button("inc", "+1", "bg=#89b4fa color=#11111b hover=bg:#a6e3fa active=bg:#74c7ec_opacity:0.9")
 ```
 
-## The examples
+## Porting status
 
-**01 — hello.** The smallest complete program: one window, one chain, one
-`|> ui::root`. Shows the shape every other example keeps.
+One file per upstream example, numbered to match. Run the pair:
 
-**02 — styling.** A swatch book: the fourteen Catppuccin hues as gradient-ready
-boxes, four gradient and shadow treatments, eight corners and borders, and the
-whole type scale from `xs` to `3xl`. The palette and the scale are built with
-one `map` each.
+```sh
+./run.sh 07                                  # the Gossamer port
+./tools/upstream-examples.sh run hello_world # the original
+```
 
-**03 — layout.** A header/body/footer column with `flex=1` in the middle; every
-`justify` and `items` value side by side; `gap=4` against `gap=12`; nested
-padding; three flex weights sharing a row; a wrapped row of chips;
-absolutely-positioned children in a `stack`.
+**Ported** — a faithful port, runnable today:
 
-**04 — interaction.** Buttons that raise events, `hover=` and `active=`
-refinements, a slider writing straight into state, a checkbox showing and
-hiding a panel, and `gpui::on_keys` wiring ↑ ↓ r space to the same actions. The
-frame's events go through `gpui::take_events() |> handle`; a keystroke goes
-through `data |> on_key`.
+| | upstream | notes |
+|---|---|---|
+| `01_animation` | `animation.rs` | `bounce(ease_in_out)` reproduced exactly; frames driven by `gpui::animate()` rather than GPUI's animation driver |
+| `05_gradient` | `gradient.rs` | including the sRGB/Oklab toggle; the canvas trapezoid is the `prism` painter |
+| `06_grid_layout` | `grid_layout.rs` | the "holy grail" 5×5 grid |
+| `07_hello_world` | `hello_world.rs` | |
+| `10_on_window_close_quit` | `on_window_close_quit.rs` | single window — see deviations |
+| `11_opacity` | `opacity.rs` | custom box shadow approximated by `shadow=lg` |
+| `15_pattern` | `pattern.rs` | `pattern_slash` as the `slash=` token |
+| `16_scrollable` | `scrollable.rs` | both axes; `overflow=scroll` is the two-way case |
+| `23_tree` | `tree.rs` | reads `GPUI_TREE_DEPTH`, like upstream |
+| `24_uniform_list` | `uniform_list.rs` | row height is explicit here, derived upstream |
 
-**05 — forms.** Two text fields with focus and a caret, Return to submit,
-Escape to cancel, live-derived text from what you have typed, and an editable
-list you add to and delete from.
+**Not ported yet** — each file opens a window naming the GPUI APIs its upstream
+example uses and the binding does not expose. That list *is* the work queue:
 
-**06 — lists.** A 20,000-row `uniform_list`. Only visible rows are built, and
-they are reused as you scroll; clicking one selects it. Compare the frame
-counter in the header with how little work each frame does.
+| | upstream | what it waits on |
+|---|---|---|
+| `02_data_table` | `data_table.rs` | `cx.processor`, `window.on_mouse_event` |
+| `03_drag_drop` | `drag_drop.rs` | `on_drag` / `on_drop` / drag previews |
+| `04_gif_viewer` | `gif_viewer.rs` | `with_assets` + an `AssetSource` |
+| `08_image_loading` | `image_loading.rs` | background image decoding, an image cache |
+| `09_input` | `input.rs` | `EntityInputHandler`, clipboard, IME, selection |
+| `12_ownership_post` | `ownership_post.rs` | `cx.emit` / `cx.subscribe` — the entity graph |
+| `13_painting` | `painting.rs` | arbitrary `PathBuilder` paths from Gossamer |
+| `14_paths_bench` | `paths_bench.rs` | a custom `Element` impl |
+| `17_set_menus` | `set_menus.rs` | `cx.set_menus` |
+| `18_shadow` | `shadow.rs` | a custom `BoxShadow` (offset, blur, spread) |
+| `19_tab_stop` | `tab_stop.rs` | `tab_stop` / `window.focus_next` / `focus_prev` |
+| `20_text_layout` | `text_layout.rs` | `window.text_system()`, `ShapedLine`, `paint_text` |
+| `21_text_wrapper` | `text_wrapper.rs` | `TextLayout` wrapping |
+| `22_text` | `text.rs` | `cx.text_context`, `rem_size`, text runs |
+| `25_window_positioning` | `window_positioning.rs` | `cx.displays()`, live window bounds |
+| `26_window_shadow` | `window_shadow.rs` | hitboxes, mouse position, client inset |
+| `27_window` | `window.rs` | multi-window, popups, prompts, menus |
 
-**07 — animation.** `gpui::animate()` drives a real frame loop. Two
-custom-painted canvases (bars via `paint_quad`, a curve via `paint_path`), a
-scrolling stripe pattern, boxes moved by absolute positioning every frame, and
-two progress bars on the clock — with a checkbox that parks the loop.
+### Deviations that apply to every port
 
-**08 — async.** `gpui::tick` runs a clock and feeds an event log; `gpui::task`
-runs 1.8 seconds of work on GPUI's background executor while the window keeps
-painting, then drops its result into state. Includes a spinner that only
-animates while the job is in flight.
+Knowing these keeps a difference from being mistaken for a bug:
 
-**09 — theme.** One view, two palettes. Cards, a gradient hero panel, four
-shadow depths, a settings list and a slider, all interpolated from a `Palette`
-value chosen per frame. The four shadow panels are one step:
-`ui::row(..).children(#[0, 1, 2, 3].map(|step| depth(step, p)))`.
-
-**10 — dashboard.** `run_with(…, "titlebar=none")`, a sidebar that switches
-panes, a live clock and metrics on a timer, a virtualised activity list, custom
-charts, animated progress, a filter field, a status bar, and keyboard shortcuts
-for the panes, the theme and the filter. The two heavier panes are separate
-functions answering an `El`, so the frame body stays a short chain.
+- **The tree is rebuilt every frame.** Upstream holds an `Entity<View>` with
+  retained state and re-renders it; a Gossamer frame describes the window
+  again from scratch. Layout comes out the same, but anything GPUI keys by
+  element id — hover, active, focus, `uniform_list` row recycling — depends on
+  ids being stable frame to frame. They are deterministic here.
+- **Assets come from `examples/assets/`.** Upstream loads through
+  `AssetSource` relative to the crate's own `examples/`; the binding takes a
+  filesystem path, so the four images the examples use are copied in.
+- **One window.** `gpui::run` opens exactly one.
+- **The binding owns the key bindings.** It binds the desktop quit shortcut
+  (⌘Q / Ctrl+Q); an example cannot add its own.
+- **`ui::list` takes an explicit row height**; upstream's `uniform_list`
+  derives it from the first row laid out.
+- **`gpui::run` is called with `--main-thread`**, which upstream has no
+  equivalent of — it is a Gosammer requirement, not a GPUI one.
 
 ## Notes and limits
 

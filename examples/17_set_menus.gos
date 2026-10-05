@@ -1,0 +1,34 @@
+// 17 - set_menus        upstream: tools/upstream/examples/set_menus.rs (49 lines)
+//
+// NOT PORTED YET. The macOS application menu bar, with a Quit item wired to an action.
+//
+// Run it to see exactly what the binding is missing. The upstream example is
+// the control: build and run
+//
+//   ./tools/upstream-examples.sh run set_menus
+//
+// and compare the two windows side by side.
+
+use gpui
+use std::process
+use status
+use ui
+
+fn main() {
+    let outcome = gpui::run("17 - set_menus", 420.0, 300.0, || {
+        status::missing(
+            "17 - set_menus",
+            "upstream: examples/set_menus.rs (49 lines)",
+            #[
+            "cx.set_menus(..) — the application menu",
+            "an action type registered through actions!(..)",
+            ],
+        )
+        |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}
