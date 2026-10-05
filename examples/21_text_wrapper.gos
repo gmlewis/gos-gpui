@@ -1,31 +1,58 @@
 // 21 - text_wrapper        upstream: tools/upstream/examples/text_wrapper.rs (123 lines)
 //
-// NOT PORTED YET. Line wrapping: the same text at several widths, with the wrap points shown.
+// Faithful port. Despite the name, upstream never touches the text system: it
+// is a row of three flex children followed by six rows of one long string,
+// each asking for a different overflow behaviour — and every one of them is
+// ordinary `div()` styling. So this is the same tree, written in the style
+// language.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// The string carries a 45-letter word, a URL with a query string, and Chinese
+// and Japanese runs, so the wrap points are what to compare. Blue borders mark
+// the ellipsis rows (one line, two lines), green the unmarked truncations (one
+// line, three lines), black nowrap, and the last row is the whole text wrapped
+// to the window. Red frames the three flex children at the top, where only the
+// third is width-constrained — the first two size to their text.
 //
-//   ./tools/upstream-examples.sh run text_wrapper
+// The green rows are upstream's `TextOverflow::Truncate("")` exactly: the
+// `textoverflow=` token, with an empty suffix, cuts at the pixel width and adds
+// no marker — which is what separates them from the blue rows. (`ellipsis`
+// alone is `Truncate("…")`, and `truncate` is GPUI's `truncate()`:
+// overflow_hidden + nowrap + ellipsis.)
 //
-// and compare the two windows side by side.
+// Deviations:
+//   * Upstream ids the root `div("page")`; the binding assigns element ids
+//     itself, so none is passed. Layout is unaffected.
 
 use gpui
 use std::process
-use status
 use ui
 
+/// Upstream's one string, with Rust's `\`-continuations collapsed.
+const TEXT: &str = "The longest word 你好世界这段是中文，こんにちはこの段落は日本語です in any of the major English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, a url https://github.com/zed-industries/zed/pull/35724?query=foo&bar=2, specifically from a volcano; medically, it is the same as silicosis."
+
 fn main() {
-    let outcome = gpui::run("21 - text_wrapper", 760.0, 520.0, || {
-        status::missing(
-            "21 - text_wrapper",
-            "upstream: examples/text_wrapper.rs (123 lines)",
-            #[
-            "window.text_system().layout_line(..) at a chosen width",
-            "LineLayout wrapping iteration",
-            "paint_text per wrapped line",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("21 - text_wrapper", 800.0, 600.0, || {
+        ui::column("gap=8 p=8 size=full bg=white")
+            // `div().flex().flex_row().flex_shrink_0().gap_2()`, three children.
+            .child(ui::row("gap=8 shrink=0")
+                // `div().flex().border_1().border_color(red).text_ellipsis()`
+                .text("longer text in flex 1", "flex border=1 bordercolor=red ellipsis")
+                .text("short flex", "flex border=1 bordercolor=red ellipsis")
+                // `.overflow_hidden().border_1().border_color(red).text_ellipsis().w_full()`
+                .text("A short text in normal div", "overflow=hidden border=1 bordercolor=red ellipsis w=full"))
+            // `.text_xl().truncate()` — overflow_hidden + whitespace_nowrap + ellipsis.
+            .text(f"ELLIPSIS: {TEXT}", "shrink=0 font=xl truncate border=1 bordercolor=blue")
+            // `.text_xl().overflow_hidden().text_ellipsis().line_clamp(2)`
+            .text(f"ELLIPSIS 2 lines: {TEXT}", "shrink=0 font=xl overflow=hidden ellipsis clamp=2 border=1 bordercolor=blue")
+            // `.text_xl().overflow_hidden().text_overflow(Truncate(""))`
+            .text(f"TRUNCATE: {TEXT}", "shrink=0 font=xl overflow=hidden textoverflow= border=1 bordercolor=green")
+            // the same with `.line_clamp(3)`
+            .text(f"TRUNCATE 3 lines: {TEXT}", "shrink=0 font=xl overflow=hidden textoverflow= clamp=3 border=1 bordercolor=green")
+            // `.text_xl().whitespace_nowrap().overflow_hidden()`
+            .text(f"NOWRAP: {TEXT}", "shrink=0 font=xl ws=nowrap overflow=hidden border=1 bordercolor=black")
+            // `div().text_xl().w_full()`, unclipped, wrapped to the window.
+            .text(TEXT, "font=xl w=full")
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

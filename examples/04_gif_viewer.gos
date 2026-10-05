@@ -1,31 +1,40 @@
-// 04 - gif_viewer        upstream: tools/upstream/examples/gif_viewer.rs (41 lines)
+// 04 - gif_viewer        upstream: tools/upstream/examples/gif_viewer.rs
 //
-// NOT PORTED YET. An animated GIF, loaded through GPUI's asset loader.
+// An animated GIF filling the window: a `size_full` box around an `img(..)`
+// that is itself `size_full` with `object_fit(Contain)` — which is GPUI's
+// default object fit, so the binding's plain `ui::image` is the same element.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
-//
-//   ./tools/upstream-examples.sh run gif_viewer
-//
-// and compare the two windows side by side.
+// Deviations, all on the binding's side:
+//   * the asset is named by filesystem path (`examples/assets/…`) instead of
+//     going through upstream's `AssetSource`; `ui::image` reads the file
+//     directly, and GPUI's own loader does the decoding.
+//   * upstream tags the image `.id("gif")`. `ui::image(path, style)` takes no
+//     id, and the one the binding invents for it is not stable: `Arena::reset`
+//     trims the element list each frame but leaves its `next_id` counter
+//     running, so this image is `gpui-auto-2` on one frame and `gpui-auto-4` on
+//     the next. GPUI keeps an image's animation cursor (`ImgState`) in a map
+//     keyed by that element id, so the cursor is thrown away and rebuilt every
+//     frame and the picture holds frame 0. It repaints continuously — the
+//     element *having* an id is what makes GPUI request animation frames — but
+//     it does not advance the way upstream's does. An id parameter on
+//     `ui::image`, or rewinding `next_id` together with `els` in
+//     `Arena::reset`, is what this needs; nothing in Gossamer can supply the id.
+//   * upstream leaves the window size to GPUI, which centres its default
+//     (1536x864, clipped to the display); `gpui::run` takes explicit
+//     dimensions, so this asks for 500x500 — the GIF's own size. The element is
+//     `size_full`/Contain either way, so only the scale differs.
 
 use gpui
 use std::process
-use status
 use ui
+
+const GIF: &str = "examples/assets/black-cat-typing.gif"
 
 fn main() {
     let outcome = gpui::run("04 - gif_viewer", 500.0, 500.0, || {
-        status::missing(
-            "04 - gif_viewer",
-            "upstream: examples/gif_viewer.rs (41 lines)",
-            #[
-            "Application::with_assets(..) + an AssetSource impl",
-            "img(..) resolving through that asset source",
-            "(the binding loads images from a filesystem path only)",
-            ],
-        )
-        |> ui::root
+        ui::panel("size=full")
+            .image(GIF, "size=full")
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

@@ -120,6 +120,13 @@ impl Arena {
     fn reset(&mut self) {
         self.els.truncate(1);
         self.errors.clear();
+        // Auto ids must be identical from one frame to the next: GPUI keeps
+        // per-element state (an image's animation cursor, hover and active
+        // flags) in a map keyed by the element id. Leaving this counter at its
+        // process-lifetime value renames every element every frame, so that
+        // state is thrown away and rebuilt — a GIF never leaves frame 0, and
+        // `hover=` / `active=` never fire.
+        self.next_id = 0;
     }
 
     fn push(&mut self, kind: Kind, style: String, id: String) -> i64 {
@@ -286,7 +293,7 @@ pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: Enti
     // described *is* the window's root, with nothing wrapped around it. The
     // column only appears when there is something to report.
     if errors.is_empty() {
-        return match root.and_then(snapshot) {
+        let element = match root.and_then(snapshot) {
             Some(el) => render(&el, window, cx, entity),
             None => error_card(
                 "the view callback answered no root element — end it with an element, \
@@ -294,6 +301,7 @@ pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: Enti
                     .into(),
             ),
         };
+        return listen_for_keys(element, window, cx);
     }
 
     let mut column = div().flex().flex_col().size_full();
@@ -306,6 +314,29 @@ pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: Enti
             .child(error_card("the view callback answered no root element".into()))
             .into_any_element(),
     }
+}
+
+/// After `gpui::on_keys(true)`, the window itself listens for keystrokes and
+/// raises `"key|<name>"`, so a program can use the keyboard without owning a
+/// GPUI element. It takes focus once; a click into a text field moves focus
+/// there until focus comes back.
+fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
+    if !store::get_flag("~keys", false) {
+        return element;
+    }
+    let handle = focus_for("~root", cx);
+    if frame_number() <= 2 && !handle.is_focused(window) {
+        window.focus(&handle);
+    }
+    div()
+        .size_full()
+        .id(ElementId::Name("~root".into()))
+        .track_focus(&handle)
+        .on_key_down(|event: &KeyDownEvent, _window, _cx| {
+            store::push_event_with("key", event.keystroke.key.clone());
+        })
+        .child(element)
+        .into_any_element()
 }
 
 fn error_card(message: String) -> AnyElement {
@@ -595,7 +626,12 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 .into_any_element()
         }
 
-        Kind::Image(path) => style::apply(img(PathBuf::from(path)), &el.style).into_any_element(),
+        // The element id matters here beyond hit-testing: GPUI keeps an
+        // image's animation cursor (`ImgState`) keyed by its global element id,
+        // so without `.id(..)` an animated GIF never advances a frame.
+        Kind::Image(path) => style::apply(img(PathBuf::from(path)), &el.style)
+            .id(ElementId::Name(el.id.clone().into()))
+            .into_any_element(),
 
         Kind::Icon(path) => {
             let icon: Svg = svg().path(SharedString::from(path.clone()));

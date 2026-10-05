@@ -7,9 +7,10 @@ that publishes the framework behind a flat, Gossamer-shaped module called
 `gpui` — and a small Gossamer module, `ui`, that puts a chainable `El` type on
 top of it.
 
-Ten of the twenty-seven are ported and runnable; the other seventeen open a
-window naming exactly which GPUI API each is waiting on. See
-[Porting status](#porting-status).
+Thirteen of the twenty-seven are ported and runnable; the other fourteen open
+a window naming exactly which GPUI API each is waiting on. See
+[Porting status](#porting-status) and [`PORTING.md`](PORTING.md) for the ABI
+decisions the reconnaissance settled.
 
 ```
 examples/01_animation.gos    …    examples/27_window.gos
@@ -430,13 +431,16 @@ One file per upstream example, numbered to match. Run the pair:
 | | upstream | notes |
 |---|---|---|
 | `01_animation` | `animation.rs` | `bounce(ease_in_out)` reproduced exactly; frames driven by `gpui::animate()` rather than GPUI's animation driver |
+| `04_gif_viewer` | `gif_viewer.rs` | an animated GIF; window size is explicit here |
 | `05_gradient` | `gradient.rs` | including the sRGB/Oklab toggle; the canvas trapezoid is the `prism` painter |
 | `06_grid_layout` | `grid_layout.rs` | the "holy grail" 5×5 grid |
 | `07_hello_world` | `hello_world.rs` | |
 | `10_on_window_close_quit` | `on_window_close_quit.rs` | single window — see deviations |
-| `11_opacity` | `opacity.rs` | custom box shadow approximated by `shadow=lg` |
+| `11_opacity` | `opacity.rs` | custom box shadow reproduced field-for-field |
 | `15_pattern` | `pattern.rs` | `pattern_slash` as the `slash=` token |
 | `16_scrollable` | `scrollable.rs` | both axes; `overflow=scroll` is the two-way case |
+| `18_shadow` | `shadow.rs` | every shadow band; custom `BoxShadow` via `shadow=` |
+| `21_text_wrapper` | `text_wrapper.rs` | truncation, ellipsis and clamping tokens |
 | `23_tree` | `tree.rs` | reads `GPUI_TREE_DEPTH`, like upstream |
 | `24_uniform_list` | `uniform_list.rs` | row height is explicit here, derived upstream |
 
@@ -445,19 +449,16 @@ example uses and the binding does not expose. That list *is* the work queue:
 
 | | upstream | what it waits on |
 |---|---|---|
-| `02_data_table` | `data_table.rs` | `cx.processor`, `window.on_mouse_event` |
+| `02_data_table` | `data_table.rs` | pointer input and a scroll handle |
 | `03_drag_drop` | `drag_drop.rs` | `on_drag` / `on_drop` / drag previews |
-| `04_gif_viewer` | `gif_viewer.rs` | `with_assets` + an `AssetSource` |
 | `08_image_loading` | `image_loading.rs` | background image decoding, an image cache |
 | `09_input` | `input.rs` | `EntityInputHandler`, clipboard, IME, selection |
 | `12_ownership_post` | `ownership_post.rs` | `cx.emit` / `cx.subscribe` — the entity graph |
 | `13_painting` | `painting.rs` | arbitrary `PathBuilder` paths from Gossamer |
-| `14_paths_bench` | `paths_bench.rs` | a custom `Element` impl |
+| `14_paths_bench` | `paths_bench.rs` | `PathBuilder` + `paint_path` (it uses `canvas`, not a custom `Element`) |
 | `17_set_menus` | `set_menus.rs` | `cx.set_menus` |
-| `18_shadow` | `shadow.rs` | a custom `BoxShadow` (offset, blur, spread) |
 | `19_tab_stop` | `tab_stop.rs` | `tab_stop` / `window.focus_next` / `focus_prev` |
 | `20_text_layout` | `text_layout.rs` | `window.text_system()`, `ShapedLine`, `paint_text` |
-| `21_text_wrapper` | `text_wrapper.rs` | `TextLayout` wrapping |
 | `22_text` | `text.rs` | `cx.text_context`, `rem_size`, text runs |
 | `25_window_positioning` | `window_positioning.rs` | `cx.displays()`, live window bounds |
 | `26_window_shadow` | `window_shadow.rs` | hitboxes, mouse position, client inset |

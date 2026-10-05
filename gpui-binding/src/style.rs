@@ -13,7 +13,7 @@
 //! than silent.
 
 
-use gpui::{hsla, px, relative, rems, rgb, rgba, FontWeight, Hsla, StyleRefinement, Styled};
+use gpui::{hsla, px, relative, rgb, rgba, FontWeight, Hsla, StyleRefinement, Styled};
 
 /// Applies every token in `spec` to `el`, in order.
 pub fn apply<T: Styled>(mut el: T, spec: &str) -> T {
@@ -87,6 +87,8 @@ fn is_known(key: &str) -> bool {
         // grid placement and decoration
         | "gridcols" | "gridrows" | "colspan" | "rowspan" | "slash"
         | "wavy" | "deco" | "decocolor" | "rotate"
+        | "bordert" | "borderb" | "borderl" | "borderr" | "overflowx"
+        | "ellipsis" | "clamp" | "ws" | "textoverflow"
         // interaction refinements (handled by `view`, listed here so they are
         // not reported as unknown)
         | "hover" | "active"
@@ -133,6 +135,24 @@ pub fn rotation(spec: &str) -> Option<f32> {
         .find(|(key, _)| key == "rotate")
         .and_then(|(_, value)| value)
         .and_then(|value| value.parse::<f32>().ok())
+}
+
+/// `shadow=#rrggbbaa,x,y,blur,spread`, with `|` between several shadows.
+fn shadows(v: &str) -> Vec<gpui::BoxShadow> {
+    v.split('|')
+        .map(|one| {
+            let parts: Vec<&str> = one.split(',').collect();
+            let at = |i: usize, fallback: f32| {
+                parts.get(i).and_then(|p| p.parse::<f32>().ok()).unwrap_or(fallback)
+            };
+            gpui::BoxShadow {
+                color: colour(parts.first().copied().unwrap_or("#00000080")),
+                offset: gpui::point(px(at(1, 0.0)), px(at(2, 0.0))),
+                blur_radius: px(at(3, 0.0)),
+                spread_radius: px(at(4, 0.0)),
+            }
+        })
+        .collect()
 }
 
 /// `slash=#rrggbb,width,interval`.
@@ -183,6 +203,7 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
 
         // ---- flex item -------------------------------------------------
         "grow" => el.flex_grow(),
+        "shrink" if v == "0" => el.flex_shrink_0(),
         "shrink" => el.flex_shrink(),
         "flex" => match v {
             "" => el.flex(),
@@ -287,10 +308,17 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
 
         // ---- border and decoration ------------------------------------------
         "border" => el.border(px(num(v))),
+        "bordert" => el.border_t(px(num(v))),
+        "borderb" => el.border_b(px(num(v))),
+        "borderl" => el.border_l(px(num(v))),
+        "borderr" => el.border_r(px(num(v))),
         "bordercolor" => el.border_color(colour(v)),
         "dashed" => el.border_dashed(),
         "rounded" => match v {
             "full" => el.rounded_full(),
+            "xs" => el.rounded_xs(),
+            "2xl" => el.rounded_2xl(),
+            "3xl" => el.rounded_3xl(),
             "sm" => el.rounded_sm(),
             "md" => el.rounded_md(),
             "lg" => el.rounded_lg(),
@@ -298,7 +326,11 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
             "none" => el,
             _ => el.rounded(px(num(v))),
         },
+        // `shadow=lg` is one of GPUI's presets; `shadow=#rrggbbaa,x,y,blur,spread`
+        // is a custom `BoxShadow`, and `|` stacks several.
+        "shadow" if v.contains(',') => el.shadow(shadows(v)),
         "shadow" => match v {
+            "2xs" => el.shadow_2xs(),
             "xs" => el.shadow_xs(),
             "sm" => el.shadow_sm(),
             "md" => el.shadow_md(),
@@ -336,8 +368,17 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
             _ => el,
         },
         "decocolor" => el.text_decoration_color(colour(v)),
-        "lh" => el.line_height(rems(num(v) as f32)),
+        "lh" => el.line_height(relative(num(v) as f32)),
         "truncate" => el.truncate(),
+        "ellipsis" => el.text_ellipsis(),
+        // `textoverflow=<suffix>` is GPUI's `TextOverflow::Truncate(suffix)`;
+        // an empty value truncates with no marker, which `ellipsis` cannot say.
+        "textoverflow" => el.text_overflow(gpui::TextOverflow::Truncate(v.to_string().into())),
+        "clamp" => el.line_clamp(num(v) as usize),
+        "ws" => match v {
+            "nowrap" => el.whitespace_nowrap(),
+            _ => el.whitespace_normal(),
+        },
 
         // ---- behaviour ----------------------------------------------------------
         "cursor" => match v {
@@ -347,6 +388,11 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
             "grab" => el.cursor_grab(),
             "cross" => el.cursor_crosshair(),
             _ => el.cursor_default(),
+        },
+        "overflowx" => match v {
+            "hidden" => el.overflow_x_hidden(),
+            "y" => el.overflow_y_hidden(),
+            _ => el,
         },
         "overflow" => match v {
             "hidden" => el.overflow_hidden(),

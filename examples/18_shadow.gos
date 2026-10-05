@@ -1,30 +1,232 @@
 // 18 - shadow        upstream: tools/upstream/examples/shadow.rs (585 lines)
 //
-// NOT PORTED YET. A large showcase of box shadows: offsets, blur, spread and colour.
+// Faithful port. The whole shadow showcase, in upstream's ten bands: one
+// shadow drawn under five silhouettes (square, three corner radii, circle);
+// GPUI's own 2xs..2xl presets beside no shadow at all; a band walking the blur
+// radius and one walking the spread radius; the same spread walk on a square
+// and on a 12px-rounded shape; the four directions, again on three
+// silhouettes; and four stacked shadows, one per side, on three more.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+// Every shadow below is a custom `BoxShadow` or a preset. The custom ones use
+// the style language's custom form, `shadow=#rrggbbaa,x,y,blur,spread`, with
+// `|` between several — the same fields upstream fills in by hand.
 //
-//   ./tools/upstream-examples.sh run shadow
+// Deviations:
 //
-// and compare the two windows side by side.
+//   * Colours are quantised to hex. Upstream writes `hsla(h, s, l, a)`, the
+//     style language takes `#rrggbbaa`, so the alpha lands on the nearest of
+//     256 steps: `hsla(0.0, 0.5, 0.5, 0.3)` -> `#bf40404d` (alpha 0.302),
+//     `hsla(0.0, 0.0, 0.0, 0.3)` -> `#0000004d`, and the shapes' 10% hairline
+//     `hsla(0.0, 0.0, 0.0, 0.1)` -> `#0000001a` (alpha 0.102). The
+//     hue/saturation/lightness halves are exact: `#bf4040` is (0.75, 0.25,
+//     0.25), which is what GPUI's own hsla(0.0, 0.5, 0.5) converts to.
+//   * An `El`'s style is fixed when the element is built, whereas upstream's
+//     `Div` takes `.shadow(..)` as a further builder step. The shape helpers
+//     here therefore take their shadow spec as an argument. The element tree
+//     they describe is the same one.
+//   * Upstream gives the root an `id("shadow-example")`; element ids belong to
+//     the binding, which allocates one per element, so there is no id to set.
+//   * As in every port here, a Gossamer frame rebuilds the tree rather than
+//     re-rendering a retained `Entity<Shadow>`.
+//
+// No binding API is missing for this example. Note that the placeholder this
+// replaced claimed the style language had `shadow=xs..2xl` presets only; the
+// custom form exists (see `shadow=` in gpui-binding/src/style.rs), which is
+// what makes the port possible.
 
 use gpui
 use std::process
-use status
 use ui
 
+// ---- colours ----------------------------------------------------------
+
+/// `hsla(0.0, 0.5, 0.5, 0.3)` — the desaturated red on the first and the
+/// directional bands.
+const RED: &str = "#bf40404d"
+
+/// `hsla(0.0, 0.0, 0.0, 0.3)` — the black on the blur and spread bands.
+const BLACK: &str = "#0000004d"
+
+/// The `hsla(0.0, 0.0, 0.0, 0.1)` hairline every shape wears as its border.
+const HAIRLINE: &str = "#0000001a"
+
+/// The last band's four stacked shadows, in upstream's order: red above,
+/// yellow to the right, green below, blue to the left — each `hsla(h, 1.0,
+/// 0.5, 0.3)`, offset 12px, blur 8, spread 2.
+const FOUR: &str = "shadow=#ff00004d,0,-12,8,2|#ffff004d,12,0,8,2|#00ff004d,0,12,8,2|#0000ff4d,-12,0,8,2"
+
+// ---- one shadow -------------------------------------------------------
+
+/// One custom `BoxShadow`, as `shadow=#rrggbbaa,offset-x,offset-y,blur,spread`.
+fn shadow(colour: String, x: i64, y: i64, blur: i64, spread: i64) -> String {
+    f"shadow={colour},{x},{y},{blur},{spread}"
+}
+
+// ---- the five silhouettes ---------------------------------------------
+//
+// `size_16` is 16 x 4px = 64px. Each helper takes the shadow it should carry;
+// see the second deviation above.
+
+/// `Shadow::base()` — a white circle.
+fn circle(spec: String) -> ui::El {
+    ui::rect(f"size=64 bg=#ffffff rounded=full border=1 bordercolor={HAIRLINE} {spec}")
+}
+
+/// `Shadow::square()` — no rounding.
+fn square(spec: String) -> ui::El {
+    ui::rect(f"size=64 bg=#ffffff border=1 bordercolor={HAIRLINE} {spec}")
+}
+
+/// `Shadow::rounded_small()` — `rounded(px(4.))`.
+fn rounded_small(spec: String) -> ui::El {
+    ui::rect(f"size=64 bg=#ffffff rounded=4 border=1 bordercolor={HAIRLINE} {spec}")
+}
+
+/// `Shadow::rounded_medium()` — `rounded(px(8.))`.
+fn rounded_medium(spec: String) -> ui::El {
+    ui::rect(f"size=64 bg=#ffffff rounded=8 border=1 bordercolor={HAIRLINE} {spec}")
+}
+
+/// `Shadow::rounded_large()` — `rounded(px(12.))`. Upstream labels this shape
+/// "Rounded 16"; the radius it applies is 12, and that is kept.
+fn rounded_large(spec: String) -> ui::El {
+    ui::rect(f"size=64 bg=#ffffff rounded=12 border=1 bordercolor={HAIRLINE} {spec}")
+}
+
+// ---- the frame around one case ----------------------------------------
+
+/// Upstream's `example(..)`: a sixth of the width, the swatch centred in the
+/// space above, its label under a rule at the bottom.
+fn example(label: String, demo: ui::El) -> ui::El {
+    ui::column("w=16.6667% borderr=1 bordercolor=#000000 justify=center items=center")
+        .child(ui::row("items=center justify=center flex=1 py=48").child(demo))
+        .child(ui::row("w_full bordert=1 bordercolor=#000000 p=4 items=center").text(label, ""))
+}
+
+/// One horizontal band of cases, ruled off from the band below. `extra` is the
+/// band's own style — upstream spells `w_full` on the first two rows only.
+fn band(extra: String, cases: Vec<ui::El>) -> ui::El {
+    ui::row(f"borderb=1 bordercolor=#000000 {extra}").children(cases)
+}
+
+// ---- the bands --------------------------------------------------------
+
+/// One shadow — 8px down, blur 8 — under each silhouette in turn.
+fn shapes() -> ui::El {
+    band("w_full", #[
+        example("Square", square(shadow(*RED, 0, 8, 8, 0))),
+        example("Rounded 4", rounded_small(shadow(*RED, 0, 8, 8, 0))),
+        example("Rounded 8", rounded_medium(shadow(*RED, 0, 8, 8, 0))),
+        example("Rounded 16", rounded_large(shadow(*RED, 0, 8, 8, 0))),
+        example("Circle", circle(shadow(*RED, 0, 8, 8, 0))),
+    ])
+}
+
+/// GPUI's presets, `shadow_2xs` through `shadow_2xl`, starting from no shadow
+/// at all.
+fn presets() -> ui::El {
+    band("w_full", #[
+        example("None", circle("")),
+        example("2X Small", circle("shadow=2xs")),
+        example("Extra Small", circle("shadow=xs")),
+        example("Small", circle("shadow=sm")),
+        example("Medium", circle("shadow=md")),
+        example("Large", circle("shadow=lg")),
+        example("Extra Large", circle("shadow=xl")),
+        example("2X Large", circle("shadow=2xl")),
+    ])
+}
+
+/// Black, 8px down, with the blur walked up.
+fn blur_case(blur: i64) -> ui::El {
+    example(f"Blur {blur}", circle(shadow(*BLACK, 0, 8, blur, 0)))
+}
+
+fn blurs() -> ui::El {
+    band("", #[0, 2, 4, 8, 16].map(blur_case))
+}
+
+/// Black, 8px down, blur 8, with the spread walked up.
+fn spread_case(spread: i64) -> ui::El {
+    example(f"Spread {spread}", circle(shadow(*BLACK, 0, 8, 8, spread)))
+}
+
+fn spreads() -> ui::El {
+    band("", #[0, 2, 4, 8, 16].map(spread_case))
+}
+
+/// The same spread walk on a square silhouette, so a spread past the corner is
+/// visible.
+fn square_spread_case(spread: i64) -> ui::El {
+    example(f"Square Spread {spread}", square(shadow(*BLACK, 0, 8, 8, spread)))
+}
+
+fn square_spreads() -> ui::El {
+    band("", #[0, 8, 16].map(square_spread_case))
+}
+
+/// And on the 12px-rounded silhouette.
+fn rounded_spread_case(spread: i64) -> ui::El {
+    example(f"Rounded Large Spread {spread}", rounded_large(shadow(*BLACK, 0, 8, 8, spread)))
+}
+
+fn rounded_spreads() -> ui::El {
+    band("", #[0, 8, 16].map(rounded_spread_case))
+}
+
+/// The four directions, each an 8px offset with blur 8.
+fn directions() -> ui::El {
+    band("", #[
+        example("Left", circle(shadow(*RED, -8, 0, 8, 0))),
+        example("Right", circle(shadow(*RED, 8, 0, 8, 0))),
+        example("Top", circle(shadow(*RED, 0, -8, 8, 0))),
+        example("Bottom", circle(shadow(*RED, 0, 8, 8, 0))),
+    ])
+}
+
+fn square_directions() -> ui::El {
+    band("", #[
+        example("Square Left", square(shadow(*RED, -8, 0, 8, 0))),
+        example("Square Right", square(shadow(*RED, 8, 0, 8, 0))),
+        example("Square Top", square(shadow(*RED, 0, -8, 8, 0))),
+        example("Square Bottom", square(shadow(*RED, 0, 8, 8, 0))),
+    ])
+}
+
+fn rounded_directions() -> ui::El {
+    band("", #[
+        example("Rounded Large Left", rounded_large(shadow(*RED, -8, 0, 8, 0))),
+        example("Rounded Large Right", rounded_large(shadow(*RED, 8, 0, 8, 0))),
+        example("Rounded Large Top", rounded_large(shadow(*RED, 0, -8, 8, 0))),
+        example("Rounded Large Bottom", rounded_large(shadow(*RED, 0, 8, 8, 0))),
+    ])
+}
+
+/// Four shadows at once, one per side, on three silhouettes.
+fn multiples() -> ui::El {
+    band("", #[
+        example("Circle Multiple", circle(*FOUR)),
+        example("Square Multiple", square(*FOUR)),
+        example("Rounded Large Multiple", rounded_large(*FOUR)),
+    ])
+}
+
 fn main() {
-    let outcome = gpui::run("18 - shadow", 780.0, 640.0, || {
-        status::missing(
-            "18 - shadow",
-            "upstream: examples/shadow.rs (585 lines)",
-            #[
-            "a custom BoxShadow — offset, blur_radius, spread_radius, colour",
-            "(the style language has shadow=xs..2xl presets only)",
-            ],
-        )
-        |> ui::root
+    // Upstream's window: `size(px(1000.0), px(800.0))`.
+    let outcome = gpui::run("18 - shadow", 1000.0, 800.0, || {
+        ui::scroll("size=full bg=#ffffff font=xs")
+            .child(ui::column("w_full")
+                .child(shapes())
+                .child(presets())
+                .child(blurs())
+                .child(spreads())
+                .child(square_spreads())
+                .child(rounded_spreads())
+                .child(directions())
+                .child(square_directions())
+                .child(rounded_directions())
+                .child(multiples()))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {
