@@ -1,0 +1,48 @@
+W2 — the state store is scoped per window.
+Headless tier: `gos test tests`.
+
+BEFORE THE WORK. Command, in a pristine copy of this project at HEAD (`git
+archive HEAD` into /tmp/gpui-before, so nothing in this tree was touched):
+
+    cd /tmp/gpui-before
+    env -u GOSSAMER_IN_RUNNER gos test tests
+
+Output:
+
+  FAIL state_is_scoped_to_a_window: error[GX0002]: name `gpui::set_int_in` is not bound in this scope
+  call stack (outermost first):
+    at state_is_scoped_to_a_window (tests/w2_store_scope.gos:14:5)
+  FAIL every_type_is_scoped_to_a_window: error[GX0002]: name `gpui::set_float_in` is not bound in this scope
+  call stack (outermost first):
+    at every_type_is_scoped_to_a_window (tests/w2_store_scope.gos:27:5)
+  FAIL forgetting_a_key_forgets_it_in_one_window_only: error[GX0002]: name `gpui::set_int_in` is not bound in this scope
+  call stack (outermost first):
+    at forgetting_a_key_forgets_it_in_one_window_only (tests/w2_store_scope.gos:45:5)
+  FAIL outside_a_frame_there_is_no_window: error[GX0002]: name `gpui::window_id` is not bound in this scope
+  call stack (outermost first):
+    at outside_a_frame_there_is_no_window (tests/w2_store_scope.gos:57:12)
+test: 0 passed, 4 failed, 0 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s), across 1 file(s), 0 with no tests
+error: 4 test failure(s)
+
+The unresolved symbol is the point, and it is the honest half of the finding.
+Before the work there was no way to *address* a window at all — `store.rs` held
+one process-global `Store` behind one `LazyLock<Mutex<Store>>`, so "which
+window's state is this?" had no answer, and no test could ask. The other half is
+recorded in the row: the scoping itself.
+
+One detail worth keeping, because it cost a round: `gos check` does **not**
+catch this. `gos check tests/w2_store_scope.gos` answers `check: ok (1 items
+typed)` on both trees — the checker types the program but does not resolve the
+binding's names, so the failure only appears when a tier actually runs. The
+binding's Rust compile errors are a different thing, and those `gos check` does
+surface.
+
+----
+
+THE WINDOW HALF. `tests/gui/w2_window_state.gos` has no separate before-run to
+record, and that is worth saying rather than implying. Its discriminating call
+is `gpui::state_int_in`, which does not exist at HEAD, so against the pristine
+tree it fails as an unresolved symbol — the same `GX0002` as the headless half,
+and no more informative. What the window half adds is coverage of *while frames
+are running*, which the headless half cannot reach; the behaviour it guards is
+the one above.

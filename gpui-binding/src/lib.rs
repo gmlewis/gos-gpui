@@ -51,9 +51,11 @@ use gossamer_binding::PersistentCallback;
 mod app;
 mod editor;
 mod path;
+mod scroll;
 mod store;
 mod style;
 mod view;
+mod window;
 
 use view::Kind;
 
@@ -102,9 +104,71 @@ gossamer_binding::register_module!(
         store::request(store::Request::Task { id, ms: ms.max(1) as u64 })
     }
 
-    /// The number of frames painted so far.
+    /// The number of frames this window has painted.
     fn frame() -> i64 {
         view::frame_number() as i64
+    }
+
+    /// The window whose frame — or whose callback — is running.
+    ///
+    /// Non-zero, and the same for every frame of a given window and every
+    /// callback it built. Window state, events and requests are all keyed by
+    /// it: `gpui::window_id()` inside a view callback names the window that
+    /// callback is drawing, and inside a click handler the window the click
+    /// happened in. `0` is "no window", which is what a program running
+    /// outside a frame — `gos test` — sees.
+    fn window_id() -> i64 {
+        window::current()
+    }
+
+    /// A state key, addressed to a window that is not the current one.
+    ///
+    /// Every accessor below has an `_in` twin: `state_int(key, d)` reads the
+    /// current window, `state_int_in(win, key, d)` reads the window named. A
+    /// helper that serves several windows at once wants the second form;
+    /// everything else wants the first.
+    fn state_int_in(win: i64, key: String, default: i64) -> i64 {
+        store::get_int_in(win, &key, default)
+    }
+
+    /// Write an integer to another window's state.
+    fn set_int_in(win: i64, key: String, value: i64) {
+        store::set_int_in(win, &key, value)
+    }
+
+    /// Read a float from another window's state.
+    fn state_float_in(win: i64, key: String, default: f64) -> f64 {
+        store::get_float_in(win, &key, default)
+    }
+
+    /// Write a float to another window's state.
+    fn set_float_in(win: i64, key: String, value: f64) {
+        store::set_float_in(win, &key, value)
+    }
+
+    /// Read a flag from another window's state.
+    fn state_bool_in(win: i64, key: String, default: bool) -> bool {
+        store::get_flag_in(win, &key, default)
+    }
+
+    /// Write a flag to another window's state.
+    fn set_bool_in(win: i64, key: String, value: bool) {
+        store::set_flag_in(win, &key, value)
+    }
+
+    /// Read a string from another window's state.
+    fn state_text_in(win: i64, key: String, default: String) -> String {
+        store::get_text_in(win, &key, &default)
+    }
+
+    /// Write a string to another window's state.
+    fn set_text_in(win: i64, key: String, value: String) {
+        store::set_text_in(win, &key, &value)
+    }
+
+    /// Forget one key in another window's state.
+    fn forget_in(win: i64, key: String) {
+        store::forget_in(win, &key)
     }
 
     /// Seconds since the program started, as a float — handy for animation.
@@ -275,6 +339,47 @@ gossamer_binding::register_module!(
         view::push(Kind::Plain, format!("flex col overflow=y {}", style), String::new())
     }
 
+    // -----------------------------------------------------------------
+    // scrolling
+    // -----------------------------------------------------------------
+
+    /// How far the scrolled container `id` has scrolled, in pixels.
+    ///
+    /// `axis` is `"y"` (the default) or `"x"`. The sign is gpui's own: **zero at
+    /// the top, negative as the content scrolls down**. Put a scrollbar thumb at
+    /// `-gpui::scroll_offset(id, "y") / gpui::scroll_max_offset(id, "y")`.
+    ///
+    /// `id` is a container that scrolls — `gpui::scroll("id=panel overflow=y")`,
+    /// or any element whose style carries `overflow=x|y|scroll` — named either by
+    /// an `id=` token in that style or by the argument of the leaf that takes one.
+    /// An id nothing has drawn a scrolled container under answers `0.0`; so does a
+    /// container still at the top, which is why [`gpui::scroll_max_offset`] is how
+    /// to tell the two apart.
+    fn scroll_offset(id: String, axis: String) -> f64 {
+        view::scroll_offset(&id, &axis)
+    }
+
+    /// How much content the scrolled container `id` has to scroll past: the
+    /// content size minus the container's, in pixels, never negative.
+    ///
+    /// The positive counterpart of [`gpui::scroll_offset`]. Zero means either that
+    /// the content fits — there is nothing to scroll — or that no scrolled
+    /// container has been drawn under that id.
+    fn scroll_max_offset(id: String, axis: String) -> f64 {
+        view::scroll_max_offset(&id, &axis)
+    }
+
+    /// Scroll the container `id` to `(x, y)`, in gpui's sign: negative moves the
+    /// content up and to the left.
+    ///
+    /// Applied when the next frame lays out, and clamped to the scrolled range
+    /// there, so asking for further than the end parks at the end rather than
+    /// leaving a gap. Answers `false` for an id nothing has drawn a scrolled
+    /// container under — a misspelling is reported rather than silently ignored.
+    fn scroll_to(id: String, x: f64, y: f64) -> bool {
+        view::scroll_to(&id, x, y)
+    }
+
     /// Name `element` as the window's root for this frame.
     ///
     /// The frame's last act; `|> gpui::root` reads well at the end of a chain.
@@ -308,6 +413,11 @@ gossamer_binding::register_module!(
     }
 
     /// A checkbox that toggles the flag stored under `id` and raises `id`.
+    ///
+    /// The tick's colour comes from the string stored under `"<id>#tick"`,
+    /// defaulting to `#11111b`: `gpui::set_text("agree#tick", "#ffffff")` puts a
+    /// white tick in the "agree" box. It is read every frame, so it can change
+    /// with the rest of the state.
     fn checkbox(id: String, label: String, checked: bool, style: String) -> i64 {
         view::push(Kind::Checkbox { label, checked }, style, id)
     }
@@ -379,8 +489,12 @@ gossamer_binding::register_module!(
         view::default_color(&name)
     }
 
-    /// A directly painted surface. `painter` is one of `"bars"`, `"wave"` or
-    /// `"stripes"`; `phase` drives its animation.
+    /// A directly painted surface. `painter` is one of `"bars"`, `"wave"`,
+    /// `"stripes"` or `"prism"`; `phase` drives its animation.
+    ///
+    /// `prism` reproduces `gradient.rs`'s trapezoid — a filled path with a
+    /// linear gradient through it — so the set is four, not the three this doc
+    /// and the README used to name.
     fn draw(painter: String, phase: f64, style: String) -> i64 {
         view::push(Kind::Canvas { painter, phase }, style, String::new())
     }
@@ -505,6 +619,12 @@ gossamer_binding::register_module!(
     }
 
     /// Whether the element with this id currently holds focus.
+    ///
+    /// Only the elements this binding builds a handle for are ever reported: an
+    /// `input`, an `editor`, and the `~root` handle `gpui::on_keys` installs.
+    /// An element made focusable with the `focusable` token is **not** visible
+    /// here — GPUI builds that handle internally and never hands it over — so
+    /// this answers `false` for it even while it is focused.
     fn is_focused(id: String) -> bool {
         view::is_focused(&id)
     }
@@ -555,6 +675,15 @@ gossamer_binding::register_module!(
     /// Close the window this frame belongs to.
     fn close_window() {
         store::request(store::Request::CloseWindow)
+    }
+
+    /// Close another window, named by the id [`gpui::window_id`] answers in it.
+    ///
+    /// `close_window()` addresses the window the call is in; this addresses one
+    /// by name, whatever it is doing. A program learns another window's id from
+    /// `gpui::window_id()` inside that window, or from the `_in` accessors.
+    fn close_window_in(win: i64) {
+        store::request(store::Request::CloseWindowAt { target: win })
     }
 
     /// Resize the window this frame belongs to.
@@ -621,6 +750,11 @@ gossamer_binding::register_module!(
     }
 
     /// Record a theme name; programs read it back with [`gpui::theme`].
+    ///
+    /// Nothing consults it. It has no effect on any colour — `gpui::default_color`
+    /// answers the platform's own colours, chosen from the window's appearance —
+    /// and it exists only so a program can keep the name of the theme it thinks
+    /// it is drawing with. Do not read it as a light/dark switch.
     fn set_theme(name: String) {
         store::set_text("~theme", &name)
     }

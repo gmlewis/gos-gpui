@@ -1,0 +1,81 @@
+// W7 — `frame()`, `~keys` and `~root` belong to a window, not to the process.
+//
+// Tier: every tier.
+//
+// Pass means three things, all of them visible only with two windows open:
+//
+//   * `gpui::frame()` counts *this* window's frames. The child's very first
+//     render is frame 1 for the child, even though the parent has already
+//     painted at least once.
+//   * `gpui::on_keys(true)` is this window's setting: the child never asks for
+//     it, so the child must not see it on.
+//   * `~root` — the focus handle `on_keys` installs — belongs to the window
+//     that asked, so the child has none and does not hold the parent's.
+//
+// Deliberately uses no binding function that did not already exist, so what
+// fails here before the work is the behaviour: with one process-wide frame
+// counter and one process-wide store, the child's first render reports frame 2
+// and `~keys` is already true.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("w7 - per-window frame", 320.0, 200.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            // Window 1 asks for the keyboard. Window 2 will not.
+            gpui::on_keys(true)
+            gpui::open_window("w7 - child", 380.0, 80.0, 260.0, 160.0, "", || {
+                let cf = gpui::frame()
+                let renders = gpui::state_int("w7.child.renders", 0)
+                gpui::set_int("w7.child.renders", renders + 1)
+
+                if renders == 0 {
+                    println(f"w7 child first render is frame {cf}")
+                    if cf != 1 {
+                        println(f"FAIL W7 the child's first render reports frame {cf}, not 1")
+                        gpui::quit()
+                    }
+                }
+
+                if gpui::state_bool("~keys", false) {
+                    println("FAIL W7 the child window sees on_keys(true), which only the parent asked for")
+                    gpui::quit()
+                }
+                if gpui::is_focused("~root") {
+                    println("FAIL W7 the child window holds the parent's ~root focus handle")
+                    gpui::quit()
+                }
+
+                if renders == 2 {
+                    println(f"OK W7 the child's third render is frame {cf}, its own")
+                }
+
+                gpui::animate()
+                let child = gpui::column("p=8 bg=#222222 size=full")
+                gpui::child(child, gpui::text(f"child frame {cf}", "color=#ffffff"))
+                gpui::root(child)
+            })
+        }
+
+        // The parent's own count, unshared.
+        if f >= 6 && !gpui::state_bool("w7.parent.reported", false) {
+            gpui::set_bool("w7.parent.reported", true)
+            println(f"OK W7 the first window reached frame {f} while the child counted its own")
+            gpui::quit()
+        } else {
+            gpui::animate()
+        }
+
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(root, gpui::text(f"frame {f}", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL W7 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

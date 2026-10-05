@@ -1,0 +1,21 @@
+W4 — the requests a frame raises, and the timers they install, are that
+window's.
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=40 ./scripts/tiers tests/gui/w4_requests.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (2 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK W4 two windows ticked the same id at 30ms and 5000ms, and each heard only their own
+
+What makes it pass: `app.rs`'s timer registry is keyed by `(window, event id)`,
+so the child's `tick("beat", 5000)` is no longer dismissed as a duplicate of the
+parent's `tick("beat", 30)`; and the events each loop raises are pushed into its
+own window's queue (W3), so the child — whose own timer is five seconds out and
+does not fire before the probe ends — hears nothing at all.
+
+The probe is bounded by frames, not by wall clock: the parent quits at frame 40
+having required at least one beat of its own, and the child fails on the first
+beat it hears that it did not raise.

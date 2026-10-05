@@ -1,0 +1,26 @@
+W7 — `frame()`, `~keys` and `~root` belong to a window, not to the process.
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=25 ./scripts/tiers tests/gui/w7_frame_and_keys.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    w7 child first render is frame 1
+    OK W7 the child's third render is frame 3, its own
+    OK W7 the first window reached frame 6 while the child counted its own
+
+Compare with `W7.before.txt`, where the same three lines read `frame 2`,
+`FAIL ... reports frame 2, not 1`, `FAIL ... sees on_keys(true)` and `FAIL ...
+holds the parent's ~root focus handle`.
+
+What makes it pass:
+
+  * `view::FRAMES` is a `HashMap<i64, u64>`, so `gpui::frame()` counts the
+    window it is in. `view::reset()` also clears that window's `ROOTS` entry and
+    bumps only that window's counter.
+  * `~keys` is an ordinary store key, and the store is per window (W2), so
+    `gpui::on_keys(true)` in one window is invisible to another.
+  * `view::FOCUS` is keyed by `(window, element id)`, so the `~root` handle
+    `on_keys` installs belongs to the window that asked.

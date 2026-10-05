@@ -1,0 +1,48 @@
+W2 — the state store is scoped per window.
+Headless tier: `gos test tests`.
+
+AFTER THE WORK. Command, in this tree:
+
+    gos test tests
+
+Output:
+
+  PASS state_is_scoped_to_a_window (3 assertions, 20ms)
+  PASS every_type_is_scoped_to_a_window (6 assertions, 20ms)
+  PASS forgetting_a_key_forgets_it_in_one_window_only (2 assertions, 20ms)
+  PASS outside_a_frame_there_is_no_window (3 assertions, 20ms)
+test: 4 passed, 0 failed, 14 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s), across 1 file(s), 0 with no tests
+
+What makes it pass: `gpui-binding/src/store.rs` now holds one `Store` per window
+behind `LazyLock<Mutex<HashMap<i64, Store>>>`, every accessor takes the window
+(an `_in` twin taking it explicitly, the plain one taking `crate::window::
+current()`), and `gpui-binding/src/app.rs` installs the window id around the
+whole of `Root::render` so the callback, the element translation and the
+requests all run as the window they belong to.
+
+`outside_a_frame_there_is_no_window` is the other half of W1: window `0` is the
+namespace a program with no window — `gos test` — reads and writes, and it is
+not window 1.
+
+----
+
+THE WINDOW HALF. The headless test above proves the store is keyed by window; it
+cannot prove that the *current* window is resolved correctly while frames are
+running. That is `tests/gui/w2_window_state.gos`:
+
+    TIER_TIMEOUT=25 ./scripts/tiers tests/gui/w2_window_state.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK W2 window 1 held 11 while window 2 held 22, over 6 frames
+
+Two windows open at once, both writing the same key on every frame; each reads
+it back through the window it is in, and from frame 5 each also reads the
+*other* window's namespace with `state_int_in`. Neither ever sees the other's
+value.
+
+No before-transcript for this half on its own: the probe's first call is
+`gpui::state_int_in`, which does not exist at HEAD, so against the pristine tree
+it fails the same way the headless test does — `GX0002`, unresolved symbol. The
+behaviour it guards is the one `W2.before.txt` records.

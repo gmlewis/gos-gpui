@@ -1,0 +1,95 @@
+// W10 — `close_window()` addressed to a named window.
+//
+// Tier: every tier.
+//
+// Pass means: a window can close a window other than itself, by id. Window 2
+// closes window 3 at its own frame 3, while window 3 is in the middle of
+// animating, and window 1 — which is neither of them — witnesses both halves:
+// window 3 stopped reporting after the close, and window 2 did not.
+//
+// Three counters, all written into window 1's state namespace with
+// `gpui::set_int_in` so the witness is a third party rather than a participant.
+
+use gpui
+use std::process
+
+/// Publishes this window's own frame count into window 1, and answers it.
+fn report(key: String, count: String) -> i64 {
+    let n = gpui::state_int(count, 0) + 1
+    gpui::set_int(count, n)
+    gpui::set_int_in(1, key, n)
+    n
+}
+
+fn main() {
+    let outcome = gpui::run("w10 - close a named window", 340.0, 200.0, || {
+        let f = gpui::frame()
+        let me = gpui::window_id()
+
+        if f == 1 {
+            gpui::open_window("w10 - second", 370.0, 70.0, 240.0, 150.0, "", || {
+                let cf = gpui::frame()
+                if cf == 1 {
+                    gpui::open_window("w10 - third", 640.0, 120.0, 220.0, 140.0, "", || {
+                        let n = report("w10.w3", "w10.w3.n")
+                        gpui::animate()
+                        let leaf = gpui::column("p=8 bg=#333333 size=full")
+                        gpui::child(leaf, gpui::text(f"third, frame {n}", "color=#ffffff"))
+                        gpui::root(leaf)
+                    })
+                }
+
+                // Window 2 closes window 3 — not itself — once, by name.
+                if cf == 3 {
+                    gpui::close_window_in(3)
+                }
+                let n = report("w10.w2", "w10.w2.n")
+                gpui::animate()
+                let child = gpui::column("p=8 bg=#222222 size=full")
+                gpui::child(child, gpui::text(f"second, frame {n}", "color=#ffffff"))
+                gpui::root(child)
+            })
+        }
+
+        // Window 1 is the witness.
+        if f == 8 {
+            gpui::set_int("w10.w3.sample", gpui::state_int("w10.w3", 0))
+            gpui::set_int("w10.w2.sample", gpui::state_int("w10.w2", 0))
+        }
+
+        if f >= 12 {
+            let w3 = gpui::state_int("w10.w3", 0)
+            let w3_at8 = gpui::state_int("w10.w3.sample", -1)
+            let w2 = gpui::state_int("w10.w2", 0)
+            let w2_at8 = gpui::state_int("w10.w2.sample", -1)
+            if w3_at8 <= 0 {
+                println("FAIL W10 window 3 never reported, so its absence proves nothing")
+                gpui::quit()
+            } else if w3 != w3_at8 {
+                println(f"FAIL W10 window 3 reported again after being closed: {w3_at8} then {w3}")
+                gpui::quit()
+            } else if w2 <= w2_at8 {
+                println(f"FAIL W10 window 2 stopped too: {w2_at8} then {w2}")
+                gpui::quit()
+            } else {
+                // Deliberately free of the counters: the exact frame window 3
+                // stopped on depends on when the deferred close lands relative
+                // to its next frame, so a verdict carrying it would differ from
+                // one tier to the next. Tier parity needs one line.
+                println("OK W10 window 2 closed window 3 by name, and window 2 kept going")
+                gpui::quit()
+            }
+        } else {
+            gpui::animate()
+        }
+
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(root, gpui::text(f"witness {me}, frame {f}", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL W10 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

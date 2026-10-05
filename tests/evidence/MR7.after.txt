@@ -1,0 +1,25 @@
+MR7 — documentation and dead-code consistency.
+
+AFTER THE WORK. Command, in this tree:
+
+    ./scripts/docs
+
+Output (exit 0):
+
+  ok     every painter paint() implements is named in draw()'s doc (bars prism stripes wave )
+  ok     store.rs no longer claims a single window
+  ok     the "<id>#tick" checkbox key is documented
+  ok     is_focused()'s doc names the focusable-element gap
+  ok     observe_keystrokes()'s doc names the keystrokes that never arrive
+  ok     set_theme()'s doc says it is inert
+docs: 6/6 claims still accurate
+
+`scripts/docs` is the check rather than a `.gos` test because this row is about
+prose: nothing in it can be drawn or asserted from a program, and a `#[test]`
+could only assert that a string exists. Each check names the claim it defends,
+so the next drift is a named failure rather than a paragraph nobody re-read.
+
+The two claims fixed in this round beyond the script:
+`gpui-binding/src/lib.rs` — `draw()`'s painter list, `checkbox()`'s `"<id>#tick"`
+key, `is_focused()`'s `focusable` gap, and `set_theme()`'s inertness.
+`gpui-binding/src/store.rs` — the module doc, fixed with W2.

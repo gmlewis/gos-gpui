@@ -17,40 +17,59 @@ use gossamer_binding::{NativeDispatch, RetainedCallback};
 
 use crate::store::{self, Request};
 use crate::view;
+use crate::window;
 
-/// The single root view. It owns the Gossamer view callback and rebuilds the
-/// element tree from scratch on every frame.
+/// One root view per window. It owns that window's Gossamer view callback and
+/// rebuilds the element tree from scratch on every frame it is asked for.
 pub struct Root {
     view: RetainedCallback,
+    /// The window this root is the view of. Everything the frame touches is
+    /// scoped to it.
+    window: i64,
 }
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity().entity_id();
+        let win = self.window;
 
-        view::begin_frame(window, cx);
-        view::reset();
-        // A frame names its root with `gpui::root`, or simply answers the
-        // element it wants; one that does neither reports itself.
-        if let Err(e) = view::invoke(&self.view, vec![]) {
-            view::note_error(format!("the view callback failed: {e}"));
-        }
-        let root: Option<i64> = view::named_root();
-        let element: AnyElement = view::finish(root, window, cx, entity);
+        // The whole frame — the view callback, its translation into elements,
+        // and the requests it raised — runs as this window. Anything the
+        // program asks for inside it lands in this window and no other.
+        window::with(win, || {
+            view::begin_frame(window, cx);
+            view::reset();
+            // A frame names its root with `gpui::root`, or simply answers the
+            // element it wants; one that does neither reports itself.
+            if let Err(e) = view::invoke(&self.view, vec![]) {
+                view::note_error(format!("the view callback failed: {e}"));
+            }
+            let root: Option<i64> = view::named_root();
+            let element: AnyElement = view::finish(root, window, cx, entity);
 
-        if process_requests(window, cx, entity) {
-            // The program asked to keep animating: line up the next frame.
-            window.request_animation_frame();
-        }
+            if process_requests(window, cx, entity, win) {
+                // The program asked to keep animating: line up the next frame.
+                window.request_animation_frame();
+            }
 
-        element
+            element
+        })
     }
 }
 
 // Windows a frame asked for. Kept here rather than in `store::Request`
 // because a `static Mutex` would demand a `Send` callback.
+/// Windows a frame asked to open, once the frame that asked for them is done.
 thread_local! {
     static PENDING_OPEN: RefCell<Vec<PendingOpen>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Windows a frame asked to close *by name*, closed once that frame is done.
+///
+/// A `thread_local`, for the same reason as `PENDING_OPEN`: a `static Mutex`
+/// would have to hold whatever a `cx.defer` closure captures.
+thread_local! {
+    static PENDING_CLOSE: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
 }
 
 /// One window waiting to be opened, once the frame that asked for it is done.
@@ -72,6 +91,26 @@ pub fn queue_window(pending: PendingOpen) {
     PENDING_OPEN.with(|q| q.borrow_mut().push(pending));
 }
 
+/// Removes another window, named by the id its view was given.
+///
+/// Gossamer holds no window handle, and `Window::remove_window` needs one, so
+/// this walks the open windows and asks each window's root view which id it is.
+/// Every root in this binding is a [`Root`], which is what makes the walk
+/// possible at all. It runs from a deferred callback, never from inside a
+/// frame: GPUI panics on `attempted to read a window that is already on the
+/// stack`, and the window that asked for the close is the one being rendered.
+fn close_named_window(cx: &mut App, target: i64) {
+    for handle in cx.windows() {
+        let id = handle
+            .read::<Root, _, _>(cx, |root, app| root.read(app).window)
+            .ok();
+        if id == Some(target) {
+            let _ = handle.update(cx, |_view, window, _app| window.remove_window());
+            return;
+        }
+    }
+}
+
 /// Installs the default colours for the window's actual appearance.
 ///
 /// `App::init_colors` installs `Colors::default()`, which is `Colors::light()`
@@ -84,13 +123,29 @@ fn install_appearance_colors(window: &mut Window, cx: &mut App) {
     cx.set_global(gpui::colors::GlobalColors(std::sync::Arc::new(colors)));
 }
 
-/// Installed repeating timers, keyed by the event id they emit.
-static TICKS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+/// Installed repeating timers, keyed by the window and the event id they emit.
+/// One window's `tick("clock", 1000)` must not silence another's.
+static TICKS: LazyLock<Mutex<HashSet<(i64, String)>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Which window's menu is currently installed.
+///
+/// `cx.set_menus` is application-wide, so the last window to ask for a menu
+/// owns the whole bar; the action handler routes the click back to that window
+/// rather than to whichever window happened to be opened first.
+static MENU_OWNER: LazyLock<Mutex<(i64, Option<EntityId>)>> =
+    LazyLock::new(|| Mutex::new((0, None)));
 
 /// Runs every request a frame asked for. Answers `true` when the program wants
 /// another frame immediately.
-fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityId) -> bool {
-    let _ = window;
+///
+/// The requests are the ones `win`'s frame raised: a `close_window()` in window
+/// A cannot close window B, and `resize_window` resizes the window that asked.
+fn process_requests(
+    window: &mut Window,
+    cx: &mut Context<Root>,
+    entity: EntityId,
+    win: i64,
+) -> bool {
     let mut animate = false;
     for request in store::take_requests() {
         match request {
@@ -102,23 +157,38 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
             Request::FocusPrev => window.focus_prev(),
             Request::CloseWindow => window.remove_window(),
 
+            Request::CloseWindowAt { target } => {
+                if target == win {
+                    window.remove_window();
+                } else {
+                    // Not here: finding the handle means reading every open
+                    // window's root view, and GPUI refuses a nested read of a
+                    // window that is already on the stack — which this one is,
+                    // because the frame is being rendered right now.
+                    // `close_named_window` runs from the defer below.
+                    PENDING_CLOSE.with(|q| q.borrow_mut().push(target));
+                }
+            }
+
             Request::ObserveKeys { id } => {
                 // Upstream's `cx.observe_keystrokes`: every keystroke the
                 // window sees, whether or not a focused element handled it.
-                static OBSERVED: LazyLock<Mutex<HashSet<String>>> =
+                static OBSERVED: LazyLock<Mutex<HashSet<(i64, String)>>> =
                     LazyLock::new(|| Mutex::new(HashSet::new()));
-                if !OBSERVED.lock().unwrap().insert(id.clone()) {
+                if !OBSERVED.lock().unwrap().insert((win, id.clone())) {
                     continue;
                 }
                 let key = id.clone();
                 // `Context::observe_keystrokes`, so the closure takes the
                 // entity as well as the event.
                 cx.observe_keystrokes(move |_this, event, _window, cx| {
-                    store::push_event_with(&key, event.keystroke.unparse());
-                    store::set_text(
-                        "~key.char",
-                        event.keystroke.key_char.as_deref().unwrap_or(""),
-                    );
+                    window::with(win, || {
+                        store::push_event_with(&key, event.keystroke.unparse());
+                        store::set_text(
+                            "~key.char",
+                            event.keystroke.key_char.as_deref().unwrap_or(""),
+                        );
+                    });
                     cx.notify();
                 })
                 .detach();
@@ -130,8 +200,11 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
                 // menu entry onto one by position.
                 static MENU_WIRED: AtomicBool = AtomicBool::new(false);
                 if !MENU_WIRED.swap(true, Ordering::SeqCst) {
-                    install_menu_actions(cx, entity);
+                    install_menu_actions(cx);
                 }
+                // The window that installs a menu is the one its items speak
+                // for, until another window installs one.
+                *MENU_OWNER.lock().unwrap() = (win, Some(entity));
                 let mut menu_items = Vec::new();
                 for (index, entry) in items.iter().enumerate() {
                     let mut parts = entry.splitn(3, ':');
@@ -156,7 +229,7 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
             Request::ResizeWindow { w, h } => window.resize(size(px(w as f32), px(h as f32))),
 
             Request::Tick { id, ms } => {
-                let fresh = TICKS.lock().unwrap().insert(id.clone());
+                let fresh = TICKS.lock().unwrap().insert((win, id.clone()));
                 if !fresh {
                     continue;
                 }
@@ -165,7 +238,7 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
                     loop {
                         Timer::after(Duration::from_millis(ms)).await;
                         let alive = cx.update(|cx| {
-                            store::push_event(tick_id.clone());
+                            window::with(win, || store::push_event(tick_id.clone()));
                             cx.notify(entity);
                         });
                         if alive.is_err() {
@@ -190,8 +263,10 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
                         })
                         .await;
                     let _ = cx.update(|cx| {
-                        store::set_text(&format!("{task_id}.result"), &result);
-                        store::push_event(task_id.clone());
+                        window::with(win, || {
+                            store::set_text(&format!("{task_id}.result"), &result);
+                            store::push_event(task_id.clone());
+                        });
                         cx.notify(entity);
                     });
                 })
@@ -199,6 +274,16 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
             }
         }
     }
+    // Windows another window asked to close, closed once this frame is done.
+    let closing = PENDING_CLOSE.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    if !closing.is_empty() {
+        cx.defer(move |cx| {
+            for target in closing {
+                close_named_window(cx, target);
+            }
+        });
+    }
+
     // Windows the frame asked for, opened once it is finished.
     let pending = PENDING_OPEN.with(|q| std::mem::take(&mut *q.borrow_mut()));
     if !pending.is_empty() {
@@ -213,9 +298,13 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
                     &request.options,
                 );
                 let view = request.view.clone();
+                // Each window gets an id of its own before it is drawn, so the
+                // very first frame of the new window already knows which one it
+                // is.
+                let child = window::allocate();
                 let _ = cx.open_window(options, move |window, cx| {
                     install_appearance_colors(window, cx);
-                    cx.new(|_| Root { view: view.clone() })
+                    cx.new(|_| Root { view: view.clone(), window: child })
                 });
             }
         });
@@ -334,6 +423,10 @@ pub fn run_app(
 
     view::stash_dispatch(dispatch);
 
+    // The first window and every other: a window's id is allocated before it
+    // is drawn, so its very first frame already knows which window it is.
+    let main_window = window::allocate();
+
     let root_view = view.clone();
     Application::new().run(move |cx: &mut App| {
         // Before any window exists: opening one draws it once, and that first
@@ -373,7 +466,7 @@ pub fn run_app(
 
         let opened = cx.open_window(options, move |window, cx| {
             install_appearance_colors(window, cx);
-            cx.new(|_| Root { view: root_view.clone() })
+            cx.new(|_| Root { view: root_view.clone(), window: main_window })
         });
 
         match opened {
@@ -467,20 +560,24 @@ fn push_menu_action(items: &mut Vec<gpui::MenuItem>, label: String, index: usize
     }
 }
 
-/// Wires every action slot once. A menu entry raises `"menu|<index>"`.
-fn install_menu_actions(cx: &mut App, entity: EntityId) {
-    fn wire<A: gpui::Action>(cx: &mut App, entity: EntityId, index: i64) {
+/// Wires every action slot once. A menu entry raises `"menu|<index>"` in the
+/// window whose menu is installed.
+fn install_menu_actions(cx: &mut App) {
+    fn wire<A: gpui::Action>(cx: &mut App, index: i64) {
         cx.on_action(move |_: &A, cx| {
-            store::push_event(format!("menu|{index}"));
-            cx.notify(entity);
+            let (win, entity) = *MENU_OWNER.lock().unwrap();
+            window::with(win, || store::push_event(format!("menu|{index}")));
+            if let Some(entity) = entity {
+                cx.notify(entity);
+            }
         });
     }
-    wire::<Slot0>(cx, entity, 0);
-    wire::<Slot1>(cx, entity, 1);
-    wire::<Slot2>(cx, entity, 2);
-    wire::<Slot3>(cx, entity, 3);
-    wire::<Slot4>(cx, entity, 4);
-    wire::<Slot5>(cx, entity, 5);
-    wire::<Slot6>(cx, entity, 6);
-    wire::<Slot7>(cx, entity, 7);
+    wire::<Slot0>(cx, 0);
+    wire::<Slot1>(cx, 1);
+    wire::<Slot2>(cx, 2);
+    wire::<Slot3>(cx, 3);
+    wire::<Slot4>(cx, 4);
+    wire::<Slot5>(cx, 5);
+    wire::<Slot6>(cx, 6);
+    wire::<Slot7>(cx, 7);
 }

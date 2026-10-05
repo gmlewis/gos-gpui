@@ -86,6 +86,7 @@ use gpui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::store;
+use crate::window;
 
 /// How long the caret stays on (and off) while the editor is focused.
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
@@ -98,7 +99,7 @@ thread_local! {
     /// platform's input-handler registration — has to live outside it. Reusing
     /// the entity registered under `key` is what makes the editor's caret and
     /// selection survive from one frame to the next.
-    static EDITORS: RefCell<HashMap<String, Entity<TextEditor>>> = RefCell::new(HashMap::new());
+    static EDITORS: RefCell<HashMap<(i64, String), Entity<TextEditor>>> = RefCell::new(HashMap::new());
 }
 
 /// Renders the editor registered under `key`, creating it the first time.
@@ -106,12 +107,13 @@ thread_local! {
 /// Answers the [`TextEditor`] entity as an element: `Entity<V: Render>` is
 /// itself an `IntoElement`, so GPUI draws the editor's own `render` tree.
 pub fn editor_element(
+    win: i64,
     key: &str,
     placeholder: &str,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (editor, created) = editor_for(key, placeholder, cx);
+    let (editor, created) = editor_for(win, key, placeholder, cx);
 
     // Upstream's `InputExample` focuses its text input the moment the window
     // opens (`window.focus(&view.text_input.focus_handle(cx))`). A binding
@@ -130,8 +132,8 @@ pub fn editor_element(
 
 /// The editor registered under `key`, creating and seeding it if this is the
 /// first frame that asks for it. The flag answers whether it was created.
-fn editor_for(key: &str, placeholder: &str, cx: &mut App) -> (Entity<TextEditor>, bool) {
-    let existing = EDITORS.with(|editors| editors.borrow().get(key).cloned());
+fn editor_for(win: i64, key: &str, placeholder: &str, cx: &mut App) -> (Entity<TextEditor>, bool) {
+    let existing = EDITORS.with(|editors| editors.borrow().get(&(win, key.to_string())).cloned());
     if let Some(editor) = existing {
         let placeholder = SharedString::new(placeholder);
         editor.update(cx, |editor, _cx| {
@@ -142,11 +144,13 @@ fn editor_for(key: &str, placeholder: &str, cx: &mut App) -> (Entity<TextEditor>
     }
 
     let key = key.to_string();
-    let content = store::get_text(&key, "");
+    let content = window::with(win, || store::get_text(&key, ""));
     let placeholder = SharedString::new(placeholder);
     let registered = key.clone();
-    let editor = cx.new(move |cx| TextEditor::new(key, placeholder, content, cx));
-    EDITORS.with(|editors| editors.borrow_mut().insert(registered, editor.clone()));
+    let editor = cx.new(move |cx| TextEditor::new(win, key, placeholder, content, cx));
+    EDITORS.with(|editors| {
+        editors.borrow_mut().insert((win, registered), editor.clone())
+    });
     (editor, true)
 }
 
@@ -166,6 +170,10 @@ fn single_line(text: &str) -> String {
 // ---------------------------------------------------------------------------
 
 struct TextEditor {
+    /// The window this editor belongs to. Its text is shared with the program
+    /// under `key` *in that window*: two windows can each have an editor on
+    /// the same key and not see each other.
+    win: i64,
     /// The state key the text is shared under.
     key: String,
     focus_handle: FocusHandle,
@@ -187,6 +195,7 @@ struct TextEditor {
 
 impl TextEditor {
     fn new(
+        win: i64,
         key: String,
         placeholder: SharedString,
         content: String,
@@ -197,6 +206,7 @@ impl TextEditor {
         // starts at the end of what it was seeded with.
         let caret = content.len();
         Self {
+            win,
             key,
             focus_handle: cx.focus_handle(),
             content: content.into(),
@@ -504,8 +514,14 @@ impl TextEditor {
 
     /// Publishes new content to the program and asks for a repaint.
     fn changed(&mut self, cx: &mut Context<Self>) {
-        store::set_text(&self.key, &self.content);
-        store::push_event_with(&self.key, "change");
+        // A key press arrives after the frame that built this element has been
+        // painted, so the window has to be named again before the store is
+        // touched.
+        let (win, key, content) = (self.win, self.key.clone(), self.content.clone());
+        window::with(win, || {
+            store::set_text(&key, &content);
+            store::push_event_with(&key, "change");
+        });
         cx.notify();
     }
 
@@ -516,7 +532,8 @@ impl TextEditor {
     /// last published — that is, when the program called `gpui::set_text`
     /// (or `gpui::forget`) behind it.
     fn adopt_program_text(&mut self) {
-        let stored = store::get_text(&self.key, "");
+        let (win, key) = (self.win, self.key.clone());
+        let stored = window::with(win, || store::get_text(&key, ""));
         if stored == self.content.as_ref() {
             return;
         }
@@ -526,7 +543,7 @@ impl TextEditor {
             // The program stored something the editor cannot hold — a newline,
             // in a single shaped line. Normalise it once rather than disagree
             // with the program on every frame.
-            store::set_text(&self.key, &text);
+            window::with(win, || store::set_text(&key, &text));
         }
 
         self.content = text.into();

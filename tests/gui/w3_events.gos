@@ -1,0 +1,90 @@
+// W3 — the event queue is scoped per window.
+//
+// Tier: every tier.
+//
+// Pass means: with two windows both raising events, each window drains only
+// its own. A single process-wide queue is drained by whichever window repaints
+// first, so an event raised in one window would be answered by the other's
+// frame.
+//
+// Deliberately uses no binding function that did not already exist, so the
+// failure this check records is the *behaviour* — one window draining another's
+// event — and not the absence of a new name. The child raises three events for
+// every one the parent raises: with a shared queue the imbalance makes the leak
+// certain rather than a race.
+
+use gpui
+use std::process
+
+/// Drains this window's events and answers `(mine, foreign)`.
+///
+/// The id is read with `event_id`, which consumes the event and answers
+/// everything before the first `|`.
+fn drain(own: String) -> (i64, i64) {
+    let mut mine = 0
+    let mut foreign = 0
+    for event in gpui::take_events() {
+        if gpui::event_id(event) == own {
+            mine = mine + 1
+        } else {
+            foreign = foreign + 1
+        }
+    }
+    (mine, foreign)
+}
+
+fn main() {
+    let outcome = gpui::run("w3 - per-window events", 320.0, 200.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            gpui::open_window("w3 - child", 380.0, 80.0, 260.0, 160.0, "", || {
+                let cf = gpui::frame()
+                let mine, foreign = drain("w3.child")
+                if foreign > 0 {
+                    println(f"FAIL W3 the child window drained {foreign} event(s) raised by another window")
+                    gpui::quit()
+                } else if mine == 0 && cf > 3 {
+                    println(f"FAIL W3 the child window drained none of its own events, at frame {cf}")
+                    gpui::quit()
+                }
+                gpui::emit("w3.child", "one")
+                gpui::emit("w3.child", "two")
+                gpui::emit("w3.child", "three")
+                gpui::animate()
+                let child = gpui::column("p=8 bg=#222222 size=full")
+                gpui::child(child, gpui::text("child", "color=#ffffff"))
+                gpui::root(child)
+            })
+        }
+
+        let mine, foreign = drain("w3.main")
+        if foreign > 0 {
+            println(f"FAIL W3 the first window drained {foreign} event(s) raised by another window, at frame {f}")
+            gpui::quit()
+        }
+
+        gpui::emit("w3.main", "x")
+
+        if f >= 6 {
+            if mine == 0 {
+                println("FAIL W3 the first window drained none of its own events")
+                gpui::quit()
+            } else {
+                println(f"OK W3 each window drained only its own events across {f} frames")
+                gpui::quit()
+            }
+        } else {
+            gpui::animate()
+        }
+
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(root, gpui::text(f"frame {f}", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL W3 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

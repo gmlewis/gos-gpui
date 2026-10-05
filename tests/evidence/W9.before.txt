@@ -1,0 +1,34 @@
+W9 — a second (and third) concurrent top-level window, without re-entering
+`run`.
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before):
+
+    cd /tmp/gpui-before
+    timeout -k 5 30 gos run --main-thread tests/gui/w9_three_windows.gos
+
+Output: nothing, and exit 124 — the timeout killed it.
+
+The probe fails its very first call: `gpui::window_id`, and then
+`gpui::set_int_in`, do not exist in the pristine binding, so the view callback
+is abandoned at its first line and the binding draws its error card instead.
+That is the honest transcript, and it is the weaker kind of red: an unresolved
+symbol, not the behaviour.
+
+W9 is a composite row, and its behavioural half is the other rows'. Opening a
+second and third top-level window already worked at HEAD — `examples/27_window`
+does it — so what the row actually asks for is *two windows that do not corrupt
+each other*, and that is exactly what W1 to W8 are. The evidence is theirs:
+
+  * W3.before.txt — the child drains the parent's events, and the parent drains
+    the child's.
+  * W7.before.txt — the child's frame counter, `~keys` and `~root` all belong to
+    the process, so the second window's frame is counted in the first's clock
+    and it reads the first's keyboard setting.
+
+Those two probes are also the ones that satisfy this row's own claim, because
+they are two and three windows open at once in one `run` call, each with its own
+view callback, neither re-entering anything. What W9 adds on top is the third
+window, opened from inside the second window's frame, and the report it writes
+back into window 1's state namespace with `gpui::set_int_in`.

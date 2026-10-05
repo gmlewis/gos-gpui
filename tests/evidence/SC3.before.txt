@@ -1,0 +1,25 @@
+SC3 — set the offset (`scroll_to`).
+Tier: `gos run --main-thread`, and every other tier.
+
+SC1, SC2 and SC3 are one mechanism — a `ScrollHandle` kept per (window, element)
+by `gpui-binding/src/scroll.rs` — and one probe,
+`tests/gui/sc1_scroll_offset.gos`, exercises all three. This file exists so the
+row has its own evidence pair; the transcript is in `SC1.before.txt` and, after
+the work, was:
+
+    === check ===
+    check: ok (1 items typed)
+
+    === run (interpreter) (exit 0) ===
+    OK SC1 SC2 SC3 offset read back after scroll_to, maximum positive, and clamped at the end
+
+    === run --no-jit (exit 0) ===              identical
+    === build -> ./target/debug/learn-gpui (exit 0) ===        identical
+    === release -> ./target/release/learn-gpui (exit 0) ===    identical
+
+`gpui::scroll_to(id, x, y)` answers `false` for an id nothing has drawn a
+scrolled container under, and the probe fails if it answers `false` for the
+container it drew. The offset it sets is clamped during the next prepaint
+(`gpui-0.2.2/src/elements/div.rs:1756`), which is what "past the end parks at the
+end" means, and the probe checks that parking point against the reported maximum
+rather than against a number it worked out for itself.

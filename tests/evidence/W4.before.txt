@@ -1,0 +1,35 @@
+W4 — the requests a frame raises, and the timers they install, are that
+window's.
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before):
+
+    cd /tmp/gpui-before
+    timeout -k 5 40 gos run --main-thread tests/gui/w4_requests.gos
+
+Output (exit 0 — the probe quits itself on the first failure):
+
+  FAIL W4 the child window heard 1 beat(s) from a timer it did not start
+
+The behaviour, not a missing name: the probe uses no binding function that did
+not already exist. Both windows call `gpui::tick` under the same id — the parent
+thirty milliseconds out, the child five seconds out — and `app.rs` kept one
+`static TICKS: Mutex<HashSet<String>>` for the process, so the child's own call
+was dismissed as a duplicate and no timer of its own ever started. The parent's
+timer did start, its events went into the one process-wide queue, and the child
+drained the parent's beat.
+
+That is the row's premise confirmed, and its wording corrected at the same time:
+the register says "one queue; `close_window()` in window A can close B". The
+queue is now per window, but the *reason* a frame-raised request was never
+mis-delivered is different — `process_requests` drains the queue inside the frame
+that raised it (`app.rs`), so A always took its own. What the row was really
+about is the per-window bookkeeping a request installs, and the timer registry is
+the one a probe can see.
+
+A third thing the probe found, and it is about the regression suite rather than
+this row: **no example calls `gpui::tick` at all.** `examples/08_image_loading`
+uses `gpui::task`, and `01_animation` and the rest use `gpui::animate`. So
+`Request::Tick` — the timer path this row's probe exercises — is covered by no
+example, and the suite would not have caught a break in it.

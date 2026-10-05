@@ -91,6 +91,7 @@ fn is_known(key: &str) -> bool {
         | "ellipsis" | "clamp" | "ws" | "textoverflow"
         | "roundedtl" | "roundedtr" | "roundedbl" | "roundedbr"
         | "focusable" | "tabstop" | "tabindex"
+        | "id"
         | "w_full" | "wfull" | "h_full" | "hfull" | "size_full" | "sizefull"
         // interaction refinements (handled by `view`, listed here so they are
         // not reported as unknown)
@@ -138,6 +139,22 @@ pub fn rotation(spec: &str) -> Option<f32> {
         .find(|(key, _)| key == "rotate")
         .and_then(|(_, value)| value)
         .and_then(|value| value.parse::<f32>().ok())
+}
+
+/// The `id=<name>` token in `spec`, if it carries one.
+///
+/// An id is what makes an element addressable from the program: the leaves that
+/// take one do so as an argument (`gpui::button(id, ..)`), and every container
+/// takes one this way — `gpui::scroll("id=panel overflow=y h=200")`. Without it
+/// the arena assigns a per-frame `gpui-auto-N`, which is stable from one frame
+/// to the next but which the program cannot name. `id` is otherwise inert: no
+/// `Styled` helper answers to it, and [`apply`] ignores it.
+pub fn named(spec: &str) -> Option<String> {
+    tokens(spec)
+        .into_iter()
+        .find(|(key, _)| key == "id")
+        .and_then(|(_, value)| value)
+        .filter(|name| !name.is_empty())
 }
 
 /// `shadow=#rrggbbaa,x,y,blur,spread`, with `|` between several shadows.
@@ -423,7 +440,15 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
             "x" | "y" | "scroll" => el,
             _ => el,
         },
+        // `Styled::debug()` is `#[cfg(debug_assertions)]` upstream, so it does
+        // not exist in a release build and the release build of this crate did
+        // not compile. The token stays known either way — a style string that
+        // carries `debug` must not be reported as a typo — and draws its border
+        // only where gpui can draw one.
+        #[cfg(debug_assertions)]
         "debug" => el.debug(),
+        #[cfg(not(debug_assertions))]
+        "debug" => el,
 
         _ => el,
     }

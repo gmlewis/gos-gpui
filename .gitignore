@@ -1,3 +1,8 @@
 /target
 /.gos-cache
 /tools/upstream/
+
+# The binding's own Cargo build lives outside the toolchain runner, so these
+# appear the moment anything runs cargo in gpui-binding/.
+/gpui-binding/target/
+/gpui-binding/Cargo.lock

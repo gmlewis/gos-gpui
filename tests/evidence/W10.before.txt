@@ -1,0 +1,34 @@
+W10 — `close_window()` addressed to a named window.
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before):
+
+    cd /tmp/gpui-before
+    timeout -k 5 30 gos run --main-thread tests/gui/w10_close_named_window.gos
+
+Output: nothing, and exit 124 — the timeout killed it. `gpui::close_window_in`
+does not exist at HEAD, so the probe's first call is unbound and the view
+callback is abandoned at its first line. The weak kind of red: an unresolved
+symbol, not the behaviour.
+
+SECOND FAILURE, seen after the first implementation. The natural first cut —
+look up the target window and close it from inside `process_requests`, which
+runs inside the frame being rendered — panicked on the release tier:
+
+    thread '<unnamed>' panicked at
+    /Users/.../gpui-0.2.2/src/app.rs:2203:14:
+    attempted to read a window that is already on the stack
+
+Finding a window's handle means reading its root view, and GPUI refuses a
+*nested* read of a window that is already on the stack — which the calling
+window is, because its frame is being built. The close is deferred now, the same
+way `open_window` is.
+
+A third thing the same run showed, recorded because it is not this row's and not
+fixed: `gos build --release` links with a long stream of
+`ld: warning: duplicate symbol '_gos_rt_…'` warnings, on the order of a hundred,
+from `libgossamer_runtime.a` and `libgos_static_bindings.a` both carrying the
+runtime. It does not fail the link or change any output, and every example is
+silent under it, but it is noise a reader will meet the moment they build for
+release.

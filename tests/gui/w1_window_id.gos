@@ -1,0 +1,60 @@
+// W1 — identify the window being rendered, and read it from a view callback.
+//
+// Tier: every tier. `gos check` for the compile half; the interpreter and both
+// compiled builds for the behavioural half.
+//
+// Pass means: a view callback can read a non-zero id for the window it is
+// building, that id does not change from one frame to the next, and a second
+// window reports an id of its own.
+//
+// Deliberately does not use `ui`: the `ui` chaining layer lives under
+// `examples/`, and a probe under `tests/` reaches the binding directly.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("w1 - window identity", 320.0, 240.0, || {
+        let f = gpui::frame()
+        let me = gpui::window_id()
+
+        if f == 1 {
+            // One id per window, for the life of the window.
+            println(f"w1 parent id={me}")
+            gpui::set_int("w1.seen", me)
+            // A second window, with a view callback of its own.
+            gpui::open_window("w1 - child", 400.0, 80.0, 240.0, 160.0, "", || {
+                if !gpui::state_bool("w1.child.reported", false) {
+                    gpui::set_bool("w1.child.reported", true)
+                    println(f"w1 child  id={gpui::window_id()}")
+                }
+                let child = gpui::column("p=8 bg=#222222 size=full")
+                gpui::child(child, gpui::text("child", "color=#ffffff"))
+                gpui::root(child)
+            })
+        }
+
+        // The same window must answer the same id on every frame.
+        let seen = gpui::state_int("w1.seen", -1)
+        if seen != me {
+            println(f"FAIL W1 the window id changed: was {seen}, now {me}, at frame {f}")
+            gpui::quit()
+        }
+
+        if f >= 5 {
+            println(f"OK W1 window_id() = {me}, stable across frames, with a child window of its own")
+            gpui::quit()
+        } else {
+            gpui::animate()
+        }
+
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(root, gpui::text(f"window {me}, frame {f}", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL W1 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

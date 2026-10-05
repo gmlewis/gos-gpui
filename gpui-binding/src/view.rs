@@ -23,8 +23,10 @@ use gossamer_binding::{NativeDispatch, RetainedCallback, Value};
 
 use crate::editor;
 use crate::path;
+use crate::scroll;
 use crate::style;
 use crate::store;
+use crate::window;
 
 // ---------------------------------------------------------------------------
 // dispatching back into Gossamer
@@ -142,9 +144,19 @@ impl Arena {
     }
 
     fn push(&mut self, kind: Kind, style: String, id: String) -> i64 {
+        // A leaf that takes an id passes it in; every other element can name
+        // itself with `id=` in its style. Falling back to a per-frame auto id
+        // keeps the element addressable by GPUI — hover, image animation and
+        // scroll state are all keyed by it — even when the program does not care
+        // what it is called.
         let id = if id.is_empty() {
-            self.next_id += 1;
-            format!("gpui-auto-{}", self.next_id)
+            match style::named(&style) {
+                Some(name) => name,
+                None => {
+                    self.next_id += 1;
+                    format!("gpui-auto-{}", self.next_id)
+                }
+            }
         } else {
             id
         };
@@ -154,26 +166,43 @@ impl Arena {
 }
 
 thread_local! {
-    static ARENA: RefCell<Arena> = RefCell::new(Arena::new());
-    static FRAME: Cell<u64> = const { Cell::new(0) };
+    /// One arena per window.
+    ///
+    /// A frame describes its whole tree into an arena, and parts of that tree
+    /// — a `uniform_list`'s rows — are still being read during layout, after
+    /// the frame's callback has returned. A second window rendering in between
+    /// would reset the arena the first is still using, so each window gets its
+    /// own.
+    static ARENAS: RefCell<HashMap<i64, Arena>> = RefCell::new(HashMap::new());
+    /// Frames painted, per window: `gpui::frame()` counts *this* window's.
+    static FRAMES: RefCell<HashMap<i64, u64>> = RefCell::new(HashMap::new());
+    /// The root each window named for the frame it is building.
+    static ROOTS: RefCell<HashMap<i64, i64>> = RefCell::new(HashMap::new());
     static START: std::cell::OnceCell<std::time::Instant> = const { std::cell::OnceCell::new() };
-    static ROOT: Cell<i64> = const { Cell::new(0) };
     static REPORTED: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
 }
 
+/// Runs `f` against the current window's arena, creating it the first time.
+fn arena<T>(f: impl FnOnce(&mut Arena) -> T) -> T {
+    let win = window::current();
+    ARENAS.with(|a| f(a.borrow_mut().entry(win).or_insert_with(Arena::new)))
+}
+
 /// Thread-local mirrors of the things a binding function can be asked for
-/// mid-frame but can only be read with a `Window` in hand.
+/// mid-frame but can only be read with a `Window` in hand. All per window: a
+/// callback belonging to window A must not read window B's rectangle.
 static MOUSE_POS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
-    static MOUSE_AT: Cell<(f64, f64)> = const { Cell::new((0.0, 0.0)) };
-    static FOCUSED_NOW: RefCell<std::collections::HashSet<String>> =
-        RefCell::new(std::collections::HashSet::new());
-    static COLORS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
-    static WINDOW_RECT: Cell<(f64, f64, f64, f64)> = const { Cell::new((0.0, 0.0, 0.0, 0.0)) };
-    static DISPLAYS: RefCell<Vec<Display>> = const { RefCell::new(Vec::new()) };
+    static MOUSE_AT: RefCell<HashMap<i64, (f64, f64)>> = RefCell::new(HashMap::new());
+    static FOCUSED_NOW: RefCell<HashMap<i64, std::collections::HashSet<String>>> =
+        RefCell::new(HashMap::new());
+    static COLORS: RefCell<HashMap<i64, HashMap<String, String>>> = RefCell::new(HashMap::new());
+    static WINDOW_RECT: RefCell<HashMap<i64, (f64, f64, f64, f64)>> = RefCell::new(HashMap::new());
+    static DISPLAYS: RefCell<HashMap<i64, Vec<Display>>> = RefCell::new(HashMap::new());
     static KEYBOARD: RefCell<String> = const { RefCell::new(String::new()) };
 }
+
 
 /// `"start-end prop,prop"` over UTF-8 byte ranges, where the properties are
 /// the text half of the style language.
@@ -200,30 +229,85 @@ fn parse_highlight(spec: &str) -> Option<(std::ops::Range<usize>, gpui::Highligh
 
 /// The default colours, cached at frame start.
 pub fn default_color(name: &str) -> String {
-    COLORS.with(|c| c.borrow().get(name).cloned().unwrap_or_default())
+    let win = window::current();
+    COLORS.with(|c| c.borrow().get(&win).and_then(|m| m.get(name)).cloned().unwrap_or_default())
+}
+
+/// How far the scrolled element `id` has scrolled in this window, on `axis`.
+///
+/// gpui's sign, kept as it is: zero at the top, negative as the content scrolls
+/// down. Answers `0.0` for an id no scrolled container has been drawn under —
+/// which is also what a container that has not scrolled yet answers, so a
+/// program that needs to tell the two apart asks for [`scroll_max_offset`],
+/// which is positive only where a scrolled container exists.
+pub fn scroll_offset(id: &str, axis: &str) -> f64 {
+    match scroll::find(window::current(), id) {
+        Some(handle) => axis_value(handle.offset(), axis),
+        None => 0.0,
+    }
+}
+
+/// How much content the scrolled element `id` has to scroll past on `axis`: the
+/// content size minus the container's, clamped at zero, and **positive**.
+pub fn scroll_max_offset(id: &str, axis: &str) -> f64 {
+    let Some(handle) = scroll::find(window::current(), id) else {
+        return 0.0;
+    };
+    let max = handle.max_offset();
+    match axis {
+        "x" => f32::from(max.width) as f64,
+        _ => f32::from(max.height) as f64,
+    }
+}
+
+/// Sets the offset of the scrolled element `id` in this window, in gpui's sign.
+///
+/// Answers `false` when no scrolled container has been drawn under that id, so a
+/// program that misspells one is told rather than silently left at the top. The
+/// offset is clamped to the scrolled range during the next prepaint, so setting
+/// one past the end parks at the end.
+pub fn scroll_to(id: &str, x: f64, y: f64) -> bool {
+    let Some(handle) = scroll::find(window::current(), id) else {
+        return false;
+    };
+    handle.set_offset(gpui::point(px(x as f32), px(y as f32)));
+    true
+}
+
+fn axis_value(point: gpui::Point<Pixels>, axis: &str) -> f64 {
+    match axis {
+        "x" => f32::from(point.x) as f64,
+        _ => f32::from(point.y) as f64,
+    }
 }
 
 /// Reads what the frame will ask for while it still has the window: the
 /// pointer's position, which focus handles are focused, and the default
 /// colours. Called once, before the view callback runs.
 pub fn begin_frame(window: &mut Window, cx: &App) {
+    let win = window::current();
     let position = window.mouse_position();
     MOUSE_AT.with(|p| {
-        p.set((f32::from(position.x) as f64, f32::from(position.y) as f64))
+        p.borrow_mut().insert(
+            win,
+            (f32::from(position.x) as f64, f32::from(position.y) as f64),
+        )
     });
     let _ = &MOUSE_POS;
     let bounds = window.bounds();
     WINDOW_RECT.with(|r| {
-        r.set((
-            f32::from(bounds.origin.x) as f64,
-            f32::from(bounds.origin.y) as f64,
-            f32::from(bounds.size.width) as f64,
-            f32::from(bounds.size.height) as f64,
-        ))
+        r.borrow_mut().insert(
+            win,
+            (
+                f32::from(bounds.origin.x) as f64,
+                f32::from(bounds.origin.y) as f64,
+                f32::from(bounds.size.width) as f64,
+                f32::from(bounds.size.height) as f64,
+            ),
+        )
     });
     DISPLAYS.with(|d| {
-        let mut list = d.borrow_mut();
-        list.clear();
+        let mut list = Vec::new();
         for display in cx.displays() {
             let bounds = display.bounds();
             list.push(Display {
@@ -234,6 +318,7 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
                 h: f32::from(bounds.size.height) as f64,
             });
         }
+        d.borrow_mut().insert(win, list);
     });
     // `get_global` panics when nothing installed the colours, which is the
     // case for the frames GPUI draws before a program asks for anything.
@@ -243,44 +328,45 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
         None
     };
     if let Some(colors) = colors {
-    COLORS.with(|c| {
-        let mut map = c.borrow_mut();
-        map.clear();
-        let hex = |c: gpui::Rgba| {
-            format!(
-                "#{:02x}{:02x}{:02x}{:02x}",
-                (c.r * 255.0).round() as u8,
-                (c.g * 255.0).round() as u8,
-                (c.b * 255.0).round() as u8,
-                (c.a * 255.0).round() as u8,
-            )
-        };
-        map.insert("text".into(), hex(colors.text));
-        map.insert("selected_text".into(), hex(colors.selected_text));
-        map.insert("background".into(), hex(colors.background));
-        map.insert("disabled".into(), hex(colors.disabled));
-        map.insert("selected".into(), hex(colors.selected));
-        map.insert("border".into(), hex(colors.border));
-        map.insert("separator".into(), hex(colors.separator));
-        map.insert("container".into(), hex(colors.container));
-    });
+        COLORS.with(|c| {
+            let hex = |c: gpui::Rgba| {
+                format!(
+                    "#{:02x}{:02x}{:02x}{:02x}",
+                    (c.r * 255.0).round() as u8,
+                    (c.g * 255.0).round() as u8,
+                    (c.b * 255.0).round() as u8,
+                    (c.a * 255.0).round() as u8,
+                )
+            };
+            let mut map = HashMap::new();
+            map.insert("text".into(), hex(colors.text));
+            map.insert("selected_text".into(), hex(colors.selected_text));
+            map.insert("background".into(), hex(colors.background));
+            map.insert("disabled".into(), hex(colors.disabled));
+            map.insert("selected".into(), hex(colors.selected));
+            map.insert("border".into(), hex(colors.border));
+            map.insert("separator".into(), hex(colors.separator));
+            map.insert("container".into(), hex(colors.container));
+            c.borrow_mut().insert(win, map);
+        });
     }
     FOCUSED_NOW.with(|set| {
-        let mut set = set.borrow_mut();
-        set.clear();
+        let mut focused = std::collections::HashSet::new();
         FOCUS.with(|f| {
-            for (id, handle) in f.borrow().iter() {
+            for ((_, id), handle) in f.borrow().iter() {
                 if handle.is_focused(window) {
-                    set.insert(id.clone());
+                    focused.insert(id.clone());
                 }
             }
         });
+        set.borrow_mut().insert(win, focused);
     });
 }
 
 /// The window's rectangle, as of the start of this frame.
 pub fn window_rect() -> (f64, f64, f64, f64) {
-    WINDOW_RECT.with(|r| r.get())
+    let win = window::current();
+    WINDOW_RECT.with(|r| r.borrow().get(&win).copied().unwrap_or((0.0, 0.0, 0.0, 0.0)))
 }
 
 /// One connected display's geometry.
@@ -305,38 +391,55 @@ pub fn keyboard_layout() -> String {
 
 /// The connected displays, as of the start of this frame.
 pub fn displays() -> Vec<Display> {
-    DISPLAYS.with(|d| d.borrow().clone())
+    let win = window::current();
+    DISPLAYS.with(|d| d.borrow().get(&win).cloned()).unwrap_or_default()
 }
 
 /// The pointer's position, from the start of this frame.
 pub fn mouse_position() -> (f64, f64) {
-    MOUSE_AT.with(|p| p.get())
+    let win = window::current();
+    MOUSE_AT.with(|p| p.borrow().get(&win).copied()).unwrap_or((0.0, 0.0))
 }
 
 /// Whether a registered focus handle is the focused one this frame.
 pub fn is_focused(id: &str) -> bool {
-    FOCUSED_NOW.with(|set| set.borrow().contains(id))
+    let win = window::current();
+    FOCUSED_NOW.with(|set| set.borrow().get(&win).map(|s| s.contains(id)).unwrap_or(false))
 }
 
-/// Starts a frame: an empty arena, and one more frame on the clock.
+/// Starts a frame: an empty arena for this window, and one more frame on its
+/// clock.
 pub fn reset() {
-    ARENA.with(|a| a.borrow_mut().reset());
-    ROOT.with(|r| r.set(0));
-    FRAME.with(|f| f.set(f.get() + 1));
+    let win = window::current();
+    arena(|a| a.reset());
+    ROOTS.with(|r| {
+        r.borrow_mut().remove(&win);
+    });
+    FRAMES.with(|f| {
+        *f.borrow_mut().entry(win).or_insert(0) += 1;
+    });
 }
 
 /// Names the element this frame should render as the window's root.
 pub fn set_root(handle: i64) {
-    ROOT.with(|r| r.set(handle));
+    let win = window::current();
+    ROOTS.with(|r| {
+        r.borrow_mut().insert(win, handle);
+    });
 }
 
 /// The root the frame named, or `None` when it named none.
 pub fn named_root() -> Option<i64> {
-    ROOT.with(|r| r.get()).checked_abs().filter(|h| *h > 0)
+    let win = window::current();
+    ROOTS
+        .with(|r| r.borrow().get(&win).copied())
+        .and_then(|h| h.checked_abs())
+        .filter(|h| *h > 0)
 }
 
 pub fn frame_number() -> u64 {
-    FRAME.with(|f| f.get())
+    let win = window::current();
+    FRAMES.with(|f| f.borrow().get(&win).copied().unwrap_or(0))
 }
 
 pub fn seconds_since_start() -> f64 {
@@ -346,25 +449,21 @@ pub fn seconds_since_start() -> f64 {
 /// Appends one described element and answers its handle.
 pub fn push(kind: Kind, style: String, id: String) -> i64 {
     check_style(&style);
-    ARENA.with(|a| a.borrow_mut().push(kind, style, id))
+    arena(|a| a.push(kind, style, id))
 }
 
 /// Links `child` under `parent`, and answers `parent` so the call can start a
 /// chain.
 pub fn child(parent: i64, child: i64) -> i64 {
-    ARENA.with(|a| {
-        let mut a = a.borrow_mut();
-        link(&mut a, parent, child);
-    });
+    arena(|a| link(a, parent, child));
     parent
 }
 
 /// Links a whole run of children, in order, and answers `parent`.
 pub fn children(parent: i64, nodes: Vec<i64>) -> i64 {
-    ARENA.with(|a| {
-        let mut a = a.borrow_mut();
+    arena(|a| {
         for node in nodes {
-            link(&mut a, parent, node);
+            link(a, parent, node);
         }
     });
     parent
@@ -384,12 +483,11 @@ fn link(arena: &mut Arena, parent: i64, child: i64) {
 /// The arena's current length, so a list's row builder can hand its elements
 /// back once the row has been turned into a real GPUI element.
 pub fn mark() -> usize {
-    ARENA.with(|a| a.borrow().els.len())
+    arena(|a| a.els.len())
 }
 
 pub fn release_to(mark: usize) {
-    ARENA.with(|a| {
-        let mut a = a.borrow_mut();
+    arena(|a| {
         if mark >= 1 && mark <= a.els.len() {
             a.els.truncate(mark);
         }
@@ -398,7 +496,7 @@ pub fn release_to(mark: usize) {
 
 pub fn note_error(message: impl Into<String>) {
     let message = message.into();
-    ARENA.with(|a| a.borrow_mut().errors.push(message));
+    arena(|a| a.errors.push(message));
 }
 
 /// Typos in a style string are reported once, on screen, rather than silently
@@ -422,8 +520,7 @@ fn check_style(style: &str) {
 /// Copies one described element out of the arena, so nothing borrows it while
 /// a nested callback re-enters.
 fn snapshot(handle: i64) -> Option<El> {
-    ARENA.with(|a| {
-        let arena = a.borrow();
+    arena(|arena| {
         let el = usize::try_from(handle).ok().and_then(|h| arena.els.get(h))?;
         Some(El {
             kind: match &el.kind {
@@ -468,7 +565,7 @@ fn snapshot(handle: i64) -> Option<El> {
 
 /// Turns the frame the view callback described into GPUI elements.
 pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: EntityId) -> AnyElement {
-    let errors = ARENA.with(|a| std::mem::take(&mut a.borrow_mut().errors));
+    let errors = arena(|a| std::mem::take(&mut a.errors));
 
     // A clean frame is handed straight to GPUI: the element the program
     // described *is* the window's root, with nothing wrapped around it. The
@@ -505,7 +602,8 @@ fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> An
     if !store::get_flag("~keys", false) {
         return element;
     }
-    let handle = focus_for("~root", cx);
+    let win = window::current();
+    let handle = focus_for(win, "~root", cx);
     if frame_number() <= 2 && !handle.is_focused(window) {
         window.focus(&handle);
     }
@@ -513,15 +611,17 @@ fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> An
         .size_full()
         .id(ElementId::Name("~root".into()))
         .track_focus(&handle)
-        .on_key_down(|event: &KeyDownEvent, _window, _cx| {
-            store::push_event_with("key", event.keystroke.key.clone());
-            // The rest of the keystroke, for a program that wants to echo it:
-            // upstream's input example logs both halves.
-            store::set_text(
-                "~key.char",
-                event.keystroke.key_char.as_deref().unwrap_or(""),
-            );
-            store::set_text("~key.unparse", &event.keystroke.unparse());
+        .on_key_down(move |event: &KeyDownEvent, _window, _cx| {
+            window::with(win, || {
+                store::push_event_with("key", event.keystroke.key.clone());
+                // The rest of the keystroke, for a program that wants to echo
+                // it: upstream's input example logs both halves.
+                store::set_text(
+                    "~key.char",
+                    event.keystroke.key_char.as_deref().unwrap_or(""),
+                );
+                store::set_text("~key.unparse", &event.keystroke.unparse());
+            });
         })
         .child(element)
         .into_any_element()
@@ -542,9 +642,15 @@ fn error_card(message: String) -> AnyElement {
 // ---------------------------------------------------------------------------
 
 thread_local! {
-    static FOCUS: RefCell<HashMap<String, FocusHandle>> = RefCell::new(HashMap::new());
-    static SLIDER_BOUNDS: RefCell<HashMap<String, Bounds<Pixels>>> = RefCell::new(HashMap::new());
-    static MOUSE_BOUNDS: RefCell<HashMap<String, Bounds<Pixels>>> = RefCell::new(HashMap::new());
+    /// Focus handles, per window and element id. GPUI's own handle for a
+    /// `focusable()` element is built inside the framework and never handed
+    /// over, so the binding keeps the handles it builds itself here — and a
+    /// handle belonging to window A must not be asked about window B.
+    static FOCUS: RefCell<HashMap<(i64, String), FocusHandle>> = RefCell::new(HashMap::new());
+    static SLIDER_BOUNDS: RefCell<HashMap<(i64, String), Bounds<Pixels>>> =
+        RefCell::new(HashMap::new());
+    static MOUSE_BOUNDS: RefCell<HashMap<(i64, String), Bounds<Pixels>>> =
+        RefCell::new(HashMap::new());
 }
 
 /// Writes a pointer event into the state store and raises `"<id>|<kind>"`.
@@ -557,7 +663,8 @@ fn report_pointer(
     position: gpui::Point<Pixels>,
     modifiers: gpui::Modifiers,
 ) {
-    let bounds = MOUSE_BOUNDS.with(|m| m.borrow().get(id).copied());
+    let win = window::current();
+    let bounds = MOUSE_BOUNDS.with(|m| m.borrow().get(&(win, id.to_string())).copied());
     let (x, y) = match bounds {
         Some(bounds) => (
             f32::from(position.x) - f32::from(bounds.origin.x),
@@ -575,16 +682,20 @@ fn report_pointer(
     store::push_event_with(id, kind);
 }
 
-fn focus_for(id: &str, cx: &mut App) -> FocusHandle {
+fn focus_for(win: i64, id: &str, cx: &mut App) -> FocusHandle {
     FOCUS.with(|f| {
         f.borrow_mut()
-            .entry(id.to_string())
+            .entry((win, id.to_string()))
             .or_insert_with(|| cx.focus_handle())
             .clone()
     })
 }
 
 pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> AnyElement {
+    // Every callback built below outlives this frame. Each one re-enters
+    // through `window::with(win, ..)` so that the state, events and requests it
+    // touches belong to the window it was drawn in.
+    let win = window::current();
     match &el.kind {
         Kind::Plain => {
             let children: Vec<AnyElement> = el
@@ -596,6 +707,10 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let base = style::apply(div(), &el.style);
             let (hover, active) = style::interaction(&el.style);
             match style::scroll_axis(&el.style) {
+                // A scrolled container is given this window's handle for its id,
+                // so the program can read the offset back and set it. The handle
+                // outlives the frame — it is what makes the offset survive a
+                // rebuild — which is why it is not created here and dropped.
                 Some("x") => {
                     let scrolled = apply_focus_order(
                         apply_interactions(
@@ -604,7 +719,12 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         ),
                         &el.style,
                     );
-                    scrolled.overflow_x_scroll().children(children).into_any_element()
+                    let handle = scroll::handle(win, &el.id);
+                    scrolled
+                        .overflow_x_scroll()
+                        .track_scroll(&handle)
+                        .children(children)
+                        .into_any_element()
                 }
                 Some("both") => {
                     let scrolled = apply_focus_order(
@@ -614,7 +734,12 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         ),
                         &el.style,
                     );
-                    scrolled.overflow_scroll().children(children).into_any_element()
+                    let handle = scroll::handle(win, &el.id);
+                    scrolled
+                        .overflow_scroll()
+                        .track_scroll(&handle)
+                        .children(children)
+                        .into_any_element()
                 }
                 Some(_) => {
                     let scrolled = apply_focus_order(
@@ -624,7 +749,12 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         ),
                         &el.style,
                     );
-                    scrolled.overflow_y_scroll().children(children).into_any_element()
+                    let handle = scroll::handle(win, &el.id);
+                    scrolled
+                        .overflow_y_scroll()
+                        .track_scroll(&handle)
+                        .children(children)
+                        .into_any_element()
                 }
                 // A plain box only becomes interactive when it asks to be, so
                 // the common case keeps a stateless element.
@@ -658,7 +788,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let base = apply_interactions(base, &el.style);
             base.child(label.clone())
                 .on_click(move |_event, _window, cx| {
-                    store::push_event(click_id.clone());
+                    window::with(win, || store::push_event(click_id.clone()));
                     cx.notify(entity);
                 })
                 .into_any_element()
@@ -690,16 +820,18 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             base.child(box_)
                 .child(label.clone())
                 .on_click(move |_event, _window, cx| {
-                    let on = !store::get_flag(&click_id, false);
-                    store::set_flag(&click_id, on);
-                    store::push_event_with(&click_id, if on { "on" } else { "off" });
+                    window::with(win, || {
+                        let on = !store::get_flag(&click_id, false);
+                        store::set_flag(&click_id, on);
+                        store::push_event_with(&click_id, if on { "on" } else { "off" });
+                    });
                     cx.notify(entity);
                 })
                 .into_any_element()
         }
 
         Kind::Input { placeholder } => {
-            let handle = focus_for(&el.id, cx);
+            let handle = focus_for(win, &el.id, cx);
             let focused = handle.is_focused(window);
             let key = el.id.clone();
             let key_for_click = key.clone();
@@ -729,28 +861,30 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 )
                 .on_click(move |_event, window, _cx| {
                     window.focus(&handle_for_click);
-                    store::push_event_with(&key_for_click, "focus");
+                    window::with(win, || store::push_event_with(&key_for_click, "focus"));
                 })
                 .on_key_down(move |event: &KeyDownEvent, _window, cx| {
-                    let mut text = store::get_text(&key, "");
-                    match event.keystroke.key.as_str() {
-                        "backspace" => {
-                            text.pop();
-                            store::set_text(&key, &text);
-                        }
-                        "enter" => store::push_event_with(&key, "submit"),
-                        "escape" => store::push_event_with(&key, "cancel"),
-                        _ => {
-                            if let Some(ch) = &event.keystroke.key_char {
-                                if !event.keystroke.modifiers.control
-                                    && !event.keystroke.modifiers.platform
-                                {
-                                    text.push_str(ch);
-                                    store::set_text(&key, &text);
+                    window::with(win, || {
+                        let mut text = store::get_text(&key, "");
+                        match event.keystroke.key.as_str() {
+                            "backspace" => {
+                                text.pop();
+                                store::set_text(&key, &text);
+                            }
+                            "enter" => store::push_event_with(&key, "submit"),
+                            "escape" => store::push_event_with(&key, "cancel"),
+                            _ => {
+                                if let Some(ch) = &event.keystroke.key_char {
+                                    if !event.keystroke.modifiers.control
+                                        && !event.keystroke.modifiers.platform
+                                    {
+                                        text.push_str(ch);
+                                        store::set_text(&key, &text);
+                                    }
                                 }
                             }
                         }
-                    }
+                    });
                     cx.notify(entity);
                 })
                 .into_any_element()
@@ -767,7 +901,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let down_key = key.clone();
             let move_key = key.clone();
             let fraction = move |key: &str, x: Pixels| {
-                let bounds = SLIDER_BOUNDS.with(|b| b.borrow().get(key).copied());
+                let bounds = SLIDER_BOUNDS.with(|b| b.borrow().get(&(win, key.to_string())).copied());
                 let Some(bounds) = bounds else { return None };
                 let width = f32::from(bounds.size.width).max(1.0);
                 let offset = f32::from(x - bounds.origin.x);
@@ -803,7 +937,8 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             )
             .on_children_prepainted(move |bounds, _window, _cx| {
                 if let Some(first) = bounds.first() {
-                    SLIDER_BOUNDS.with(|b| b.borrow_mut().insert(track_key.clone(), *first));
+                    SLIDER_BOUNDS
+                        .with(|b| b.borrow_mut().insert((win, track_key.clone()), *first));
                 }
             })
             .id(ElementId::Name(el.id.clone().into()))
@@ -812,8 +947,10 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             .child(knob)
             .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
                 if let Some(frac) = fraction_down(&down_key, event.position.x) {
-                    store::set_float(&down_key, min + frac * span);
-                    store::push_event_with(&down_key, format!("{:.3}", min + frac * span));
+                    window::with(win, || {
+                        store::set_float(&down_key, min + frac * span);
+                        store::push_event_with(&down_key, format!("{:.3}", min + frac * span));
+                    });
                     cx.notify(entity);
                 }
             })
@@ -822,8 +959,10 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                     return;
                 }
                 if let Some(frac) = fraction_move(&move_key, event.position.x) {
-                    store::set_float(&move_key, min + frac * span);
-                    store::push_event_with(&move_key, format!("{:.3}", min + frac * span));
+                    window::with(win, || {
+                        store::set_float(&move_key, min + frac * span);
+                        store::push_event_with(&move_key, format!("{:.3}", min + frac * span));
+                    });
                     cx.notify(entity);
                 }
             })
@@ -890,23 +1029,36 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let build = build.clone();
             let list = uniform_list(ElementId::Name(el.id.clone().into()), count, {
                 move |range, window, cx| {
+                    // A list is built during layout, after the frame that asked
+                    // for it returned: this window's arena, and this window's
+                    // state, are the ones the row builder must see.
                     let mut rows = Vec::with_capacity(range.len());
                     for index in range {
                         // The row builder appends its own elements to the
                         // arena. They are only needed until the row has been
                         // turned into a real GPUI element, so the arena is
                         // handed back straight afterwards.
-                        let mark = mark();
-                        let row = match invoke(&build, vec![Value::Int(index as i64)]) {
-                            Ok(Value::Int(handle)) if handle > 0 => snapshot(handle),
+                        let mark = window::with(win, mark);
+                        let row = match window::with(win, || {
+                            invoke(&build, vec![Value::Int(index as i64)])
+                        }) {
+                            Ok(Value::Int(handle)) if handle > 0 => {
+                                window::with(win, || snapshot(handle))
+                            }
                             Ok(_) => {
-                                note_error(format!(
-                                    "the row builder for row {index} answered no element"
-                                ));
+                                window::with(win, || {
+                                    note_error(format!(
+                                        "the row builder for row {index} answered no element"
+                                    ))
+                                });
                                 None
                             }
                             Err(e) => {
-                                note_error(format!("the row builder for row {index} failed: {e}"));
+                                window::with(win, || {
+                                    note_error(format!(
+                                        "the row builder for row {index} failed: {e}"
+                                    ))
+                                });
                                 None
                             }
                         };
@@ -914,7 +1066,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                             Some(row) => render(&row, window, cx, entity),
                             None => div().into_any_element(),
                         };
-                        release_to(mark);
+                        window::with(win, || release_to(mark));
                         rows.push(
                             div()
                                 .h(px(row_height as f32))
@@ -956,7 +1108,8 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let mut wrapper = style::apply(div(), &el.style)
                 .on_children_prepainted(move |bounds, _window, _cx| {
                     if let Some(first) = bounds.first() {
-                        MOUSE_BOUNDS.with(|m| m.borrow_mut().insert(bounds_key.clone(), *first));
+                        MOUSE_BOUNDS
+                            .with(|m| m.borrow_mut().insert((win, bounds_key.clone()), *first));
                     }
                 })
                 .id(ElementId::Name(el.id.clone().into()))
@@ -965,28 +1118,36 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             if kinds.contains("down") {
                 let key = id.clone();
                 wrapper = wrapper.on_mouse_down(MouseButton::Left, move |event, _w, cx| {
-                    report_pointer(&key, "down", event.position, event.modifiers);
+                    window::with(win, || {
+                        report_pointer(&key, "down", event.position, event.modifiers)
+                    });
                     cx.notify(entity);
                 });
             }
             if kinds.contains("up") {
                 let key = id.clone();
                 wrapper = wrapper.on_mouse_up(MouseButton::Left, move |event, _w, cx| {
-                    report_pointer(&key, "up", event.position, event.modifiers);
+                    window::with(win, || {
+                        report_pointer(&key, "up", event.position, event.modifiers)
+                    });
                     cx.notify(entity);
                 });
             }
             if kinds.contains("click") {
                 let key = id.clone();
                 wrapper = wrapper.on_click(move |event, _w, cx| {
-                    report_pointer(&key, "click", event.position(), event.modifiers());
+                    window::with(win, || {
+                        report_pointer(&key, "click", event.position(), event.modifiers())
+                    });
                     cx.notify(entity);
                 });
             }
             if kinds.contains("right") {
                 let key = id.clone();
                 wrapper = wrapper.on_mouse_down(MouseButton::Right, move |event, _w, cx| {
-                    report_pointer(&key, "right", event.position, event.modifiers);
+                    window::with(win, || {
+                        report_pointer(&key, "right", event.position, event.modifiers)
+                    });
                     cx.notify(entity);
                 });
             }
@@ -994,7 +1155,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 let key = id.clone();
                 wrapper = wrapper.on_mouse_move(move |event, _w, cx| {
                     if event.dragging() {
-                        report_pointer(&key, "move", event.position, event.modifiers);
+                        window::with(win, || {
+                            report_pointer(&key, "move", event.position, event.modifiers)
+                        });
                         cx.notify(entity);
                     }
                 });
@@ -1003,7 +1166,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
         }
 
         Kind::Editor { key, placeholder } => {
-            let field = editor::editor_element(key, placeholder, window, cx);
+            let field = editor::editor_element(win, key, placeholder, window, cx);
             style::apply(div(), &el.style).child(field).into_any_element()
         }
 
