@@ -78,6 +78,40 @@ launching anything:
 ./run.sh --print 04              # just print the path it would run
 ```
 
+## Comparing against upstream GPUI
+
+The crate ships its own Rust examples, and they are the control group: same
+widgets, same GPUI, no binding and no Gossamer in the picture. When something
+misbehaves here, running the upstream example for it separates three cases:
+
+| upstream | here | so the fault is |
+|---|---|---|
+| works | misbehaves | the binding, or the Gosammer toolchain |
+| misbehaves | misbehaves | gpui itself |
+| works | works | your own change |
+
+```sh
+./tools/upstream-examples.sh list
+./tools/upstream-examples.sh run hello_world      # ~ our 01_hello
+./tools/upstream-examples.sh run uniform_list     # ~ our 06_lists
+./tools/upstream-examples.sh run input            # ~ our 05_forms
+./tools/upstream-examples.sh build painting       # compile without running
+```
+
+It generates `tools/upstream/` (gitignored), pinning the **same gpui version the
+binding pins** and copying the examples unmodified out of the cargo registry.
+The crate publishes no dev-dependencies, so the generated manifest supplies the
+handful its examples reach for — `anyhow`, `env_logger`, `log`, `lyon`,
+`rand`, `unicode-segmentation` — and sets `edition = "2024"`, which `input.rs`
+needs for let-chains. `image_gallery` is skipped: it imports `reqwest_client`,
+a zed-workspace crate that is not published.
+
+**This will not reproduce the codegen bugs below.** Those abort inside
+`gossamer-runtime` from Gossamer-generated code; the Rust examples never touch
+that path. What upstream comparison is *for* is everything that renders wrong
+or behaves oddly without crashing — a widget missing, a layout off, a list not
+scrolling, a key not arriving.
+
 ## On Linux
 
 The Gossamer side is platform-neutral — every `.gos` file, including
@@ -465,6 +499,16 @@ functions answering an `El`, so the frame body stays a short chain.
   with no `ui` module and no element chaining, and survives `gos clean` and a
   full rebuild, so it is not a stale artefact. This is why `run.sh` is the
   supported path and `build.sh` is not.
+- **Every frame is rebuilt from scratch.** GPUI is hybrid immediate/retained,
+  and this binding takes the immediate half: a custom `Render` impl re-invokes
+  the Gossamer callback and describes the whole window again, rather than
+  holding an `Entity` with retained state. Most things are unaffected, but
+  anything GPUI keys by element id — hover, active, focus, and
+  `uniform_list`'s row recycling — depends on those ids being stable from
+  frame to frame. Ids here are deterministic (`gpui-auto-N` in build order, or
+  the id you passed), so they are stable as long as the tree shape is. An id
+  reused for two different elements is the first thing to suspect if a widget
+  behaves oddly.
 - **Fonts are whatever the machine has.** GPUI picks its own UI font; the
   examples set sizes and weights but not families.
 - **A panic in a binding is caught at the boundary.** It prints to stderr and
