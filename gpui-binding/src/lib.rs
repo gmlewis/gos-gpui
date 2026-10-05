@@ -49,6 +49,7 @@ use gossamer_binding::PersistentCallback;
 // happen to redeclare `Rect`. Scalars cross every tier unchanged.
 
 mod app;
+mod editor;
 mod path;
 mod store;
 mod style;
@@ -309,6 +310,15 @@ gossamer_binding::register_module!(
         view::push(Kind::Checkbox { label, checked }, style, id)
     }
 
+    /// A text editor backed by the string stored under `key`.
+    ///
+    /// The editor itself lives in the binding: its `EntityInputHandler` is a
+    /// trait the platform calls after this binding function has returned, so
+    /// it cannot be a Gossamer closure. Raises `<key>|change` as it is edited.
+    fn editor(key: String, placeholder: String, style: String) -> i64 {
+        view::push(Kind::Editor { key, placeholder }, style, String::new())
+    }
+
     /// A single-line text field backed by the string stored under `key`.
     ///
     /// Raises `<key>|submit` on Return and `<key>|cancel` on Escape.
@@ -460,6 +470,17 @@ gossamer_binding::register_module!(
             String::new(),
             String::new(),
         )
+    }
+
+    /// Raise every keystroke the window receives as `"<id>|<unparsed>"`,
+    /// whether or not a focused element handled it. Installed once.
+    fn observe_keystrokes(id: String) {
+        store::request(store::Request::ObserveKeys { id })
+    }
+
+    /// The name of the current keyboard layout, e.g. `"U.S."`.
+    fn keyboard_layout() -> String {
+        view::keyboard_layout()
     }
 
     /// The pointer's position in the window.

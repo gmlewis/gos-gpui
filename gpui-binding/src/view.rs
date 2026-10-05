@@ -21,6 +21,7 @@ use gpui::{
 
 use gossamer_binding::{NativeDispatch, PersistentCallback, Value};
 
+use crate::editor;
 use crate::path;
 use crate::style;
 use crate::store;
@@ -94,6 +95,8 @@ pub enum Kind {
     Mouse { child: usize, id: String, kinds: String },
     /// Text with per-byte-range highlights.
     StyledText { content: String, highlights: Vec<String> },
+    /// A binding-owned text editor, registered under `key`.
+    Editor { key: String, placeholder: String },
 }
 
 pub struct El {
@@ -167,6 +170,7 @@ thread_local! {
     static COLORS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     static WINDOW_RECT: Cell<(f64, f64, f64, f64)> = const { Cell::new((0.0, 0.0, 0.0, 0.0)) };
     static DISPLAYS: RefCell<Vec<Display>> = const { RefCell::new(Vec::new()) };
+    static KEYBOARD: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// `"start-end prop,prop"` over UTF-8 byte ranges, where the properties are
@@ -285,6 +289,16 @@ pub struct Display {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+}
+
+/// Records the keyboard layout's name, once, so the frame can name it.
+pub fn set_keyboard_layout(name: String) {
+    KEYBOARD.with(|k| *k.borrow_mut() = name);
+}
+
+/// The keyboard layout's name.
+pub fn keyboard_layout() -> String {
+    KEYBOARD.with(|k| k.borrow().clone())
 }
 
 /// The connected displays, as of the start of this frame.
@@ -439,6 +453,9 @@ fn snapshot(handle: i64) -> Option<El> {
                 Kind::StyledText { content, highlights } => {
                     Kind::StyledText { content: content.clone(), highlights: highlights.clone() }
                 }
+                Kind::Editor { key, placeholder } => {
+                    Kind::Editor { key: key.clone(), placeholder: placeholder.clone() }
+                }
             },
             style: el.style.clone(),
             id: el.id.clone(),
@@ -496,6 +513,13 @@ fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> An
         .track_focus(&handle)
         .on_key_down(|event: &KeyDownEvent, _window, _cx| {
             store::push_event_with("key", event.keystroke.key.clone());
+            // The rest of the keystroke, for a program that wants to echo it:
+            // upstream's input example logs both halves.
+            store::set_text(
+                "~key.char",
+                event.keystroke.key_char.as_deref().unwrap_or(""),
+            );
+            store::set_text("~key.unparse", &event.keystroke.unparse());
         })
         .child(element)
         .into_any_element()
@@ -974,6 +998,11 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 });
             }
             wrapper.into_any_element()
+        }
+
+        Kind::Editor { key, placeholder } => {
+            let field = editor::editor_element(key, placeholder, window, cx);
+            style::apply(div(), &el.style).child(field).into_any_element()
         }
 
         Kind::StyledText { content, highlights } => {

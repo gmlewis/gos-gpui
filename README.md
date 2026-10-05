@@ -7,8 +7,7 @@ that publishes the framework behind a flat, Gossamer-shaped module called
 `gpui` — and a small Gossamer module, `ui`, that puts a chainable `El` type on
 top of it.
 
-Twenty-six of the twenty-seven are ported and runnable; the last one opens a
-window naming what it is waiting on. See
+All twenty-seven are ported and runnable. See
 [Porting status](#porting-status), and [`PORTING.md`](PORTING.md) for the ABI
 decisions and the bugs the port itself surfaced.
 
@@ -426,7 +425,7 @@ One file per upstream example, numbered to match. Run the pair:
 ./tools/upstream-examples.sh run hello_world # the original
 ```
 
-**Ported — 26 of 27.** A faithful port unless its row says otherwise:
+**All 27 ported.** A faithful port unless its row says otherwise:
 
 | | upstream | notes |
 |---|---|---|
@@ -438,6 +437,7 @@ One file per upstream example, numbered to match. Run the pair:
 | `06_grid_layout` | `grid_layout.rs` | the "holy grail" 5×5 grid |
 | `07_hello_world` | `hello_world.rs` | |
 | `08_image_loading` | `image_loading.rs` | staged arrivals via `gpui::task`, not GPUI's asset pipeline |
+| `09_input` | `input.rs` | **the editor is a binding widget, not Gossamer code** — see below |
 | `10_on_window_close_quit` | `on_window_close_quit.rs` | single window |
 | `12_ownership_post` | `ownership_post.rs` | **approximation** — upstream's entity half (`emit`/`subscribe`) is absent, shown through the event queue instead |
 | `11_opacity` | `opacity.rs` | custom box shadow field-for-field |
@@ -457,18 +457,23 @@ One file per upstream example, numbered to match. Run the pair:
 | `26_window_shadow` | `window_shadow.rs` | upstream's client-decoration arm is **dead on macOS**; the port renders the Server arm and labels its own pointer additions |
 | `27_window` | `window.rs` | multi-window; `Prompt` emulated as an in-window dialog, `Hide Application` marked unavailable |
 
-**Not ported — 1.** It opens a window naming what it is waiting on:
+### The one port that had to be a widget
 
-| | upstream | what it waits on |
-|---|---|---|
-| `09_input` | `input.rs` | a binding-owned `EditorState` — see below |
-
-`09_input` is the one that cannot be a port in the ordinary sense.
+`09_input` is the exception, and it is worth understanding why. Its editor is
+implemented in Rust, in `gpui-binding/src/editor.rs`, not in Gossamer.
 `EntityInputHandler`, `InputHandler` and `window.handle_input` are trait
-callbacks the platform invokes *after* the binding call returns, so they cannot
-cross a call-scoped callback. The only faithful route is a Rust-owned editor
-behind `ui::editor(..)`: a re-implementation of upstream's bodies, not a port of
-them. See [`PORTING.md`](PORTING.md).
+callbacks the platform invokes *after* the binding call has returned, so they
+cannot cross a call-scoped callback — a Gossamer program physically cannot
+implement them. The bodies are upstream's `TextInput` reproduced (its
+`EntityInputHandler` impl, the `ElementInputHandler` wiring in the canvas paint,
+the shaped-line prepaint with its selection and cursor quads, the mouse
+selection, the UTF-8/UTF-16 arithmetic), and Gossamer reaches them as
+`ui::editor(key, placeholder, style)` and reads the text back with
+`gpui::state_text(key, "")`.
+
+Its header documents the deviations: the application keymap is the binding's, so
+the editor matches keystrokes itself rather than through thirteen bound actions,
+and the widget paints no chrome of its own.
 
 ### Deviations that apply to every port
 

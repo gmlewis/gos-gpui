@@ -15,6 +15,9 @@ crate-type = ["rlib"]
 # tracks the version stated in `project.toml`.
 gossamer-binding = "0.66.0"
 
+# The editor moves the caret by grapheme cluster, as upstream's does.
+unicode-segmentation = "1"
+
 # Zed's GPU-accelerated UI framework, configured per platform.
 #
 # macOS takes the defaults plus `runtime_shaders`, which compiles gpui's Metal

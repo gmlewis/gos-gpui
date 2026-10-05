@@ -161,6 +161,23 @@ pub fn checkbox(id: String, label: String, checked: bool, style: String) -> El {
     gpui::checkbox(id, label, checked, style).into()
 }
 
+/// Raise every keystroke the window receives as `"<id>|<unparsed>"`. See
+/// `gpui::observe_keystrokes`.
+pub fn observe_keystrokes(id: String) {
+    gpui::observe_keystrokes(id)
+}
+
+/// The name of the current keyboard layout. See `gpui::keyboard_layout`.
+pub fn keyboard_layout() -> String {
+    gpui::keyboard_layout()
+}
+
+/// A full text editor: caret, selection, clipboard, IME, undo-free editing.
+/// The widget lives in the binding — see `gpui::editor`.
+pub fn editor(key: String, placeholder: String, style: String) -> El {
+    gpui::editor(key, placeholder, style).into()
+}
+
 pub fn input(key: String, placeholder: String, style: String) -> El {
     gpui::input(key, placeholder, style).into()
 }

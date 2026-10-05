@@ -44,6 +44,8 @@ pub enum Request {
     ResizeWindow { w: f64, h: f64 },
     /// Install an application menu.
     SetMenus { name: String, items: Vec<String> },
+    /// Observe every keystroke the window receives.
+    ObserveKeys { id: String },
 }
 
 static REQUESTS: LazyLock<Mutex<Vec<Request>>> = LazyLock::new(|| Mutex::new(Vec::new()));

@@ -1,34 +1,72 @@
 // 09 - input        upstream: tools/upstream/examples/input.rs (746 lines)
 //
-// NOT PORTED YET. A full text editor: caret, selection, clipboard, IME, undo, key bindings.
+// A full text editor: caret, selection, clipboard, IME, grapheme-wise movement.
 //
-// Run it to see exactly what the binding is missing. The upstream example is
-// the control: build and run
+//   gos run --main-thread examples/09_input.gos
 //
-//   ./tools/upstream-examples.sh run input
+// The editor itself lives in the BINDING, and this is the one port that has to
+// be built that way. `EntityInputHandler`, `InputHandler` and
+// `window.handle_input` are trait callbacks the platform invokes *after* the
+// binding call has returned, so they cannot cross a call-scoped callback and
+// cannot be written in Gossamer at all. Rust-side, `TextEditor` is upstream's
+// `TextInput` with its bodies reproduced (see `gpui-binding/src/editor.rs`);
+// from here it is `ui::editor(key, placeholder, style)`, and the program reads
+// the text back with `gpui::state_text(key, "")`.
 //
-// and compare the two windows side by side.
+// Deviations:
+//   * the widget is not Gossamer code — see above and PORTING.md;
+//   * upstream binds thirteen actions through the application keymap
+//     (`cx.bind_keys` / `on_action`); the binding owns the one keymap, so the
+//     editor matches keystrokes itself. Same keys, different plumbing;
+//   * upstream focuses the input at startup; here it takes focus when clicked
+//     or tabbed to;
+//   * upstream's shell is `InputExample` — a header, this log and a Reset
+//     button. That shell is reproduced here, with the log fed by
+//     `gpui::observe_keystrokes`, which sees every keystroke whether or not the
+//     editor handled it, exactly as upstream's `cx.observe_keystrokes` does;
+//   * Reset clears the text and the log; upstream's handler clears the text.
 
 use gpui
 use std::process
-use status
 use ui
 
+fn handle(events: Vec<String>) {
+    for event in events {
+        let id, data = gpui::event_parts(event)
+        if id == "key" {
+            let ch = gpui::state_text("~key.char", "")
+            gpui::list_push("keys", f"{data} -> {ch}")
+        } else if id == "reset" {
+            gpui::set_text("input", "")
+            gpui::list_clear("keys")
+        }
+    }
+}
+
+/// The keystroke log. Upstream shows `recent_keystrokes.iter().rev()`, so the
+/// newest line is first.
+fn keystroke_log(lines: i64) -> ui::El {
+    (0..lines).fold(ui::column("flex col w=full"), |column, i| {
+        column.child(ui::text(gpui::list_get("keys", lines - 1 - i), "font=sm"))
+    })
+}
+
 fn main() {
-    let outcome = gpui::run("09 - input", 760.0, 560.0, || {
-        status::missing(
-            "09 - input",
-            "upstream: examples/input.rs (746 lines)",
-            #[
-            "EntityInputHandler + ElementInputHandler",
-            "window.handle_input / TextInputHandler plumbing",
-            "ClipboardItem, selection range, marked (IME) range",
-            "paint_text with shaped lines and cursors",
-            "cx.observe_keystrokes, cx.on_action, cx.bind_keys, key_context",
-            "(the binding's ui::input is a minimal single-line field, not this)",
-            ],
-        )
-        |> ui::root
+    let outcome = gpui::run("09 - input", 300.0, 300.0, || {
+        // Every keystroke the window receives, handled or not.
+        gpui::observe_keystrokes("key")
+        gpui::take_events() |> handle
+
+        let lines = gpui::list_len("keys")
+        let layout = ui::keyboard_layout()
+
+        ui::column("bg=#aaaaaa flex col size=full")
+            .child(ui::row("bg=white borderb=1 bordercolor=black w=full justify=between items=center")
+                .text(f"Keyboard {layout}", "")
+                .button("reset", "Reset", "border=1 bordercolor=black px=8 bg=yellow cursor=pointer hover=bg=#b8b800"))
+            .child(ui::editor("input", "Type here...", "w=full p=4 bg=white"))
+            .child(keystroke_log(lines))
+            |> ui::root
     })
 
     if let Err(problem) = outcome {

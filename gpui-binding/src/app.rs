@@ -90,6 +90,28 @@ fn process_requests(window: &mut Window, cx: &mut Context<Root>, entity: EntityI
             Request::FocusPrev => window.focus_prev(),
             Request::CloseWindow => window.remove_window(),
 
+            Request::ObserveKeys { id } => {
+                // Upstream's `cx.observe_keystrokes`: every keystroke the
+                // window sees, whether or not a focused element handled it.
+                static OBSERVED: LazyLock<Mutex<HashSet<String>>> =
+                    LazyLock::new(|| Mutex::new(HashSet::new()));
+                if !OBSERVED.lock().unwrap().insert(id.clone()) {
+                    continue;
+                }
+                let key = id.clone();
+                // `Context::observe_keystrokes`, so the closure takes the
+                // entity as well as the event.
+                cx.observe_keystrokes(move |_this, event, _window, cx| {
+                    store::push_event_with(&key, event.keystroke.unparse());
+                    store::set_text(
+                        "~key.char",
+                        event.keystroke.key_char.as_deref().unwrap_or(""),
+                    );
+                    cx.notify();
+                })
+                .detach();
+            }
+
             Request::SetMenus { name, items } => {
                 // Menu items carry a `Box<dyn Action>`, which no ABI can pass,
                 // so the binding owns a fixed set of action slots and maps a
@@ -304,6 +326,7 @@ pub fn run_app(
         // Before any window exists: opening one draws it once, and that first
         // frame reads the default colours.
         cx.init_colors();
+        view::set_keyboard_layout(cx.keyboard_layout().name().to_string());
         let bounds = Bounds::centered(None, size(px(width as f32), px(height as f32)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
