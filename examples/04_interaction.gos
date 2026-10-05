@@ -1,0 +1,122 @@
+// 04 - Interaction and state
+//
+// A first interactive program: buttons that raise events, a slider that writes
+// straight into app state, and the keyboard routed to the window.
+//
+//   gos run --main-thread examples/04_interaction.gos
+//
+// The shape of a GPUI program in Gossamer is always the same three steps:
+//
+//   1. drain `gpui::take_events()` and update state,
+//   2. read state back out,
+//   3. describe the whole window for this frame.
+//
+// Nothing needs to be redrawn by hand: a widget that changes state calls back
+// into GPUI, which schedules the next frame for you.
+
+use gpui
+use std::process
+
+fn stat(label: String, value: String, colour: String) {
+    gpui::column("items=center gap=2", || {
+        gpui::text(value, f"font=2xl bold {colour}")
+        gpui::text(label, "font=xs color=#6c7086")
+    })
+}
+
+fn main() {
+    let outcome = gpui::run("Interaction", 560.0, 520.0, || {
+        // Route keystrokes to the program as `"key|<name>"` events.
+        gpui::on_keys(true)
+
+        for event in gpui::take_events() {
+            let id, data = gpui::event_parts(event)
+            let count = gpui::state_int("count", 0)
+            let step = gpui::state_float("step", 1.0) as i64
+
+            if id == "inc" {
+                gpui::set_int("count", count + step)
+            } else if id == "dec" {
+                gpui::set_int("count", count - step)
+            } else if id == "reset" {
+                gpui::set_int("count", 0)
+            } else if id == "key" {
+                if data == "up" || data == "k" {
+                    gpui::set_int("count", count + step)
+                } else if data == "down" || data == "j" {
+                    gpui::set_int("count", count - step)
+                } else if data == "r" {
+                    gpui::set_int("count", 0)
+                } else if data == "space" {
+                    gpui::set_float("step", gpui::state_float("step", 1.0) + 1.0)
+                }
+            }
+
+            if id != "" {
+                gpui::set_text("last", f"{id} {data}")
+            }
+        }
+
+        let count = gpui::state_int("count", 0)
+        let step = gpui::state_float("step", 1.0) as i64
+        let show_help = gpui::state_bool("help", true)
+        let parity = if count % 2 == 0 { "even" } else { "odd" }
+
+        gpui::column("size=full bg=#1e1e2e p=24 gap=18", || {
+
+            gpui::row("w=full justify=between items=baseline", || {
+                gpui::text("Interaction", "font=2xl bold color=#cdd6f4")
+                gpui::text(f"frames {gpui::frame()}", "font=xs color=#585b70")
+            })
+
+            // ---- the readout ---------------------------------------------
+            gpui::row("w=full gap=10 bg=#181825 rounded=14 p=18 justify=around", || {
+                stat("count", f"{count}", "color=#89b4fa")
+                stat("step", f"{step}", "color=#a6e3a1")
+                stat("parity", parity, "color=#f9e2af")
+            })
+
+            // ---- the controls ---------------------------------------------
+            gpui::row("w=full gap=10", || {
+                gpui::button("dec", f"-{step}", "flex=1 py=12 rounded=10 bg=#313244 color=#f38ba8 font=lg bold hover=bg:#45475a active=bg:#585b70")
+                gpui::button("inc", f"+{step}", "flex=1 py=12 rounded=10 bg=#89b4fa color=#11111b font=lg bold hover=bg:#a6e3fa active=bg:#74c7ec")
+                gpui::button("reset", "reset", "px=18 py=12 rounded=10 bg=#313244 color=#cdd6f4 hover=bg:#45475a active=bg:#585b70")
+            })
+
+            gpui::column("w=full gap=8 bg=#181825 rounded=14 p=18", || {
+                gpui::row("w=full justify=between", || {
+                    gpui::text("step size", "font=sm color=#9399b2")
+                    gpui::text(f"{step}", "font=sm color=#89b4fa")
+                })
+                gpui::slider("step", 1.0, 25.0, "w=full bg=#313244 rounded=full")
+            })
+
+            gpui::row("w=full gap=10 items=center", || {
+                gpui::checkbox("help", "show the keyboard shortcuts", show_help, "color=#cdd6f4 font=sm")
+            })
+
+            // ---- keyboard help, hidden by the checkbox ----------------------
+            if show_help {
+                gpui::column("w=full gap=4 bg=#181825 rounded=14 p=18", || {
+                    gpui::text("keyboard", "font=sm semibold color=#9399b2")
+                    gpui::text("↑ / k   add the step", "font=sm color=#6c7086")
+                    gpui::text("↓ / j   subtract the step", "font=sm color=#6c7086")
+                    gpui::text("r       reset to zero", "font=sm color=#6c7086")
+                    gpui::text("space   grow the step by one", "font=sm color=#6c7086")
+                })
+            }
+
+            gpui::spacer(2.0)
+
+            gpui::row("w=full justify=between bg=#181825 rounded=10 px=14 py=8", || {
+                gpui::text("last event", "font=xs color=#585b70")
+                gpui::text(gpui::state_text("last", "—"), "font=xs color=#a6adc8")
+            })
+        })
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

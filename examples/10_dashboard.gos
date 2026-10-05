@@ -1,0 +1,268 @@
+// 10 - Dashboard
+//
+// Everything at once: a custom titlebar, a sidebar that switches panes, a live
+// clock and metrics on a timer, a virtualised activity list, custom-painted
+// charts, animated progress, a filter field, and keyboard shortcuts.
+//
+//   gos run --main-thread examples/10_dashboard.gos
+//
+// Keyboard: 1 / 2 / 3 switch panes, d toggles the theme.
+
+use gpui
+use std::math
+use std::process
+
+const EVENTS: i64 = 5000
+
+struct Theme {
+    name: String
+    backdrop: String
+    surface: String
+    raised: String
+    line: String
+    text: String
+    dim: String
+    accent: String
+    accent_ink: String
+    good: String
+    warn: String
+}
+
+fn dark_theme() -> Theme {
+    Theme {
+        name: "mocha"
+        backdrop: "#11111b"
+        surface: "#1e1e2e"
+        raised: "#313244"
+        line: "#313244"
+        text: "#cdd6f4"
+        dim: "#7f849c"
+        accent: "#89b4fa"
+        accent_ink: "#11111b"
+        good: "#a6e3a1"
+        warn: "#f9e2af"
+    }
+}
+
+fn light_theme() -> Theme {
+    Theme {
+        name: "latte"
+        backdrop: "#e6e9ef"
+        surface: "#ffffff"
+        raised: "#eff1f5"
+        line: "#ccd0da"
+        text: "#4c4f69"
+        dim: "#8c8fa1"
+        accent: "#1e66f5"
+        accent_ink: "#ffffff"
+        good: "#40a02b"
+        warn: "#df8e1d"
+    }
+}
+
+fn nav(label: String, pane: String, active: String, t: Theme) {
+    let chosen = pane == active
+    let style = if chosen {
+        f"w=full px=12 py=9 rounded=9 bg={t.accent} color={t.accent_ink} font=sm semibold"
+    } else {
+        f"w=full px=12 py=9 rounded=9 bg=#00000000 color={t.dim} font=sm hover=bg:{t.raised}"
+    }
+    gpui::button(f"nav-{pane}", label, style)
+}
+
+fn metric(label: String, value: String, hint: String, t: Theme) {
+    let style = f"flex=1 gap=4 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}"
+    gpui::column(style, || {
+        gpui::text(label, f"font=xs color={t.dim}")
+        gpui::text(value, f"font=2xl bold color={t.text}")
+        gpui::text(hint, f"font=xs color={t.dim}")
+    })
+}
+
+fn progress_row(label: String, value: f64, t: Theme) {
+    gpui::row("w=full gap=10 items=center", || {
+        gpui::text(label, f"font=xs color={t.dim} w=140")
+        gpui::progress(value, "flex=1")
+        gpui::text(f"{value * 100.0:.0}%", f"font=xs color={t.text} w=44 align=right")
+    })
+}
+
+fn main() {
+    let outcome = gpui::run_with("Dashboard", 960.0, 660.0, "titlebar=none", || {
+        // ---- events ------------------------------------------------------
+        for event in gpui::take_events() {
+            let id, data = gpui::event_parts(event)
+            if id == "nav" {
+                gpui::set_text("pane", data)
+            } else if id == "theme" {
+                gpui::set_bool("dark", data == "on")
+            } else if id == "metrics" {
+                // A fresh sample every 1.2 seconds.
+                let n = gpui::state_int("samples", 0) + 1
+                gpui::set_int("samples", n)
+                let wobble = math::sin(n as f64 * 0.7) * 12.0
+                gpui::set_float("load", 0.45 + wobble / 100.0 + (n % 5) as f64 * 0.03)
+                gpui::set_int("visitors", 1200 + n * 7 % 400)
+                gpui::set_text("log", f"sampled at {gpui::now():.1}s")
+            } else if id == "key" {
+                if data == "1" {
+                    gpui::set_text("pane", "overview")
+                } else if data == "2" {
+                    gpui::set_text("pane", "activity")
+                } else if data == "3" {
+                    gpui::set_text("pane", "settings")
+                } else if data == "d" {
+                    gpui::set_bool("dark", !gpui::state_bool("dark", true))
+                }
+            } else if id == "filter" && data == "cancel" {
+                gpui::set_text("filter", "")
+            }
+        }
+
+        gpui::tick("metrics", 1200)
+        gpui::on_keys(true)
+        gpui::animate()
+
+        let dark = gpui::state_bool("dark", true)
+        let t = if dark { dark_theme() } else { light_theme() }
+        let pane = gpui::state_text("pane", "overview")
+        let seconds = gpui::now()
+        let retention = gpui::state_float("retention", 30.0) as i64
+        let samples = gpui::state_int("samples", 0)
+        let load = gpui::state_float("load", 0.42)
+        let visitors = gpui::state_int("visitors", 1284)
+        let filter = gpui::state_text("filter", "")
+        let pulse = math::sin(seconds * 1.4) * 0.5 + 0.5
+        let sweep = (seconds * 0.8) % 1.0
+
+        gpui::column(f"size=full bg={t.backdrop}", || {
+
+            // ---- custom titlebar ------------------------------------------
+            gpui::row(f"w=full h=44 items=center gap=10 bg={t.surface} border=1 bordercolor={t.line}", || {
+                gpui::spacer(70.0)
+                gpui::text("Operations", f"font=sm semibold color={t.text}")
+                gpui::text(f"{t.name} · {seconds:.0}s", f"font=xs color={t.dim} flex=1")
+                gpui::checkbox("theme", "dark", dark, f"font=xs color={t.dim} pr=14")
+            })
+
+            gpui::row("flex=1 w=full", || {
+
+                // ---- sidebar -------------------------------------------------
+                gpui::column(f"w=190 h=full gap=4 p=12 bg={t.surface} border=1 bordercolor={t.line}", || {
+                    gpui::text("VIEWS", f"font=xs color={t.dim} px=12 pb=4")
+                    nav("Overview", "overview", pane, t)
+                    nav("Activity", "activity", pane, t)
+                    nav("Settings", "settings", pane, t)
+                    gpui::spacer(10.0)
+                    gpui::text("KEYS", f"font=xs color={t.dim} px=12 pb=4")
+                    gpui::column("gap=3 px=12", || {
+                        gpui::text("1 2 3   switch pane", f"font=xs color={t.dim}")
+                        gpui::text("d       toggle theme", f"font=xs color={t.dim}")
+                    })
+                    gpui::spacer(6.0)
+                    gpui::rect("flex=1")
+                    gpui::text(gpui::state_text("log", "waiting for the first sample"), f"font=xs color={t.dim}")
+                })
+
+                // ---- content -----------------------------------------------------
+                gpui::column(f"flex=1 h=full p=18 gap=14 bg={t.backdrop} overflow=y", || {
+
+                    if pane == "overview" {
+                        gpui::text("Overview", f"font=2xl bold color={t.text}")
+
+                        gpui::row("w=full gap=12", || {
+                            metric("live load", f"{load * 100.0:.1}%", f"{samples} samples", t)
+                            metric("visitors", f"{visitors}", "last 5 minutes", t)
+                            metric("uptime", f"{seconds:.0}s", "this window", t)
+                        })
+
+                        gpui::column(f"w=full gap=10 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}", || {
+                            gpui::row("w=full justify=between items=baseline", || {
+                                gpui::text("throughput", f"font=sm semibold color={t.text}")
+                                gpui::text(f"{load * 100.0:.1}% of capacity", f"font=xs color={t.dim}")
+                            })
+                            gpui::draw("bars", seconds * 1.8, "w=full h=120")
+                            gpui::draw("wave", seconds * 2.4, "w=full h=54 rounded=10 overflow=hidden")
+                        })
+
+                        gpui::column(f"w=full gap=12 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}", || {
+                            progress_row("cache hit rate", load, t)
+                            progress_row("queue depth", pulse, t)
+                            progress_row("worker saturation", (pulse + 0.55) / 2.0, t)
+                        })
+
+                    } else if pane == "activity" {
+                        gpui::row("w=full justify=between items=center", || {
+                            gpui::text("Activity", f"font=2xl bold color={t.text}")
+                            gpui::text(f"{EVENTS} events", f"font=xs color={t.dim}")
+                        })
+
+                        gpui::input("filter", "filter the rows below", f"w=full px=12 py=8 bg={t.surface} rounded=9 border=1 bordercolor={t.line} color={t.text}")
+
+                        let list_style = f"w=full h=380 bg={t.surface} rounded=12 border=1 bordercolor={t.line}"
+                        gpui::list("events", EVENTS, 30.0, list_style, |index| {
+                            let n = EVENTS - 1 - index
+                            let kind = n % 4
+                            let tag = ["read", "write", "cache", "warn"][kind]
+                            let colour = if kind == 3 { t.warn } else { t.good }
+                            let label = f"#{n}  {tag}   node-{(n * 7) % 32}   {n * 3 % 900}ms"
+                            let style = f"w=full h=full px=14 items=center font=xs bg=#00000000 color={colour} hover=bg:{t.raised}"
+                            gpui::button(f"event-{index}", label, style)
+                        })
+
+                    } else {
+                        gpui::text("Settings", f"font=2xl bold color={t.text}")
+
+                        gpui::column(f"w=full gap=14 bg={t.surface} rounded=14 p=16 border=1 bordercolor={t.line}", || {
+                            gpui::row("w=full justify=between items=center", || {
+                                gpui::text("sample interval", f"font=sm color={t.text}")
+                                gpui::text("1.2s", f"font=xs color={t.dim}")
+                            })
+                            gpui::divider("")
+                            gpui::row("w=full justify=between items=center", || {
+                                gpui::text("chart smoothing", f"font=sm color={t.text}")
+                                gpui::text(f"{(1.0 - sweep) * 100.0:.0}%", f"font=xs color={t.dim}")
+                            })
+                            gpui::slider("smoothing", 0.0, 1.0, f"w=full bg={t.raised} rounded=full")
+
+                            gpui::row("w=full justify=between items=center", || {
+                                gpui::text("retention window", f"font=sm color={t.text}")
+                                gpui::text(f"{retention} days", f"font=xs color={t.dim}")
+                            })
+                            gpui::slider("retention", 1.0, 90.0, f"w=full bg={t.raised} rounded=full")
+
+                            gpui::divider("")
+
+                            gpui::row("w=full gap=12 items=center", || {
+                                gpui::checkbox("alerts", "page on call", true, f"font=sm color={t.text}")
+                                gpui::checkbox("digest", "daily digest", false, f"font=sm color={t.text}")
+                            })
+
+                            gpui::input("filter", "filter the activity list", f"w=full px=12 py=8 bg={t.raised} rounded=9 border=1 bordercolor={t.line} color={t.text}")
+                            let note = if filter == "" { "no filter yet" } else { f"filtering on \"{filter}\"" }
+                            gpui::text(note, f"font=xs color={t.dim}")
+                        })
+
+                        gpui::row("w=full gap=10", || {
+                            gpui::button("theme", "toggle theme", f"px=16 py=9 rounded=9 bg={t.raised} color={t.text} font=sm hover=bg:{t.line}")
+                        })
+                    }
+                })
+            })
+
+            // ---- status bar ------------------------------------------------------
+            gpui::row(f"w=full h=28 items=center gap=16 px=14 bg={t.surface} border=1 bordercolor={t.line}", || {
+                gpui::text(f"pane {pane}", f"font=xs color={t.dim}")
+                gpui::text(f"frame {gpui::frame()}", f"font=xs color={t.dim}")
+                gpui::text(f"{samples} samples", f"font=xs color={t.dim}")
+                gpui::text(f"filter \"{filter}\"", f"font=xs color={t.dim}")
+                gpui::text(f"gpui · {t.name}", f"font=xs color={t.dim} flex=1 align=right")
+            })
+        })
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

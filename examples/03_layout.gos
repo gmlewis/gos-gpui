@@ -1,0 +1,125 @@
+// 03 - Layout
+//
+// GPUI lays out with flexbox (through taffy). This tours the pieces you reach
+// for most: direction, gap, padding, growth, alignment, wrapping, and stacking
+// children on top of one another.
+//
+//   gos run --main-thread examples/03_layout.gos
+
+use gpui
+use std::process
+
+fn cell(label: String, style: String) {
+    gpui::panel(style, || {
+        gpui::text(label, "font=sm color=#11111b")
+    })
+}
+
+fn caption(text: String) {
+    gpui::text(text, "font=sm semibold color=#9399b2")
+}
+
+fn main() {
+    let outcome = gpui::run("Layout", 780.0, 700.0, || {
+        gpui::scroll("w=full h=full bg=#1e1e2e p=24 gap=20", || {
+
+            // ---- a header / body / footer column --------------------------
+            caption("column with a flexible middle")
+            gpui::column("w=full h=240 bg=#181825 rounded=12 overflow=hidden", || {
+                cell("header · h=44", "h=44 w=full bg=#89b4fa justify=center items=center")
+                cell("body · flex=1", "flex=1 w=full bg=#313244 justify=center items=center color=#cdd6f4")
+                cell("footer · h=32", "h=32 w=full bg=#a6e3a1 justify=center items=center")
+            })
+
+            // ---- alignment --------------------------------------------------
+            caption("justify — along the main axis")
+            gpui::column("gap=8", || {
+                gpui::row("w=full h=40 bg=#181825 rounded=8 justify=start", || {
+                    cell("start", "size=64 h=full bg=#89b4fa justify=center items=center")
+                })
+                gpui::row("w=full h=40 bg=#181825 rounded=8 justify=center", || {
+                    cell("center", "size=64 h=full bg=#89b4fa justify=center items=center")
+                })
+                gpui::row("w=full h=40 bg=#181825 rounded=8 justify=end", || {
+                    cell("end", "size=64 h=full bg=#89b4fa justify=center items=center")
+                })
+                gpui::row("w=full h=40 bg=#181825 rounded=8 justify=between", || {
+                    cell("between", "size=64 h=full bg=#89b4fa justify=center items=center")
+                    cell("between", "size=64 h=full bg=#89b4fa justify=center items=center")
+                })
+                gpui::row("w=full h=40 bg=#181825 rounded=8 justify=around", || {
+                    cell("around", "size=64 h=full bg=#89b4fa justify=center items=center")
+                    cell("around", "size=64 h=full bg=#89b4fa justify=center items=center")
+                    cell("around", "size=64 h=full bg=#89b4fa justify=center items=center")
+                })
+            })
+
+            gpui::row("gap=12 w=full items=stretch h=120", || {
+                gpui::panel("flex=1 bg=#181825 rounded=8 items=center justify=center", || {
+                    gpui::text("items=center", "font=sm color=#89b4fa")
+                })
+                gpui::panel("flex=1 bg=#181825 rounded=8 items=end justify=center", || {
+                    gpui::text("items=end", "font=sm color=#a6e3a1")
+                })
+                gpui::panel("flex=1 bg=#181825 rounded=8 items=start justify=center", || {
+                    gpui::text("items=start", "font=sm color=#f9e2af")
+                })
+            })
+
+            // ---- gap and padding ---------------------------------------------
+            caption("gap and padding")
+            gpui::row("gap=16", || {
+                gpui::column("gap=4 p=16 bg=#181825 rounded=8", || {
+                    for i in 0..3 {
+                        cell(f"gap=4 · {i}", "w=90 h=26 bg=#cba6f7 justify=center items=center")
+                    }
+                })
+                gpui::column("gap=12 p=16 bg=#181825 rounded=8", || {
+                    for i in 0..3 {
+                        cell(f"gap=12 · {i}", "w=90 h=26 bg=#f38ba8 justify=center items=center")
+                    }
+                })
+                gpui::panel("p=2 bg=#181825 rounded=8", || {
+                    gpui::panel("p=8 bg=#f9e2af rounded=6", || {
+                        gpui::panel("p=8 bg=#fab387 rounded=4", || {
+                            gpui::text("nested padding", "font=sm color=#11111b")
+                        })
+                    })
+                })
+            })
+
+            // ---- growing ------------------------------------------------------
+            caption("flex=1 shares the leftover space")
+            gpui::row("gap=8 w=full h=40", || {
+                cell("flex=1", "flex=1 h=full bg=#89b4fa justify=center items=center")
+                cell("flex=2", "flex=2 h=full bg=#74c7ec justify=center items=center")
+                cell("w=120", "w=120 h=full bg=#94e2d5 justify=center items=center")
+            })
+
+            // ---- wrapping -------------------------------------------------------
+            caption("wrap")
+            gpui::row("gap=8 w=full wrap bg=#181825 rounded=8 p=12", || {
+                for i in 0..12 {
+                    gpui::text(f"chip {i}", "font=xs color=#cdd6f4 px=10 py=4 bg=#45475a rounded=full")
+                }
+            })
+
+            // ---- stacking --------------------------------------------------------
+            caption("stack — children positioned absolutely")
+            gpui::stack("w=full h=140 bg=#181825 rounded=12", || {
+                gpui::rect("absolute left=20 top=20 size=90 bg=#f38ba8 rounded=10 opacity=0.9")
+                gpui::rect("absolute left=70 top=50 size=110 bg=#89b4fa rounded=10 opacity=0.75")
+                gpui::rect("absolute left=140 top=20 size=70 bg=#a6e3a1 rounded=full opacity=0.85")
+                gpui::text("top=50 left=70", "absolute left=250 top=60 font=sm color=#9399b2")
+                gpui::rect("absolute left=10 top=100 w=40 h=30 grad=135,#f9e2af,#fab387 rounded=6")
+            })
+
+            gpui::spacer(8.0)
+        })
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

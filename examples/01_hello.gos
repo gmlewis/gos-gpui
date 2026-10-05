@@ -1,0 +1,27 @@
+// 01 - Hello, gpui!
+//
+// The smallest complete program: one window, one callback that describes it.
+//
+//   gos run examples/01_hello.gos
+//
+// `gpui::run` blocks for the life of the program. GPUI calls the callback
+// once per frame, and on every frame it must describe the *whole* window.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("Hello, gpui", 460.0, 300.0, || {
+        gpui::panel("flex col size=full justify=center items=center gap=6 bg=#181825", || {
+            gpui::text("Hello, gpui!", "font=3xl bold color=#cdd6f4")
+            gpui::text("a Gossamer program painting through Zed's UI framework", "font=sm color=#6c7086")
+            gpui::spacer(10.0)
+            gpui::text("close the window to quit", "font=xs color=#45475a")
+        })
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

@@ -1,0 +1,11 @@
+[project]
+id = "example.com/learn-gpui"
+version = "0.1.0"
+gossamer-version = "^v0.66.0"
+
+[dependencies]
+
+# The `gpui` binding crate wraps Zed's GPU-accelerated UI framework behind a
+# flat, Gossamer-friendly ABI. See gpui-binding/src/lib.rs.
+[rust-bindings]
+gpui-binding = { path = "gpui-binding" }

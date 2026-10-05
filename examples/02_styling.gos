@@ -1,0 +1,112 @@
+// 02 - Styling
+//
+// Everything GPUI's paint and type helpers can do to a box: fills, gradients,
+// corner radii, borders, shadows, opacity, and the type scale.
+//
+//   gos run --main-thread examples/02_styling.gos
+//
+// The style language is a flat list of `key=value` tokens — see the README for
+// the full table. `gpui::column`, `gpui::row` and friends are just containers
+// with a style string; `gpui::rect` is an empty styled box.
+
+use gpui
+use std::process
+
+struct Hue { name: String, hex: String }
+
+fn swatch(name: String, hex: String) {
+    gpui::column("gap=6 items=center", || {
+        gpui::rect(f"size=56 rounded=14 bg={hex} shadow=lg")
+        gpui::text(name, "font=xs color=#9399b2")
+    })
+}
+
+fn type_step(label: String, style: String) {
+    gpui::row("w=full items=baseline gap=12", || {
+        gpui::text("The quick brown fox", style)
+        gpui::text(label, "font=xs color=#585b70")
+    })
+}
+
+fn main() {
+    let hues = #[
+        Hue { name: "rosewater", hex: "#f5e0dc" }
+        Hue { name: "flamingo", hex: "#f2cdcd" }
+        Hue { name: "pink", hex: "#f5c2e7" }
+        Hue { name: "mauve", hex: "#cba6f7" }
+        Hue { name: "red", hex: "#f38ba8" }
+        Hue { name: "maroon", hex: "#eba0ac" }
+        Hue { name: "peach", hex: "#fab387" }
+        Hue { name: "yellow", hex: "#f9e2af" }
+        Hue { name: "green", hex: "#a6e3a1" }
+        Hue { name: "teal", hex: "#94e2d5" }
+        Hue { name: "sky", hex: "#89dceb" }
+        Hue { name: "sapphire", hex: "#74c7ec" }
+        Hue { name: "blue", hex: "#89b4fa" }
+        Hue { name: "lavender", hex: "#b4befe" }
+    ]
+
+    let outcome = gpui::run("Styling", 760.0, 640.0, || {
+        gpui::scroll("w=full h=full bg=#1e1e2e p=24 gap=22", || {
+
+            gpui::text("Painting", "font=2xl bold color=#cdd6f4")
+
+            gpui::row("gap=14 wrap", || {
+                for hue in hues {
+                    swatch(hue.name, hue.hex)
+                }
+            })
+
+            gpui::divider("")
+
+            // Gradients, shadows and opacity ---------------------------------
+            gpui::text("Gradients, shadows, opacity", "font=lg semibold color=#cdd6f4")
+
+            gpui::row("gap=16 items=center", || {
+                gpui::rect("w=180 h=72 rounded=16 grad=135,#89b4fa,#cba6f7 shadow=lg")
+                gpui::rect("w=180 h=72 rounded=16 grad=#f38ba8,#fab387 shadow=xl")
+                gpui::rect("w=180 h=72 rounded=16 bg=#313244 border=2 bordercolor=#89b4fa shadow=none")
+                gpui::rect("w=180 h=72 rounded=16 bg=#a6e3a1 opacity=0.35")
+            })
+
+            // Corners and borders ---------------------------------------------
+            gpui::text("Corners and borders", "font=lg semibold color=#cdd6f4")
+
+            gpui::row("gap=12 items=end", || {
+                gpui::rect("w=64 h=64 bg=#89b4fa rounded=none")
+                gpui::rect("w=64 h=64 bg=#89b4fa rounded=4")
+                gpui::rect("w=64 h=64 bg=#89b4fa rounded=12")
+                gpui::rect("w=64 h=64 bg=#89b4fa rounded=24")
+                gpui::rect("w=64 h=64 bg=#89b4fa rounded=full")
+                gpui::rect("w=64 h=64 bg=#00000000 border=2 bordercolor=#f38ba8 rounded=12")
+                gpui::rect("w=64 h=64 bg=#00000000 border=2 dashed bordercolor=#a6e3a1 rounded=12")
+                gpui::rect("w=64 h=64 bg=#00000000 border=2 bordercolor=#f9e2af rounded=12 shadow=lg")
+            })
+
+            gpui::divider("")
+
+            // The type scale ----------------------------------------------------
+            gpui::text("Type", "font=lg semibold color=#cdd6f4")
+
+            gpui::column("gap=4", || {
+                type_step("xs", "font=xs color=#cdd6f4")
+                type_step("sm", "font=sm color=#cdd6f4")
+                type_step("base", "font=base color=#cdd6f4")
+                type_step("lg", "font=lg color=#cdd6f4")
+                type_step("xl", "font=xl color=#cdd6f4")
+                type_step("2xl", "font=2xl color=#cdd6f4")
+                type_step("3xl", "font=3xl color=#cdd6f4")
+                type_step("18px, weight 300", "fs=18 weight=300 color=#a6adc8")
+                type_step("18px, weight 700", "fs=18 weight=700 color=#a6adc8")
+                type_step("italic", "fs=18 italic color=#a6adc8")
+                type_step("underline", "fs=18 underline color=#a6adc8")
+                type_step("strike", "fs=18 strike color=#a6adc8")
+            })
+        })
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

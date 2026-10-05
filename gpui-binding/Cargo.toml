@@ -1,0 +1,24 @@
+[package]
+name = "gpui-binding"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# The binding ABI this crate is built against. The toolchain
+# resolves it to the `gos` that builds the project, so it
+# tracks the version stated in `project.toml`.
+gossamer-binding = "0.66.0"
+
+# Zed's GPU-accelerated UI framework.
+#
+# `runtime_shaders` compiles gpui's Metal shader source when the
+# renderer is created instead of shelling out to `xcrun metal` at
+# build time, so this crate builds on a Mac without the full
+# Metal Toolchain component installed.
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }

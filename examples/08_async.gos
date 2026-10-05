@@ -1,0 +1,148 @@
+// 08 - Timers and background work
+//
+// Two ways to make something happen without the user doing anything:
+//
+//   gpui::tick(id, ms)  raises the event `id` every `ms` milliseconds,
+//   gpui::task(id, ms)  does slow work off the UI thread, then raises `id`
+//                       and leaves a description under `<id>.result`.
+//
+// A task runs on GPUI's background executor, so the window keeps painting
+// while it works.
+//
+//   gos run --main-thread examples/08_async.gos
+
+use gpui
+use std::process
+
+fn caption(text: String) {
+    gpui::text(text, "font=sm semibold color=#9399b2")
+}
+
+fn main() {
+    let outcome = gpui::run("Timers and tasks", 660.0, 660.0, || {
+        for event in gpui::take_events() {
+            let id, _data = gpui::event_parts(event)
+
+            if id == "start" {
+                if !gpui::state_bool("loading", false) {
+                    gpui::set_bool("loading", true)
+                    gpui::task("job", 1800)
+                }
+            } else if id == "job" {
+                // The task finished: its summary is waiting under `job.result`.
+                gpui::set_bool("loading", false)
+                gpui::set_text("job.text", gpui::state_text("job.result", "done"))
+                gpui::list_push("log", f"job finished at {gpui::now():.1}s")
+            } else if id == "clock" {
+                gpui::set_int("seconds", gpui::state_int("seconds", 0) + 1)
+            } else if id == "blip" {
+                let n = gpui::state_int("blips", 0) + 1
+                gpui::set_int("blips", n)
+                gpui::list_push("log", f"blip {n} at {gpui::now():.1}s")
+                if gpui::list_len("log") > 40 {
+                    gpui::list_remove("log", 0)
+                }
+            } else if id == "clear" {
+                gpui::list_clear("log")
+                gpui::set_int("blips", 0)
+            }
+        }
+
+        // One repeating timer per event id, installed once and left running.
+        gpui::tick("clock", 1000)
+        gpui::tick("blip", 700)
+
+        let loading = gpui::state_bool("loading", false)
+        let seconds = gpui::state_int("seconds", 0)
+        let blips = gpui::state_int("blips", 0)
+        let log = gpui::list_len("log")
+        let elapsed = gpui::now()
+
+        // A spinner only needs frames while the job is running.
+        if loading {
+            gpui::animate()
+        }
+        let spin = (elapsed * 3.0) % 1.0
+
+        gpui::column("size=full bg=#1e1e2e p=22 gap=16", || {
+
+            gpui::row("w=full justify=between items=baseline", || {
+                gpui::text("Timers and tasks", "font=2xl bold color=#cdd6f4")
+                gpui::text(f"{elapsed:.1}s since start", "font=xs color=#585b70")
+            })
+
+            // ---- the readouts -------------------------------------------------
+            gpui::row("w=full gap=12", || {
+                gpui::column("flex=1 items=center gap=2 bg=#181825 rounded=12 py=14", || {
+                    gpui::text(f"{seconds}", "font=2xl bold color=#89b4fa")
+                    gpui::text("tick(\"clock\", 1000)", "font=xs color=#6c7086")
+                })
+                gpui::column("flex=1 items=center gap=2 bg=#181825 rounded=12 py=14", || {
+                    gpui::text(f"{blips}", "font=2xl bold color=#a6e3a1")
+                    gpui::text("tick(\"blip\", 700)", "font=xs color=#6c7086")
+                })
+                gpui::column("flex=1 items=center gap=2 bg=#181825 rounded=12 py=14", || {
+                    gpui::text(f"{log}", "font=2xl bold color=#f9e2af")
+                    gpui::text("log lines", "font=xs color=#6c7086")
+                })
+            })
+
+            // ---- a background task ----------------------------------------------
+            caption("background work")
+            gpui::column("w=full gap=12 bg=#181825 rounded=14 p=16", || {
+                gpui::row("w=full gap=12 items=center", || {
+                    gpui::button(
+                        "start"
+                        if loading { "working…" } else { "run a 1.8s task" }
+                        "px=16 py=10 rounded=10 bg=#89b4fa color=#11111b hover=bg=#a6e3fa active=bg=#74c7ec"
+                    )
+                    if loading {
+                        // A spinner made of a rotating dot on a track.
+                        gpui::stack("w=26 h=26", || {
+                            gpui::rect("absolute left=0 top=0 size=26 rounded=full border=3 bordercolor=#313244")
+                            gpui::rect(f"absolute left={spin * 20.0} top=0 size=6 rounded=full bg=#a6e3a1")
+                        })
+                        gpui::text("the UI thread is free while this runs", "font=xs color=#585b70")
+                    } else {
+                        gpui::text(gpui::state_text("job.text", "no job has run yet"), "font=sm color=#a6adc8")
+                    }
+                })
+
+                // Fill a bar from the tick counter, wrapping every ten.
+                gpui::progress((seconds % 10) as f64 / 10.0, "w=full")
+                gpui::text(
+                    f"{seconds % 10} of 10 seconds into the wrap"
+                    "font=xs color=#585b70"
+                )
+            })
+
+            // ---- the log ----------------------------------------------------------
+            caption("an event log fed by a repeating timer")
+            gpui::column("w=full gap=8 bg=#181825 rounded=14 p=16 flex=1", || {
+                gpui::row("w=full justify=between items=center", || {
+                    gpui::text("log", "font=sm color=#9399b2")
+                    gpui::button("clear", "clear", "px=10 py=4 rounded=6 bg=#313244 color=#f38ba8 font=xs hover=bg:#45475a")
+                })
+                if log == 0 {
+                    gpui::text("waiting for the first blip…", "font=sm color=#585b70")
+                } else {
+                    gpui::scroll("w=full h=180 overflow=y", || {
+                        gpui::column("w=full gap=2", || {
+                            for index in 0..log {
+                                gpui::text(
+                                    gpui::list_get("log", index)
+                                    "font=xs color=#a6adc8"
+                                )
+                            }
+                        })
+                    })
+                }
+            })
+        })
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

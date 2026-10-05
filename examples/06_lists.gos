@@ -1,0 +1,79 @@
+// 06 - Long lists
+//
+// `gpui::list` builds a real `uniform_list`: GPUI only asks for the rows that
+// are actually on screen, so twenty thousand of them cost no more to draw than
+// twenty. Scroll with the wheel; the rows are clickable.
+//
+//   gos run --main-thread examples/06_lists.gos
+
+use gpui
+use std::process
+
+const ROWS: i64 = 20000
+
+fn main() {
+    let outcome = gpui::run("Lists", 680.0, 660.0, || {
+        for event in gpui::take_events() {
+            let id, data = gpui::event_parts(event)
+            if id == "pick" {
+                if let Some(index) = data.to_i64() {
+                    // Rows are drawn newest-first, so the id counts back.
+                    gpui::set_int("selected", ROWS - 1 - index)
+                }
+            }
+        }
+
+        let selected = gpui::state_int("selected", -1)
+        let chosen = if selected >= 14_000 {
+            f"row {selected}  —  a high number, still instant to reach"
+        } else if selected >= 0 {
+            f"row {selected}"
+        } else {
+            "nothing selected — click any row"
+        }
+
+        gpui::column("size=full bg=#1e1e2e p=20 gap=14", || {
+
+            gpui::row("w=full justify=between items=baseline", || {
+                gpui::text("20,000 rows", "font=2xl bold color=#cdd6f4")
+                gpui::text(f"{gpui::frame()} frames painted", "font=xs color=#585b70")
+            })
+
+            gpui::row("w=full justify=between bg=#181825 rounded=10 px=14 py=10", || {
+                gpui::text("selected", "font=sm color=#9399b2")
+                gpui::text(chosen, "font=sm color=#89b4fa truncate")
+            })
+
+            // Only the visible slice is built, and the rows are recycled as
+            // you scroll. Put a counter in the row builder to see how few of
+            // the 20,000 are ever asked for.
+            gpui::list(
+                "rows"
+                ROWS
+                28.0
+                "w=full h=430 bg=#181825 rounded=12 border=1 bordercolor=#313244"
+                |index| {
+                    let row = ROWS - 1 - index
+                    let picked = row == gpui::state_int("selected", -1)
+                    let background = if picked { "#45475a" } else { "#181825" }
+                    let marker = if row % 1000 == 0 { "◆  " } else { "    " }
+                    gpui::button(
+                        f"pick-{index}"
+                        f"{marker}row {row}"
+                        f"w=full h=full px=14 items=center font=sm bg={background} color=#cdd6f4 hover=bg:#313244"
+                    )
+                }
+            )
+
+            gpui::text(
+                "GPUI asks the row builder for the visible window only, and reuses those rows while you scroll."
+                "font=sm color=#6c7086"
+            )
+        })
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

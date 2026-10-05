@@ -1,0 +1,126 @@
+// 05 - Forms
+//
+// Text fields, focus, keyboard submit, and a small list you can add to and
+// delete from. A single-line input keeps its text in app state under the key
+// it was given, so the program reads it back with `gpui::state_text` and never
+// has to wire up a change handler.
+//
+//   gos run --main-thread examples/05_forms.gos
+
+use gpui
+use std::process
+
+fn heading(text: String) {
+    gpui::text(text, "font=sm semibold color=#9399b2")
+}
+
+fn field(label: String, key: String, placeholder: String) {
+    gpui::column("w=full gap=6", || {
+        gpui::text(label, "font=sm color=#9399b2")
+        gpui::input(
+            key
+            placeholder
+            "w=full px=12 py=8 bg=#313244 rounded=9 border=1 bordercolor=#45475a color=#cdd6f4"
+        )
+    })
+}
+
+fn main() {
+    let outcome = gpui::run("Forms", 620.0, 660.0, || {
+        for event in gpui::take_events() {
+            let id, data = gpui::event_parts(event)
+
+            if id == "draft" && data == "submit" {
+                let draft = gpui::state_text("draft", "")
+                if draft != "" {
+                    gpui::list_push("tasks", draft)
+                    gpui::set_text("draft", "")
+                }
+            } else if id == "del" {
+                if let Some(index) = data.to_i64() {
+                    gpui::list_remove("tasks", index)
+                }
+            } else if id == "clear" {
+                gpui::list_clear("tasks")
+            } else if id == "name" && data == "submit" {
+                gpui::set_text("greeted", gpui::state_text("name", ""))
+            }
+        }
+
+        let name = gpui::state_text("name", "")
+        let greeted = gpui::state_text("greeted", "")
+        let tasks = gpui::list_len("tasks")
+        let greeting = if greeted == "" {
+            "type a name and press return"
+        } else {
+            f"hello, {greeted}!"
+        }
+
+        gpui::scroll("size=full bg=#1e1e2e p=24 gap=18", || {
+
+            gpui::text("Forms", "font=2xl bold color=#cdd6f4")
+
+            // ---- two fields, one live-read ---------------------------------
+            gpui::column("w=full gap=14 bg=#181825 rounded=14 p=18", || {
+                heading("text input")
+                field("your name", "name", "Ada Lovelace")
+                gpui::row("w=full justify=between items=center", || {
+                    gpui::text(greeting, "font=base color=#a6e3a1")
+                    gpui::text(f"{name.len()} characters", "font=xs color=#585b70")
+                })
+            })
+
+            // ---- a list you can edit ----------------------------------------
+            gpui::column("w=full gap=12 bg=#181825 rounded=14 p=18", || {
+                gpui::row("w=full justify=between items=center", || {
+                    heading("a list")
+                    gpui::text(f"{tasks} items", "font=xs color=#585b70")
+                })
+
+                gpui::row("w=full gap=8 items=center", || {
+                    gpui::input(
+                        "draft"
+                        "new task, then return"
+                        "flex=1 px=12 py=8 bg=#313244 rounded=9 border=1 bordercolor=#45475a color=#cdd6f4"
+                    )
+                    gpui::button("clear", "clear", "px=14 py=8 rounded=9 bg=#313244 color=#f38ba8 hover=bg:#45475a")
+                })
+
+                if tasks == 0 {
+                    gpui::text("nothing yet — press return in the field above", "font=sm color=#585b70")
+                } else {
+                    gpui::column("w=full gap=6", || {
+                        for index in 0..tasks {
+                            let label = gpui::list_get("tasks", index)
+                            gpui::row("w=full gap=8 items=center bg=#313244 rounded=8 px=12 py=8", || {
+                                gpui::text(f"{index + 1}.", "font=sm color=#585b70 w=24")
+                                gpui::text(label, "flex=1 font=sm color=#cdd6f4")
+                                gpui::button(
+                                    f"del-{index}"
+                                    "delete"
+                                    f"px=8 py=2 rounded=6 bg=#45475a color=#f38ba8 font=xs hover=bg:#585b70"
+                                )
+                            })
+                        }
+                    })
+                }
+            })
+
+            // ---- notes on behaviour -------------------------------------------
+            gpui::column("w=full gap=4 bg=#181825 rounded=14 p=18", || {
+                heading("what is happening")
+                gpui::text("clicking a field focuses it and shows a caret", "font=sm color=#6c7086")
+                gpui::text("return submits — the field raises `draft|submit`", "font=sm color=#6c7086")
+                gpui::text("escape raises `draft|cancel`", "font=sm color=#6c7086")
+                gpui::text("the value lives in state under the field's key", "font=sm color=#6c7086")
+            })
+
+            gpui::spacer(4.0)
+        })
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}
