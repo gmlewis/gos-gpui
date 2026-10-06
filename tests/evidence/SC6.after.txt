@@ -1,0 +1,15 @@
+SC6 — read the visible row range.
+
+AFTER THE WORK. Same probe, same five tiers, same output as `SC5.after.txt`:
+
+    OK SC5 SC6 list_scroll_to put row 100 at the top, and list_range reports the rows on screen
+
+Two assertions belong to this row. At frame 2, before anything scrolls it, the
+list must report a range starting at row 0 and not empty. At frame 9, after
+`list_scroll_to("rows", 100, "top")`, it must report a range starting at row 100 —
+which is the row count the binding recorded as gpui laid the list out, not an
+estimate from the scroll offset.
+
+`(-1, -1)` means "no such list has laid out"; anything else is a real inclusive
+range. A program uses it to know what a user can see — a "loaded 10–20 of 200"
+readout, or what to fetch next.

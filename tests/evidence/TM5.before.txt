@@ -1,0 +1,71 @@
+TM5 — text layout tokens: wrapping, clamping, tab stops, per-line spacing.
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before), the runner build lock cleared first:
+
+    cd /tmp/gpui-before
+    timeout -k 5 30 gos run --main-thread tests/gui/tm5_text_layout.gos
+
+Output: nothing on stdout or stderr, exit 124 — the timeout killed it. The probe's
+first call is `gpui::unknown_style_tokens` on frame 2, above the `gpui::animate()`
+that would ask for the next frame. The weak kind of red, and the row is only
+partly a missing capability — a third of it is a capability that does not exist
+upstream, and both halves are recorded.
+
+WHAT WAS ALREADY THERE, checked against gpui rather than against the row's
+wording. The register lists four things; two are complete because gpui has no more
+to give them:
+
+  * **wrapping** — `gpui::WhiteSpace` has exactly two variants, `Normal` and
+    `Nowrap` (`style.rs:321-327`), and the binding's `ws=` reaches both. There is
+    no `pre`, `pre-wrap` or `pre-line` in gpui 0.2.2 to reach.
+  * **clamping and truncation** — `clamp=` is `line_clamp(usize)`; `truncate`,
+    `ellipsis` and `textoverflow=` cover `TextOverflow`, which has exactly **one**
+    variant, `Truncate(SharedString)` (`style.rs:331-335`). Complete.
+
+WHAT WAS MISSING, and is now in:
+
+  * **per-line spacing** — `lh=` was a multiple of the font size and nothing
+    else, so a fixed 22-pixel row could not be asked for. `DefiniteLength` is
+    exactly those two shapes and only one was exposed.
+
+**WHAT CANNOT EXIST: tab stops.** This is the third of the row's four, and it is
+not a gap in the binding — it is absent from gpui 0.2.2. Verbatim:
+
+    $ grep -rn "tab_stop\|TabStop\|tab_width" gpui-0.2.2/src
+    gpui-0.2.2/src/tab_stop.rs          (the whole file)
+    gpui-0.2.2/src/window.rs
+    gpui-0.2.2/src/elements/div.rs
+    gpui-0.2.2/src/gpui.rs
+
+    $ grep -n "mod tab_stop" gpui-0.2.2/src/gpui.rs
+    40:mod tab_stop;
+
+    $ sed -n '9,11p' gpui-0.2.2/src/tab_stop.rs
+    /// Represents a collection of focus handles using the tab-index APIs.
+    pub(crate) struct TabStopMap {
+
+    $ grep -rn "fn tab_stop\|fn tab_index" gpui-0.2.2/src
+    tab_stop.rs:456:        fn tab_stop(mut self, index: isize, expected: usize) -> Self {
+    window.rs:312:    pub fn tab_index(mut self, index: isize) -> Self {
+    window.rs:323:    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+
+Every one of those is **focus order**, not text layout: `tab_stop.rs` is the sum
+tree of focus handles behind `Window::tab_index` and `Window::tab_stop(bool)`,
+which the binding already reaches as the `tabindex=` and `tabstop` style tokens.
+`mod tab_stop;` is private, so even that machinery is not callable from outside
+the crate, and `Styled` has no tab-related method at all — the single match in
+`styled.rs` is inside the word "mutable". **A text tab stop cannot be exposed,
+because gpui does not have one to expose.**
+
+The break that isolates the half that *can* exist — `lhpx` not read by a
+measurement:
+
+    exit=0
+    FAIL TM5 lhpx=30 gives a line height of 32.360679626464844, not 30
+
+32.36 is the inherited line height at `fs=20`: gpui's default is the golden
+ratio, 1.618 × 20. So the break left the style's line height untouched, which is
+exactly the failure the probe exists to catch. Restored immediately; the tier
+transcript below is against the restored tree.

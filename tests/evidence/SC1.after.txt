@@ -1,0 +1,42 @@
+SC1 — read the scroll offset of a scrolled container.
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=40 ./scripts/tiers tests/gui/sc1_scroll_offset.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`
+and a screenful of `ld: warning: duplicate symbol` lines from the two builds —
+see the round log; each of the five exits 0, and the four GUI ones print no
+stderr):
+
+    OK SC1 SC2 SC3 offset read back after scroll_to, maximum positive, and clamped at the end
+
+What the probe does: one window, one scrolled container named `panel` with an
+`id=` token, `h=100`, holding a `h=400` child. It requires, in order, that the
+container reports a positive maximum offset (SC2), that its offset is 0 before
+anything scrolls it, that `scroll_to("panel", 0, -40)` is accepted and reads back
+as -40 (SC1), and that asking for -100000 parks at exactly minus the reported
+maximum (SC3).
+
+What makes it pass:
+
+  * `gpui-binding/src/scroll.rs` (new) — one `ScrollHandle` per
+    `(window, element id)`, in a thread-local map. `handle()` creates it on the
+    render path; `find()` never creates one, so a program's read of an id nothing
+    has drawn answers 0 rather than inventing a handle.
+  * `gpui-binding/src/view.rs` — the three scrolled arms of `Kind::Plain` now
+    call `.track_scroll(&handle)` alongside the `overflow_*_scroll()` they always
+    called. gpui wires the Div's offset to the handle's `Rc` when one is tracked
+    (`gpui-0.2.2/src/elements/div.rs:1602`), which is what makes the handle's
+    offset the one the next prepaint clamps and paints with.
+  * `gpui-binding/src/lib.rs` — `gpui::scroll_offset(id, axis)`,
+    `gpui::scroll_max_offset(id, axis)` and `gpui::scroll_to(id, x, y) -> bool`.
+  * `gpui-binding/src/style.rs` — an `id=<name>` token, so that a *container*
+    can be named. Until this round only leaves that took an id as an argument
+    could be addressed, and a scrolled container could not; without it the
+    handle would be keyed by an auto id no program can name.
+
+Regression: `./scripts/regress` after the change — 27 examples, silent. That
+matters more than usual here, because `track_scroll` changes how every scrolled
+element in the whole example set gets its offset, and the strict rule (any output
+at all is a failure) would have caught a banner or a panic.

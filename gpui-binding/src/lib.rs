@@ -50,6 +50,7 @@ use gossamer_binding::PersistentCallback;
 
 mod app;
 mod editor;
+mod list;
 mod path;
 mod scroll;
 mod store;
@@ -340,6 +341,100 @@ gossamer_binding::register_module!(
     }
 
     // -----------------------------------------------------------------
+    // measuring text
+    // -----------------------------------------------------------------
+
+    /// How wide `text` is, in pixels, as this window would draw it.
+    ///
+    /// The measurement a layout needs and a style string cannot give: "will this
+    /// label fit?", "how tall is this paragraph?", "where does the caret go?".
+    ///
+    /// `style` is the text half of the style language — `fs=17`, `weight=600`,
+    /// `bold`, `semibold`, `italic`. The **family and the size come from the
+    /// window's inherited text style**, so a container styled `font=2xl` is
+    /// inherited by everything measured inside it; `fs=` overrides the size, and
+    /// nothing else in `style` is read. A newline is flattened into a space first,
+    /// because gpui's shaper panics on one.
+    fn text_width(text: String, style: String) -> f64 {
+        view::text_width(&text, &style)
+    }
+
+    /// The em width of the font `style` selects, in pixels — the width of a
+    /// capital `M`'s box, and the unit a `1em` length means.
+    fn text_em_width(style: String) -> f64 {
+        view::text_em_width(&style)
+    }
+
+    /// How far the first character of `ch`, in pixels.
+    ///
+    /// Per character, so a program can lay out a monospaced column from the
+    /// widest digit rather than from a guess. Answers `0.0` for an empty string.
+    fn text_advance(ch: String, style: String) -> f64 {
+        view::text_advance(&ch, &style)
+    }
+
+    /// The `gpui::HighlightStyle` properties a highlight's property half sets,
+    /// as a comma-separated list in a fixed order: `color`, `background`,
+    /// `weight`, `style`, `underline`, `strikethrough`, `fade`.
+    ///
+    /// The reader for a spec — check what a generated highlight actually says
+    /// rather than discovering it on screen. `""` for a property string that sets
+    /// none of them, and an unknown token sets nothing, so a typo reads as a
+    /// short answer rather than as an error.
+    fn highlight_properties(props: String) -> String {
+        view::highlight_properties(&props)
+    }
+
+    /// The style tokens in `style` this crate does not understand, in the order
+    /// they appear.
+    ///
+    /// The reader behind the `unknown style tokens:` banner. A program that
+    /// builds a style string from data — from a theme, a config file, a computed
+    /// size — can check it instead of seeing it drawn as an error card, and a
+    /// test can assert that a spelling the documentation promises is really one
+    /// the binding knows.
+    fn unknown_style_tokens(style: String) -> Vec<String> {
+        view::unknown_style_tokens(&style)
+    }
+
+    /// Every font family this machine offers, as the platform names them.
+    ///
+    /// The list to choose a `font=<family>` from. Sorted as the platform gives
+    /// it; a family in it can be selected, and one that is not falls back to the
+    /// default without complaint — so a program that cares asks this first.
+    fn font_families() -> Vec<String> {
+        view::font_families()
+    }
+
+    /// The window's line height, in pixels, as of the start of this frame.
+    ///
+    /// The distance from one line's baseline to the next, which is what a
+    /// multi-line layout advances by — not the font size. `lh=` scales it per
+    /// element; this reads what the window's inherited text style resolves to,
+    /// and it grows when [`gpui::set_rem_size`] grows.
+    fn line_height() -> f64 {
+        view::line_height()
+    }
+
+    /// Set the window's rem size, in pixels: what every `rem` length and every
+    /// ramp size (`font=2xl`) is measured against.
+    ///
+    /// Applied after the frame that asks for it, so the frame after next reads
+    /// the new size. gpui's default is 16.
+    fn set_rem_size(px: f64) {
+        store::request(store::Request::SetRemSize { px })
+    }
+
+    /// The height one line occupies: `lh=` or `lhpx=` when the style names one,
+    /// and the font's own ascent plus descent when it does not.
+    ///
+    /// A relative `lh=` is resolved against the size the style ends up asking
+    /// for, so `fs=40 lh=2` is 80 pixels.
+    fn text_line_height(style: String) -> f64 {
+        view::text_line_height(&style)
+    }
+
+    // -----------------------------------------------------------------
     // scrolling
     // -----------------------------------------------------------------
 
@@ -367,6 +462,23 @@ gossamer_binding::register_module!(
     /// container has been drawn under that id.
     fn scroll_max_offset(id: String, axis: String) -> f64 {
         view::scroll_max_offset(&id, &axis)
+    }
+
+    /// The scrolled element `id`'s viewport, in window pixels. `field` is `x`,
+    /// `y`, `w` or `h`.
+    ///
+    /// The container's own box, not its content's: `h` is how much of the
+    /// scrolled thing is on screen, which is what a scrollbar sizes its thumb
+    /// from. [`gpui::scroll_max_offset`] is the other half — content past the
+    /// container.
+    ///
+    /// All three of [`gpui::scroll_offset`], [`gpui::scroll_max_offset`] and
+    /// [`gpui::scroll_bounds`] answer for a virtual list as well as for a
+    /// container: a `gpui::list` scrolls through a `ScrollHandle` of its own,
+    /// and a program names the thing that scrolls rather than the kind of thing
+    /// it is.
+    fn scroll_bounds(id: String, field: String) -> f64 {
+        view::scroll_bounds(&id, &field)
     }
 
     /// Scroll the container `id` to `(x, y)`, in gpui's sign: negative moves the
@@ -475,18 +587,63 @@ gossamer_binding::register_module!(
     }
 
     /// Text with per-byte-range highlights. Each entry is
-    /// `"start-end prop,prop"`, where the properties are the text half of the
-    /// style language: `bold`, `semibold`, `italic`, `weight=800`,
-    /// `color=#rrggbb`, `bg=#rrggbb`, `underline`, `strike`.
+    /// `"start-end prop,prop"`, and the properties are a vocabulary of their own
+    /// — `gpui::HighlightStyle`, all seven of its properties reachable:
+    ///
+    /// | property | tokens |
+    /// |---|---|
+    /// | colour | `color=#rrggbb` |
+    /// | background | `bg=#rrggbb` |
+    /// | weight | `bold`, `semibold`, `weight=800` |
+    /// | style | `italic` |
+    /// | underline | `underline`, and its detail `undercolor=`, `underthick=`, `underwavy` |
+    /// | strikethrough | `strike`, and its detail `strikecolor=`, `strikethick=` |
+    /// | fade | `fade=0.4` |
+    ///
+    /// A detail token implies the decoration it belongs to, so `underthick=3` is
+    /// an underline. A token that is none of these is **reported** — printed once
+    /// and shown as a card — rather than silently dropped, because a highlight
+    /// that quietly ignores `colur=#ff0000` is a syntax highlighter that quietly
+    /// stops colouring one kind of token. See [`gpui::highlight_properties`] to
+    /// check a spec without drawing it.
     fn text_styled(content: String, highlights: Vec<String>, style: String) -> i64 {
         view::push(Kind::StyledText { content, highlights }, style, String::new())
     }
 
-    /// One of the application's default colours, as `#rrggbbaa`: `text`,
-    /// `selected_text`, `background`, `disabled`, `selected`, `border`,
-    /// `separator`, `container`.
+    /// One of the application's default colours, as `#rrggbbaa`.
+    ///
+    /// `gpui::colour_names()` is the list, and it is the whole of what the
+    /// platform offers: `gpui::colors::Colors` has exactly eight fields, so no
+    /// colour is missing and none is invented. The set installed is chosen from
+    /// the window's appearance, so `background` is `#ffffffff` on a light desktop
+    /// and `#222222ff` on a dark one — which is what [`gpui::appearance`] reports
+    /// and what [`gpui::default_color_for`] answers for the other.
     fn default_color(name: String) -> String {
         view::default_color(&name)
+    }
+
+    /// The window's appearance: `"light"` or `"dark"`.
+    ///
+    /// The live OS appearance, asked of the window rather than assumed. gpui's two
+    /// "vibrant" appearances are reported as the plain ones they resemble, because
+    /// no colour in [`gpui::colors::Colors`] distinguishes them.
+    fn appearance() -> String {
+        view::appearance()
+    }
+
+    /// The eight names [`gpui::default_color`] answers to, sorted.
+    fn colour_names() -> Vec<String> {
+        view::colour_names()
+    }
+
+    /// What a default colour would be in `appearance`, which is `"light"` or
+    /// `"dark"`.
+    ///
+    /// For a program that wants a colour the window is not using — a border that
+    /// reads against the other theme, an overlay that has to stay legible whichever
+    /// way the desktop is set.
+    fn default_color_for(appearance: String, name: String) -> String {
+        view::default_color_for(&appearance, &name)
     }
 
     /// A directly painted surface. `painter` is one of `"bars"`, `"wave"`,
@@ -656,6 +813,42 @@ gossamer_binding::register_module!(
     }
 
     // -----------------------------------------------------------------
+    // virtual lists
+    // -----------------------------------------------------------------
+
+    /// The rows the virtual list `id` has on screen, as `(first, last)` —
+    /// inclusive, and `(-1, -1)` for a list nothing has drawn.
+    ///
+    /// `id` is the name given to [`gpui::list`]. The range is what gpui handed
+    /// the list when it last laid out, recorded as the rows were built, so it is
+    /// the rows that are *actually* visible rather than an estimate from the
+    /// scroll offset. A list whose rows all fit reports its whole range; one that
+    /// has scrolled reports a window into it.
+    ///
+    /// A program uses this to know what a user can see — to drive a "loaded
+    /// 10–20 of 200" readout, or to decide what to fetch next.
+    fn list_range(id: String) -> (i64, i64) {
+        match view::list_range(&id) {
+            Some((first, last)) => (first as i64, last as i64),
+            None => (-1, -1),
+        }
+    }
+
+    /// Scroll the virtual list `id` so that row `index` is placed by `strategy`.
+    ///
+    /// `strategy` is `"top"`, `"center"` or `"bottom"`: where in the viewport the
+    /// row is put, as far as the rows above it allow. Applied when the list next
+    /// lays out, so the new range is readable through [`gpui::list_range`] on the
+    /// frame after this one.
+    ///
+    /// Answers `false` for a list nothing has drawn, and for a `strategy` that is
+    /// none of the three — a misspelling is reported rather than quietly treated
+    /// as `"top"`.
+    fn list_scroll_to(id: String, index: i64, strategy: String) -> bool {
+        view::list_scroll_to(&id, index, &strategy)
+    }
+
+    // -----------------------------------------------------------------
     // windows
     // -----------------------------------------------------------------
 
@@ -670,6 +863,29 @@ gossamer_binding::register_module!(
         // Retained: the window opens after the frame that asked for it, and
         // its view is invoked from then on.
         app::queue_window(app::PendingOpen { title, x, y, w, h, options, view: view.retain() })
+    }
+
+    /// Ask to be told before this window closes, and be able to refuse.
+    ///
+    /// `decide` answers `true` to let the window close and `false` to keep it
+    /// open — upstream's `Window::on_window_should_close`, whose docstring is
+    /// "if the callback returns false, the window won't be closed". The obvious
+    /// use is an unsaved-changes guard.
+    ///
+    /// It is consulted for the platform's own close request — the traffic lights,
+    /// the window's close item — **and for [`gpui::close_window`] and
+    /// [`gpui::close_window_in`]**, so a program cannot bypass its own guard by
+    /// closing a window in code. That is a deliberate departure: upstream's
+    /// `remove_window` does not go through the handler.
+    ///
+    /// Installed once; a second call replaces the first. A handler that fails to
+    /// run is treated as answering `true`, as gpui treats its own — a broken guard
+    /// must not trap a window forever.
+    cb_fn on_window_should_close(d, decide: PersistentCallback) -> () {
+        let _ = d;
+        // Retained: the handler is invoked when the platform asks, long after
+        // this call has returned.
+        view::set_should_close(decide.retain())
     }
 
     /// Close the window this frame belongs to.

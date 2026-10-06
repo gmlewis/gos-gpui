@@ -1,0 +1,49 @@
+// TM3 — the full per-range highlight vocabulary.
+//
+// Headless: `gos test tests`. Nothing is drawn, and nothing needs to be: what
+// `text_styled` acts on is the *parse*, so a test of the parse is a test of the
+// capability — the part a screenshot could not add to is whether the property
+// was understood at all.
+//
+// Pass means all seven of `gpui::HighlightStyle`'s properties are reachable, the
+// three decorations carry their detail, a detail implies its decoration, and a
+// token outside the vocabulary sets nothing rather than something close.
+
+use gpui
+
+#[test]
+fn every_highlight_property_has_a_token() {
+    assert(gpui::highlight_properties("color=#ff0000") == "color", "color")
+    assert(gpui::highlight_properties("bg=#00ff00") == "background", "bg")
+    assert(gpui::highlight_properties("bold") == "weight", "bold sets the weight")
+    assert(gpui::highlight_properties("semibold") == "weight", "semibold sets the weight")
+    assert(gpui::highlight_properties("weight=800") == "weight", "weight=")
+    assert(gpui::highlight_properties("italic") == "style", "italic sets the style")
+    assert(gpui::highlight_properties("underline") == "underline", "underline")
+    assert(gpui::highlight_properties("strike") == "strikethrough", "strike sets the strikethrough")
+    assert(gpui::highlight_properties("fade=0.4") == "fade", "fade")
+}
+
+#[test]
+fn all_seven_at_once_in_a_fixed_order() {
+    let all = gpui::highlight_properties("color=#ff0000 bg=#000000 bold italic underline strike fade=0.5")
+    assert(all == "color,background,weight,style,underline,strikethrough,fade", f"all seven, in order: {all}")
+}
+
+#[test]
+fn a_detail_token_implies_its_decoration() {
+    assert(gpui::highlight_properties("underthick=3") == "underline", "underthick implies an underline")
+    assert(gpui::highlight_properties("underwavy") == "underline", "underwavy implies an underline")
+    assert(gpui::highlight_properties("undercolor=#ff0000") == "underline", "undercolor implies an underline")
+    assert(gpui::highlight_properties("strikecolor=#ff0000") == "strikethrough", "strikecolor implies a strikethrough")
+    assert(gpui::highlight_properties("strikethick=2") == "strikethrough", "strikethick implies a strikethrough")
+}
+
+#[test]
+fn a_token_outside_the_vocabulary_sets_nothing() {
+    // `p=16` is an element style token and not a highlight one, and `colur` is a
+    // typo. Neither may quietly become one of the seven.
+    assert(gpui::highlight_properties("p=16") == "", "an element token is not a highlight")
+    assert(gpui::highlight_properties("colur=#ff0000") == "", "a typo sets nothing")
+    assert(gpui::highlight_properties("") == "", "an empty spec sets nothing")
+}

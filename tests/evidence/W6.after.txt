@@ -1,0 +1,28 @@
+W6 — editor instances are per (window, key).
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=40 ./scripts/tiers tests/gui/w6_editor_per_window.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK W6 two windows each held an editor on the same key, and neither adopted the other's text
+
+What the probe does: two windows each draw `gpui::editor("note", ..)` — the same
+key — with "alpha" in one and "beta\nline" in the other. The child's text needs
+normalising, so on its second frame its editor writes "beta line" back. Each
+window then requires that its own text is still where it belongs: the parent
+"alpha", the child "beta line".
+
+What makes it pass: `EDITORS` is keyed by `(window, key)`, and `TextEditor`
+carries the window it was created in and re-enters through `window::with(self.win,
+..)` for both of the places it touches the store — `changed()`, which publishes
+new content, and `adopt_program_text()`, which takes on text the program wrote
+behind it. Without the second, a window would adopt another window's text; without
+the first, typing in one window would publish into another's state.
+
+A detail worth keeping, because it is what made this row checkable at all:
+Gossamer *does* support `"\n"` in a string literal. Nothing in `examples/` uses
+one, which is why the escaping question stayed open — the probe for it was
+`set_text_in(1, "esc", "a\nb")` followed by a length assertion, and it passes.

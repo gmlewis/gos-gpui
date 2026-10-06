@@ -91,6 +91,9 @@ pub enum Request {
     CloseWindowAt { target: i64 },
     /// Resize the window this frame belongs to.
     ResizeWindow { w: f64, h: f64 },
+    /// Set the window's rem size, which every `rem` length and every ramp size
+    /// is measured against.
+    SetRemSize { px: f64 },
     /// Install an application menu.
     SetMenus { name: String, items: Vec<String> },
     /// Observe every keystroke the window receives.

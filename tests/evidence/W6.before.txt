@@ -1,0 +1,40 @@
+W6 — editor instances are per (window, key).
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before):
+
+    cd /tmp/gpui-before
+    timeout -k 5 40 gos run --main-thread tests/gui/w6_editor_per_window.gos
+
+Output: nothing, and exit 124 — the timeout killed it. `gpui::set_text_in` and
+`gpui::window_id`, both of which the probe needs to set up its two windows, do
+not exist at HEAD. The weak kind of red: an unresolved symbol.
+
+Which is not good enough for this row on its own, because the row is about
+*keying* and a registry keyed by `key` alone is not a thing HEAD could express —
+HEAD's registry was keyed by `key` alone, but HEAD also had one process-wide
+store, so a probe run there would fail for W2's reason and not this row's. So the
+check was shown to be sensitive to the mechanism directly, by breaking the
+mechanism and watching it fail:
+
+    # EDITORS keyed by the key alone, the window dropped
+    - editors.borrow().get(&(win, key.to_string()))
+    + editors.borrow().get(&(0, key.to_string()))
+    - editors.borrow_mut().insert((win, registered), editor.clone())
+    + editors.borrow_mut().insert((0, registered), editor.clone())
+
+    TIER_TIMEOUT=40 gos run --main-thread tests/gui/w6_editor_per_window.gos
+    exit=0
+    FAIL W6 the child window's editor is not its own: "beta
+    line" is where "beta line" belongs
+
+Restored immediately, and the five-tier run below is against the restored tree.
+The failure is exactly the shape the row predicts: the child's editor was the
+parent's, so the normalisation the child's text needed never happened in the
+child's state, and `"beta\nline"` is still sitting there.
+
+This technique — break the mechanism, watch the check fail, restore — is the
+answer to a row whose historical red can only be an unresolved symbol, and it is
+worth using whenever the capability *is* the reader or the setter. It does not
+replace the historical transcript; it supplements it, and both are recorded.

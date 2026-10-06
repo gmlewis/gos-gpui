@@ -1,0 +1,49 @@
+TM4 — `default_color()` for every platform colour, correct for the appearance.
+TH1 — report the live OS appearance (light/dark).
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before), the runner build lock cleared first:
+
+    cd /tmp/gpui-before
+    timeout -k 5 30 gos run --main-thread tests/gui/tm4_appearance.gos
+
+Output: nothing on stdout or stderr, exit 124 — the timeout killed it. The probe's
+first call is `gpui::appearance` on frame 2, above the `gpui::animate()` that would
+ask for the next frame. The weak kind of red.
+
+**But this row's obstacle is stale, and checking it was most of the round.**
+`CAPABILITIES.md` carries TM4 as "partly — `view.rs:240-266`; light defaults only".
+Read against gpui rather than against the row:
+
+  * `gpui::colors::Colors` has **exactly eight fields** — `text`, `selected_text`,
+    `background`, `disabled`, `selected`, `border`, `separator`, `container`
+    (`gpui-0.2.2/src/colors.rs:9-25`) — and `view::begin_frame` already cached
+    **all eight**. There was no ninth colour to add.
+  * The colours are already chosen per window by
+    `app.rs`'s `install_appearance_colors`, which calls
+    `Colors::for_appearance(window)` — and `for_appearance` matches on
+    `window.appearance()` (`colors.rs:36-41`).
+
+So the *implementation* the row asks for was already there, put in as the fix for
+the "light defaults only" bug (recorded in `PORTING.md`, "The default colours
+panicked on every example"). What was missing was the **check**, and two readers a
+program has no other way to get: which appearance the window is in, and what a
+colour would be in the other one.
+
+The break that isolates the claim — the colours installed being the other
+appearance's, which is the shape of the historical bug:
+
+    BREAK — the colours installed are the other appearance's
+    exit=0
+    FAIL TM4 background is #ffffffff while a dark appearance says it should be #222222ff
+
+**One line, and it says which colour and both values.** Restored immediately; the
+five-tier transcript below is against the restored tree.
+
+A fact worth recording, learned from the break's message: **this machine's desktop
+is in a dark appearance.** `#222222ff` is `Colors::dark().background`. So the
+historical bug — `cx.init_colors()` installing the light defaults before any window
+and never correcting them — would have been caught here, on this machine, by this
+probe. Before the break, none of the eight colours had ever been checked against the
+appearance at all.

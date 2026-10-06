@@ -34,11 +34,9 @@ fn main() {
             }
         }
 
-        if f == 4 {
-            if !gpui::scroll_to("panel", 0.0, -40.0) {
-                println("FAIL SC3 scroll_to did not recognise the container it was given")
-                gpui::quit()
-            }
+        if f == 4 && !gpui::scroll_to("panel", 0.0, -40.0) {
+            println("FAIL SC3 scroll_to did not recognise the container it was given")
+            gpui::quit()
         }
 
         if f == 6 {

@@ -1,0 +1,85 @@
+// TM2 — select a font family, a rem size and a line height.
+//
+// Tier: every tier.
+//
+// The check that a `font=` family was really *selected* and not quietly fallen
+// back from is a property of the family rather than a metric of it: a monospaced
+// family advances every character the same distance, and a proportional one does
+// not. `font=Menlo` and the default font are on opposite sides of that line, so
+// measuring `W` and `i` in both says which one was used without naming a number
+// that belongs to this machine's fonts.
+//
+// Pass means:
+//
+//   * the machine reports the families it has
+//   * `W` and `i` advance alike in `font=Menlo` — it is monospaced, so it was
+//     selected
+//   * `W` and `i` do not advance alike in the default font — so it was not
+//   * raising the rem size raises the inherited text and the line height with it
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("tm2 - font family and rem size", 320.0, 200.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            let families = gpui::font_families()
+            if families.len() == 0 {
+                println("FAIL TM2 the machine reports no font families at all")
+                gpui::quit()
+            }
+
+            let mono_w = gpui::text_advance("W", "font=Menlo fs=20")
+            let mono_i = gpui::text_advance("i", "font=Menlo fs=20")
+            let prop_w = gpui::text_advance("W", "fs=20")
+            let prop_i = gpui::text_advance("i", "fs=20")
+
+            if mono_w <= 0.0 || mono_i <= 0.0 {
+                println(f"FAIL TM2 measuring in Menlo gave {mono_w} and {mono_i}")
+                gpui::quit()
+            } else if mono_w - mono_i > 0.01 || mono_i - mono_w > 0.01 {
+                println(f"FAIL TM2 \"W\" advances {mono_w} in Menlo and \"i\" {mono_i}: not monospaced, so not selected")
+                gpui::quit()
+            } else if prop_w - prop_i < 1.0 && prop_i - prop_w < 1.0 {
+                println(f"FAIL TM2 \"W\" and \"i\" advance alike ({prop_w}, {prop_i}) in the default font, so the two families are one")
+                gpui::quit()
+            }
+
+            gpui::set_float("tm2.before", gpui::text_width("hello", ""))
+            gpui::set_float("tm2.line", gpui::line_height())
+        }
+
+        if f == 3 {
+            gpui::set_rem_size(32.0)
+        }
+
+        if f >= 5 {
+            let before = gpui::state_float("tm2.before", 0.0)
+            let line_before = gpui::state_float("tm2.line", 0.0)
+            let after = gpui::text_width("hello", "")
+            let line_after = gpui::line_height()
+            if after < before * 1.8 {
+                println(f"FAIL TM2 raising the rem size did not grow the inherited text: {before} then {after}")
+                gpui::quit()
+            } else if line_after <= line_before {
+                println(f"FAIL TM2 the line height did not grow with the rem size: {line_before} then {line_after}")
+                gpui::quit()
+            } else {
+                println("OK TM2 a font family is selectable, and the rem size moves the inherited text and the line height with it")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(root, gpui::text("families", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL TM2 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

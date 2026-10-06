@@ -22,6 +22,7 @@ use gpui::{
 use gossamer_binding::{NativeDispatch, RetainedCallback, Value};
 
 use crate::editor;
+use crate::list;
 use crate::path;
 use crate::scroll;
 use crate::style;
@@ -54,6 +55,36 @@ pub fn stash_dispatch(d: &mut dyn NativeDispatch) {
 
 pub fn clear_dispatch() {
     DISPATCH.with(|cell| cell.set(None));
+}
+
+/// Releases every retained callback the frame machinery is still holding.
+///
+/// Called once the run loop is done, and it has to happen *there* rather than at
+/// thread exit. The arena can hold a `uniform_list`'s retained row builder, and
+/// the pending-window queue holds whole view callbacks; both are
+/// `RetainedCallback`s, whose `Drop` calls back into the runtime to release the
+/// registration. A thread-local dropped at thread exit runs that after the
+/// runtime's own thread-locals are already gone, and the runtime panics at the
+/// FFI entry:
+///
+/// ```text
+/// thread '<unnamed>' panicked: cannot access a Thread Local Storage value
+/// during or after destruction: AccessError
+///   ... _gos_rt_binding_callback_release
+/// ```
+///
+/// Releasing them here, while the app is still standing, is the fix. It is why
+/// a compiled build of any program containing a `gpui::list` used to end in a
+/// panic on stderr, which `scripts/tiers` is what caught. See the round log.
+pub fn release_retained() {
+    SHOULD_CLOSE.with(|h| h.borrow_mut().clear());
+    SHOULD_CLOSE_PLATFORM.with(|h| h.borrow_mut().clear());
+    TEXT.with(|t| t.borrow_mut().clear());
+    FONTS.with(|f| *f.borrow_mut() = None);
+    ARENAS.with(|a| a.borrow_mut().clear());
+    ROOTS.with(|r| r.borrow_mut().clear());
+    FRAMES.with(|f| f.borrow_mut().clear());
+    FOCUS.with(|f| f.borrow_mut().clear());
 }
 
 /// Calls back into a Gossamer closure — the view callback, or a list's row
@@ -201,30 +232,253 @@ thread_local! {
     static WINDOW_RECT: RefCell<HashMap<i64, (f64, f64, f64, f64)>> = RefCell::new(HashMap::new());
     static DISPLAYS: RefCell<HashMap<i64, Vec<Display>>> = RefCell::new(HashMap::new());
     static KEYBOARD: RefCell<String> = const { RefCell::new(String::new()) };
+
+    /// What the frame shapes text with, per window: the window's own text
+    /// system, and the font and size its text style resolves to.
+    ///
+    /// Captured in `begin_frame`, because measuring needs both and a binding
+    /// function has no `Window` to ask.
+    static TEXT: RefCell<HashMap<i64, TextMetrics>> = RefCell::new(HashMap::new());
+}
+
+/// The three things a measurement needs. `Arc`, not a pointer: the text system
+/// is refcounted, so holding one past the frame it came from is ordinary
+/// ownership rather than the erasure `DISPATCH` does.
+struct TextMetrics {
+    system: std::sync::Arc<gpui::WindowTextSystem>,
+    font: gpui::Font,
+    size: Pixels,
+    line: Pixels,
+    rem: Pixels,
+    /// The window's appearance, `"light"` or `"dark"`, as of the start of the
+    /// frame. What `gpui::default_color` is chosen from.
+    appearance: String,
+    /// The inherited line height, which `lh=` and `lhpx=` override. A
+    /// `DefiniteLength` rather than pixels, because a relative one has to be
+    /// resolved against the size the style *ends up* asking for.
+    line_length: gpui::DefiniteLength,
+}
+
+thread_local! {
+    /// The application's text system, kept for the whole run.
+    ///
+    /// Separate from [`TEXT`], which is per window and per frame: the set of
+    /// fonts a machine has is not a per-window question, and the answer must
+    /// still be there when no frame is being built.
+    static FONTS: RefCell<Option<std::sync::Arc<gpui::TextSystem>>> = const { RefCell::new(None) };
+}
+
+/// Keeps the application's text system, once, at the start of the run.
+pub fn set_text_system(system: std::sync::Arc<gpui::TextSystem>) {
+    FONTS.with(|f| *f.borrow_mut() = Some(system));
+}
+
+/// Every font family this machine offers, as the platform names them.
+pub fn font_families() -> Vec<String> {
+    FONTS.with(|f| f.borrow().as_ref().map(|s| s.all_font_names()).unwrap_or_default())
+}
+
+/// The window's line height, as of the start of this frame.
+pub fn line_height() -> f64 {
+    let win = window::current();
+    TEXT.with(|t| t.borrow().get(&win).map(|m| f32::from(m.line) as f64)).unwrap_or(0.0)
 }
 
 
-/// `"start-end prop,prop"` over UTF-8 byte ranges, where the properties are
-/// the text half of the style language.
+/// `"start-end prop,prop"` over UTF-8 byte ranges, where the properties are the
+/// per-range highlight vocabulary.
+///
+/// Typos in the property half are reported once, on screen, rather than silently
+/// doing nothing — the same treatment the element style language gets. A
+/// highlight that quietly drops `colur=#ff0000` is a syntax highlighter that
+/// quietly stops colouring one kind of token.
 fn parse_highlight(spec: &str) -> Option<(std::ops::Range<usize>, gpui::HighlightStyle)> {
     let (range, props) = spec.split_once(' ')?;
     let (start, end) = range.split_once('-')?;
+    check_highlight(props);
+    Some((start.parse().ok()?..end.parse().ok()?, highlight_style(props)))
+}
+
+/// Builds a [`gpui::HighlightStyle`] from the property half of a highlight.
+///
+/// All seven of its properties are reachable: `color`, `bg`,
+/// `weight`/`bold`/`semibold`, `italic`, `underline`, `strike` and `fade`. The
+/// three decorations carry detail as well — `undercolor`, `underthick`,
+/// `underwavy`, `strikecolor`, `strikethick` — and each of those **implies the
+/// decoration it belongs to**, so `underthick=3` is an underline.
+fn highlight_style(props: &str) -> gpui::HighlightStyle {
     let mut style = gpui::HighlightStyle::default();
     for (key, value) in style::tokens(props) {
         let v = value.as_deref().unwrap_or("");
         match key.as_str() {
             "bold" => style.font_weight = Some(gpui::FontWeight::BOLD),
             "semibold" => style.font_weight = Some(gpui::FontWeight::SEMIBOLD),
-            "weight" => style.font_weight = Some(gpui::FontWeight::from(v.parse::<f32>().unwrap_or(400.0))),
+            "weight" => {
+                style.font_weight =
+                    Some(gpui::FontWeight::from(v.parse::<f32>().unwrap_or(400.0)))
+            }
             "italic" => style.font_style = Some(gpui::FontStyle::Italic),
             "color" => style.color = Some(style::colour(v)),
             "bg" => style.background_color = Some(style::colour(v)),
-            "underline" => style.underline = Some(gpui::UnderlineStyle::default()),
-            "strike" => style.strikethrough = Some(gpui::StrikethroughStyle::default()),
+            "underline" => {
+                style.underline.get_or_insert_with(gpui::UnderlineStyle::default);
+            }
+            "undercolor" => {
+                style
+                    .underline
+                    .get_or_insert_with(gpui::UnderlineStyle::default)
+                    .color = Some(style::colour(v));
+            }
+            "underthick" => {
+                style
+                    .underline
+                    .get_or_insert_with(gpui::UnderlineStyle::default)
+                    .thickness = px(v.parse::<f32>().unwrap_or(1.0));
+            }
+            "underwavy" => {
+                style
+                    .underline
+                    .get_or_insert_with(gpui::UnderlineStyle::default)
+                    .wavy = true;
+            }
+            "strike" => {
+                style
+                    .strikethrough
+                    .get_or_insert_with(gpui::StrikethroughStyle::default);
+            }
+            "strikecolor" => {
+                style
+                    .strikethrough
+                    .get_or_insert_with(gpui::StrikethroughStyle::default)
+                    .color = Some(style::colour(v));
+            }
+            "strikethick" => {
+                style
+                    .strikethrough
+                    .get_or_insert_with(gpui::StrikethroughStyle::default)
+                    .thickness = px(v.parse::<f32>().unwrap_or(1.0));
+            }
+            // gpui clamps this when it paints; clamping here as well keeps the
+            // value a program reads back the one it asked for.
+            "fade" => style.fade_out = Some(v.parse::<f32>().unwrap_or(0.0).clamp(0.0, 1.0)),
             _ => {}
         }
     }
-    Some((start.parse().ok()?..end.parse().ok()?, style))
+    style
+}
+
+/// Reports highlight tokens this module does not understand, once each.
+fn check_highlight(props: &str) {
+    let unknown = style::unknown_highlight_tokens(props);
+    let fresh = unknown
+        .into_iter()
+        .filter(|token| REPORTED.with(|r| r.borrow_mut().insert(format!("highlight:{token}"))))
+        .collect::<Vec<_>>();
+    if !fresh.is_empty() {
+        let message = format!("unknown highlight tokens: {}", fresh.join(", "));
+        eprintln!("gpui: {message}");
+        note_error(message);
+    }
+}
+
+/// The `HighlightStyle` properties `props` sets, as a comma-separated list in a
+/// fixed order: `color`, `background`, `weight`, `style`, `underline`,
+/// `strikethrough`, `fade`.
+///
+/// The reader for a highlight spec — a program that generates one from a theme
+/// can check what it produced instead of discovering it on screen.
+pub fn highlight_properties(props: &str) -> String {
+    let style = highlight_style(props);
+    let mut names = Vec::new();
+    if style.color.is_some() {
+        names.push("color");
+    }
+    if style.background_color.is_some() {
+        names.push("background");
+    }
+    if style.font_weight.is_some() {
+        names.push("weight");
+    }
+    if style.font_style.is_some() {
+        names.push("style");
+    }
+    if style.underline.is_some() {
+        names.push("underline");
+    }
+    if style.strikethrough.is_some() {
+        names.push("strikethrough");
+    }
+    if style.fade_out.is_some() {
+        names.push("fade");
+    }
+    names.join(",")
+}
+
+/// Every [`gpui::colors::Colors`] field, named, as `#rrggbbaa`.
+///
+/// The eight names are `gpui::colour_names()`; there are exactly eight fields, so
+/// this is the whole of what the platform offers rather than a selection from it.
+fn named_colors(colors: &gpui::colors::Colors) -> HashMap<String, String> {
+    let hex = |c: gpui::Rgba| {
+        format!(
+            "#{:02x}{:02x}{:02x}{:02x}",
+            (c.r * 255.0).round() as u8,
+            (c.g * 255.0).round() as u8,
+            (c.b * 255.0).round() as u8,
+            (c.a * 255.0).round() as u8,
+        )
+    };
+    let mut map = HashMap::new();
+    map.insert("text".into(), hex(colors.text));
+    map.insert("selected_text".into(), hex(colors.selected_text));
+    map.insert("background".into(), hex(colors.background));
+    map.insert("disabled".into(), hex(colors.disabled));
+    map.insert("selected".into(), hex(colors.selected));
+    map.insert("border".into(), hex(colors.border));
+    map.insert("separator".into(), hex(colors.separator));
+    map.insert("container".into(), hex(colors.container));
+    map
+}
+
+/// gpui's two appearances, as one word each.
+fn appearance_of(appearance: gpui::WindowAppearance) -> String {
+    match appearance {
+        gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => "dark".into(),
+        _ => "light".into(),
+    }
+}
+
+/// The window's appearance, `"light"` or `"dark"`.
+pub fn appearance() -> String {
+    let win = window::current();
+    TEXT.with(|t| {
+        t.borrow()
+            .get(&win)
+            .map(|m| m.appearance.clone())
+            .unwrap_or_default()
+    })
+}
+
+/// The eight names [`default_color`] answers to.
+pub fn colour_names() -> Vec<String> {
+    let mut names: Vec<String> = named_colors(&gpui::colors::Colors::light())
+        .into_keys()
+        .collect();
+    names.sort();
+    names
+}
+
+/// What a default colour would be in a given appearance.
+///
+/// The other half of [`default_color`]: a program that wants a colour the window
+/// is *not* using — a contrasting border, an overlay that reads on the other
+/// theme — asks for it by name instead of hard-coding both sets.
+pub fn default_color_for(appearance: &str, name: &str) -> String {
+    let colors = match appearance {
+        "dark" => gpui::colors::Colors::dark(),
+        _ => gpui::colors::Colors::light(),
+    };
+    named_colors(&colors).get(name).cloned().unwrap_or_default()
 }
 
 /// The default colours, cached at frame start.
@@ -241,7 +495,7 @@ pub fn default_color(name: &str) -> String {
 /// program that needs to tell the two apart asks for [`scroll_max_offset`],
 /// which is positive only where a scrolled container exists.
 pub fn scroll_offset(id: &str, axis: &str) -> f64 {
-    match scroll::find(window::current(), id) {
+    match scrolled(window::current(), id) {
         Some(handle) => axis_value(handle.offset(), axis),
         None => 0.0,
     }
@@ -250,13 +504,235 @@ pub fn scroll_offset(id: &str, axis: &str) -> f64 {
 /// How much content the scrolled element `id` has to scroll past on `axis`: the
 /// content size minus the container's, clamped at zero, and **positive**.
 pub fn scroll_max_offset(id: &str, axis: &str) -> f64 {
-    let Some(handle) = scroll::find(window::current(), id) else {
+    let Some(handle) = scrolled(window::current(), id) else {
         return 0.0;
     };
     let max = handle.max_offset();
     match axis {
         "x" => f32::from(max.width) as f64,
         _ => f32::from(max.height) as f64,
+    }
+}
+
+/// Everything a measurement needs, with the style's overrides applied.
+///
+/// `spec` is the text half of the style language: `fs=17`, `weight=600`, `bold`,
+/// `semibold`, `italic`. The family and the size come from the window's
+/// inherited text style — which is what makes `font=2xl` on an ancestor count —
+/// and `fs=` overrides the size. Anything else in `spec` is ignored.
+fn text_metrics(
+    spec: &str,
+) -> Option<(
+    std::sync::Arc<gpui::WindowTextSystem>,
+    gpui::Font,
+    Pixels,
+    gpui::DefiniteLength,
+)> {
+    let win = window::current();
+    let (system, mut font, mut size, rem, mut line_length) = TEXT.with(|t| {
+        t.borrow()
+            .get(&win)
+            .map(|m| (m.system.clone(), m.font.clone(), m.size, m.rem, m.line_length))
+    })?;
+    let rem = f32::from(rem);
+    let mut italic = false;
+    for (key, value) in style::tokens(spec) {
+        let v = value.as_deref().unwrap_or("");
+        match key.as_str() {
+            // The same four shapes an element takes: a size, a family, or both.
+            // A family that is selected here is the family a *measurement* is
+            // of, which is the whole point of the token.
+            "font" => {
+                let (family, font_size) = style::font_parts(v);
+                // Same reading as the element path: after a comma the tail is a
+                // size and nothing else, and a lone word is a family only when it
+                // is neither a ramp name nor a number.
+                match family {
+                    Some(family) => {
+                        if !family.is_empty() {
+                            font.family = family.to_string().into();
+                        }
+                        if let Some(ramped) = style::ramp(font_size, rem) {
+                            size = px(ramped);
+                        } else if let Ok(explicit) = font_size.parse::<f32>() {
+                            size = px(explicit);
+                        }
+                    }
+                    None => {
+                        if let Some(ramped) = style::ramp(font_size, rem) {
+                            size = px(ramped);
+                        } else if let Ok(explicit) = font_size.parse::<f32>() {
+                            size = px(explicit);
+                        } else if !font_size.is_empty() {
+                            font.family = font_size.to_string().into();
+                        }
+                    }
+                }
+            }
+            "fs" => size = px(v.parse::<f32>().unwrap_or(f32::from(size))),
+            "lh" => line_length = relative(v.parse::<f32>().unwrap_or(1.0)),
+            "lhpx" => line_length = px(v.parse::<f32>().unwrap_or(0.0)).into(),
+            "weight" => font.weight = gpui::FontWeight::from(v.parse::<f32>().unwrap_or(400.0)),
+            "bold" => font.weight = gpui::FontWeight::BOLD,
+            "semibold" => font.weight = gpui::FontWeight::SEMIBOLD,
+            "italic" => italic = true,
+            _ => {}
+        }
+    }
+    if italic {
+        font.style = gpui::FontStyle::Italic;
+    }
+    Some((system, font, size, line_length))
+}
+
+/// The width `text` advances to, in pixels, as this window would draw it.
+///
+/// A newline is flattened into a space first, because gpui's shaper panics on
+/// one — the same thing the editor does to everything that reaches it. Answers
+/// `0.0` outside a frame, where there is no window's text style to measure
+/// against.
+pub fn text_width(text: &str, spec: &str) -> f64 {
+    let Some((system, font, size, _)) = text_metrics(spec) else {
+        return 0.0;
+    };
+    let text = text.replace('\n', " ");
+    let run = gpui::TextRun {
+        len: text.len(),
+        font,
+        color: gpui::black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let line = system.shape_line(text.into(), size, &[run], None);
+    f32::from(line.width) as f64
+}
+
+/// The em width of the measured font, in pixels.
+pub fn text_em_width(spec: &str) -> f64 {
+    let Some((system, font, size, _)) = text_metrics(spec) else {
+        return 0.0;
+    };
+    let id = system.resolve_font(&font);
+    system.em_width(id, size).map(|w| f32::from(w) as f64).unwrap_or(0.0)
+}
+
+/// How far the first character of `ch` advances, in pixels.
+pub fn text_advance(ch: &str, spec: &str) -> f64 {
+    let Some(c) = ch.chars().next() else {
+        return 0.0;
+    };
+    let Some((system, font, size, _)) = text_metrics(spec) else {
+        return 0.0;
+    };
+    let id = system.resolve_font(&font);
+    system.advance(id, size, c).map(|s| f32::from(s.width) as f64).unwrap_or(0.0)
+}
+
+/// The height one line occupies: what `lh=` or `lhpx=` asks for, or the font's
+/// own ascent plus descent when the style names neither.
+///
+/// A relative `lh=` is resolved against the size the style *ends up* asking for,
+/// so `fs=40 lh=2` is 80 pixels and not twice the window's inherited size.
+pub fn text_line_height(spec: &str) -> f64 {
+    let Some((system, font, size, line_length)) = text_metrics(spec) else {
+        return 0.0;
+    };
+    let named = style::tokens(spec)
+        .iter()
+        .any(|(key, _)| key == "lh" || key == "lhpx");
+    if named {
+        let win = window::current();
+        let rem = TEXT
+            .with(|t| t.borrow().get(&win).map(|m| m.rem))
+            .unwrap_or(size);
+        return f32::from(line_length.to_pixels(gpui::AbsoluteLength::Pixels(size), rem)) as f64;
+    }
+    let id = system.resolve_font(&font);
+    (f32::from(system.ascent(id, size)) + f32::from(system.descent(id, size))) as f64
+}
+
+thread_local! {
+    /// Each window's should-close handler, if it has one.
+    static SHOULD_CLOSE: RefCell<HashMap<i64, RetainedCallback>> = RefCell::new(HashMap::new());
+    /// The windows whose handler has already been given to the platform. gpui's
+    /// `on_window_should_close` replaces whatever was registered before it, so
+    /// installing once per handler is enough and installing every frame would
+    /// churn.
+    static SHOULD_CLOSE_PLATFORM: RefCell<std::collections::HashSet<i64>> =
+        RefCell::new(std::collections::HashSet::new());
+}
+
+/// Installs `handler` for the window this call is in.
+pub fn set_should_close(handler: RetainedCallback) {
+    let win = window::current();
+    SHOULD_CLOSE.with(|h| {
+        h.borrow_mut().insert(win, handler);
+    });
+    SHOULD_CLOSE_PLATFORM.with(|h| {
+        h.borrow_mut().remove(&win);
+    });
+}
+
+/// The handler for `win` if the platform has not been given it yet, marking it
+/// as given.
+pub fn take_should_close_for_platform(win: i64) -> Option<RetainedCallback> {
+    let fresh = SHOULD_CLOSE_PLATFORM.with(|h| h.borrow_mut().insert(win));
+    if !fresh {
+        return None;
+    }
+    SHOULD_CLOSE.with(|h| h.borrow().get(&win).cloned())
+}
+
+/// Asks an already-taken handler, for the platform's own close request.
+pub fn ask_should_close(win: i64, handler: &RetainedCallback) -> bool {
+    match window::with(win, || invoke(handler, vec![])) {
+        Ok(Value::Bool(allow)) => allow,
+        _ => true,
+    }
+}
+
+/// Whether `win` may close: its handler's answer, or yes when it has none.
+///
+/// A handler that fails answers yes, which is what gpui does with its own
+/// (`unwrap_or(true)`) — a broken guard must not trap a window forever.
+pub fn may_close(win: i64) -> bool {
+    let handler = SHOULD_CLOSE.with(|h| h.borrow().get(&win).cloned());
+    let Some(handler) = handler else {
+        return true;
+    };
+    match window::with(win, || invoke(&handler, vec![])) {
+        Ok(Value::Bool(allow)) => allow,
+        Ok(_) => true,
+        Err(_) => true,
+    }
+}
+
+/// The style tokens in `spec` this crate does not understand.
+///
+/// The reader behind the `unknown style tokens:` banner, for a program that
+/// builds a style string from data and would rather check it than see it drawn.
+pub fn unknown_style_tokens(spec: &str) -> Vec<String> {
+    style::unknown_tokens(spec)
+}
+
+/// The scrolled element's viewport rectangle, in window pixels: `field` is `x`,
+/// `y`, `w` or `h`.
+///
+/// This is the container's own box, not its content's — `h` is how much of the
+/// scrolled thing is on screen, which is what a scrollbar needs to size its
+/// thumb. Content extent is [`scroll_max_offset`]'s job.
+pub fn scroll_bounds(id: &str, field: &str) -> f64 {
+    let Some(handle) = scrolled(window::current(), id) else {
+        return 0.0;
+    };
+    let bounds = handle.bounds();
+    match field {
+        "x" => f32::from(bounds.origin.x) as f64,
+        "y" => f32::from(bounds.origin.y) as f64,
+        "w" => f32::from(bounds.size.width) as f64,
+        "h" => f32::from(bounds.size.height) as f64,
+        _ => 0.0,
     }
 }
 
@@ -267,11 +743,20 @@ pub fn scroll_max_offset(id: &str, axis: &str) -> f64 {
 /// offset is clamped to the scrolled range during the next prepaint, so setting
 /// one past the end parks at the end.
 pub fn scroll_to(id: &str, x: f64, y: f64) -> bool {
-    let Some(handle) = scroll::find(window::current(), id) else {
+    let Some(handle) = scrolled(window::current(), id) else {
         return false;
     };
     handle.set_offset(gpui::point(px(x as f32), px(y as f32)));
     true
+}
+
+/// The scroll handle for `id` in `win` — a scrolled container's own, or a
+/// virtual list's base handle, whichever the program drew under that name.
+///
+/// A program names the thing that scrolls, not the kind of thing it is; a
+/// scrollbar written for one works beside the other.
+fn scrolled(win: i64, id: &str) -> Option<gpui::ScrollHandle> {
+    scroll::find(win, id).or_else(|| list::base_handle(win, id))
 }
 
 fn axis_value(point: gpui::Point<Pixels>, axis: &str) -> f64 {
@@ -279,6 +764,32 @@ fn axis_value(point: gpui::Point<Pixels>, axis: &str) -> f64 {
         "x" => f32::from(point.x) as f64,
         _ => f32::from(point.y) as f64,
     }
+}
+
+/// The rows the virtual list `id` put on screen the last time it laid out,
+/// inclusive, or `None` if it has never laid out.
+pub fn list_range(id: &str) -> Option<(usize, usize)> {
+    list::range(window::current(), id)
+}
+
+/// Scrolls the virtual list `id` so that row `index` is placed by `strategy`.
+///
+/// Answers `false` for a list nothing has drawn, or a strategy name that is not
+/// one of `top`, `center` or `bottom` — a misspelling is reported rather than
+/// silently treated as `top`.
+pub fn list_scroll_to(id: &str, index: i64, strategy: &str) -> bool {
+    use gpui::ScrollStrategy;
+    let strategy = match strategy {
+        "top" => ScrollStrategy::Top,
+        "center" => ScrollStrategy::Center,
+        "bottom" => ScrollStrategy::Bottom,
+        _ => return false,
+    };
+    let Some(handle) = list::find(window::current(), id) else {
+        return false;
+    };
+    handle.scroll_to_item(index.max(0) as usize, strategy);
+    true
 }
 
 /// Reads what the frame will ask for while it still has the window: the
@@ -329,25 +840,25 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
     };
     if let Some(colors) = colors {
         COLORS.with(|c| {
-            let hex = |c: gpui::Rgba| {
-                format!(
-                    "#{:02x}{:02x}{:02x}{:02x}",
-                    (c.r * 255.0).round() as u8,
-                    (c.g * 255.0).round() as u8,
-                    (c.b * 255.0).round() as u8,
-                    (c.a * 255.0).round() as u8,
-                )
-            };
-            let mut map = HashMap::new();
-            map.insert("text".into(), hex(colors.text));
-            map.insert("selected_text".into(), hex(colors.selected_text));
-            map.insert("background".into(), hex(colors.background));
-            map.insert("disabled".into(), hex(colors.disabled));
-            map.insert("selected".into(), hex(colors.selected));
-            map.insert("border".into(), hex(colors.border));
-            map.insert("separator".into(), hex(colors.separator));
-            map.insert("container".into(), hex(colors.container));
-            c.borrow_mut().insert(win, map);
+            c.borrow_mut().insert(win, named_colors(&colors));
+        });
+    }
+    // What this window shapes text with: its own text system, and the font and
+    // size its inherited text style resolves to — so a measurement is of the
+    // text as this window would draw it, `font=` and all.
+    {
+        let text_style = window.text_style();
+        let metrics = TextMetrics {
+            system: window.text_system().clone(),
+            font: text_style.font(),
+            size: text_style.font_size.to_pixels(window.rem_size()),
+            line: window.line_height(),
+            rem: window.rem_size(),
+            line_length: text_style.line_height,
+            appearance: appearance_of(window.appearance()),
+        };
+        TEXT.with(|t| {
+            t.borrow_mut().insert(win, metrics);
         });
     }
     FOCUSED_NOW.with(|set| {
@@ -1027,8 +1538,16 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let count = *count;
             let row_height = *row_height;
             let build = build.clone();
+            // The list's own id, so the rows it builds can be recorded against
+            // it while the closure has nothing else to reach for.
+            let list_id = el.id.clone();
             let list = uniform_list(ElementId::Name(el.id.clone().into()), count, {
                 move |range, window, cx| {
+                    // `range` is the rows gpui is laying out — the rows on
+                    // screen. It is the only reliable statement of the visible
+                    // range (`logical_scroll_top_index` is `cfg(test)`), so it
+                    // is recorded here before the loop consumes it.
+                    let (first, last) = (range.start, range.end.saturating_sub(1));
                     // A list is built during layout, after the frame that asked
                     // for it returned: this window's arena, and this window's
                     // state, are the ones the row builder must see.
@@ -1075,10 +1594,14 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                                 .into_any_element(),
                         );
                     }
+                    if !rows.is_empty() {
+                        window::with(win, || list::set_range(win, &list_id, first, last));
+                    }
                     rows
                 }
             });
-            style::apply(list, &el.style).into_any_element()
+            let handle = list::handle(win, &el.id);
+            style::apply(list, &el.style).track_scroll(handle).into_any_element()
         }
 
         Kind::Paths { paths, backgrounds } => {

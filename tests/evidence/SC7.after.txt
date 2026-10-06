@@ -1,0 +1,72 @@
+SC7 — a custom scrollbar whose thumb drags the real offset.
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/sc7_scrollbar.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK SC7 the list's offset and maximum are readable, and setting the offset the way a thumb would moves its rows
+
+What the probe does: a 200-row virtual list in a 200-pixel viewport, and the three
+numbers a scrollbar is arithmetic over. At frame 2 it requires a positive maximum
+(the track has a length) and offset 0 (the thumb starts at the top, not at a
+guess). At frame 5 it sets the offset to -2000 — what a thumb dragged to the
+middle of its track asks for — and at frame 8 it requires both that the offset
+reads back and that the rows moved: `list_range` must start at row 100.
+
+What makes it pass:
+
+  * `gpui-binding/src/view.rs` — `scroll_offset`, `scroll_max_offset`,
+    `scroll_bounds` and `scroll_to` resolve `id` through one `scrolled()` helper:
+    a scrolled container's own handle, or a virtual list's base handle.
+  * `gpui-binding/src/list.rs` — `base_handle(win, id)`, the plain `ScrollHandle`
+    inside a `UniformListScrollHandle`.
+  * `gpui-binding/src/lib.rs` — `gpui::scroll_bounds(id, field)`, new here: the
+    container's own box, which is what a thumb is *sized* from. Reading the
+    offset, the maximum and the viewport are the three numbers a scrollbar needs,
+    and only the first two existed.
+  * `examples/02_data_table.gos` — the thumb is no longer inert. It is positioned
+    from `-scroll_offset / scroll_max_offset` over a track of
+    `scroll_bounds("items", "h") - THUMB_HEIGHT`, exactly upstream's
+    `-scroll_top / scroll_height`, and a drag of it calls `gpui::scroll_to`.
+    Because `on_mouse` is element-scoped, the *strip* at the right edge listens
+    rather than the 8x100 thumb: a vertical drag stays inside the strip for its
+    whole length, and the strip is narrow enough that the wheel over the body
+    still reaches the list. The example's header records both that and the
+    deviation that remains.
+
+Regression: `./scripts/regress` after the example change — 27 examples, silent.
+`examples/02_data_table.gos` itself, run under `scripts/run-once`: exit 124 with
+**no output**, which for an interactive example that never quits is the pass
+condition.
+
+What is not verified, and why it is in residual doubt rather than claimed: the
+drag *input* path. Nothing in the binding synthesizes a pointer event, so the
+probe drives the offset with `scroll_to` — everything a drag would act on — and
+the drag itself is exercised only by a person with a mouse.
+
+THE PIXEL CHECK, ATTEMPTED AND NOT OBTAINED. This row's evidence is partly
+pixels, so a temporary probe was written to put a fixed frame on screen: a
+200-pixel list, a cyan 40x2 marker at the container's top, and a magenta 20x40
+thumb at a computed `top`. The probe printed, from a real layout,
+
+    visual: offset=-1900 max=3800 view=200 thumb_top=80
+
+so the three numbers and the arithmetic are right in a laid-out window and not
+only in the probe's own synthetic case — that much is evidence, and it is worth
+keeping.
+
+The capture is not. `screencapture -x /tmp/thumb.png` taken twelve seconds into
+the run, then analysed by colour-component search (this model cannot read images
+directly), found no component of the marker's or the thumb's size or shape
+anywhere on the 2560x1440 main display. The largest magenta component was 5x18
+pixels and the largest cyan one 45x6, at unrelated positions — screen noise, not
+the probe. **The window was therefore not on the captured display**, most likely
+behind whatever had focus, and no conclusion about how the thumb *renders* can be
+drawn from it. `tools/upstream-examples.sh run data_table` was not run either, so
+there is no comparison artifact.
+
+Recorded rather than papered over: the scrollbar's geometry is verified by
+numbers, its rendering is not verified at all.

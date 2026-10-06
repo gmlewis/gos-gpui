@@ -1,0 +1,42 @@
+SC5 — scroll a list row into view (`scroll_to_item` + `ScrollStrategy`).
+SC6 — read the visible row range.
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/sc5_list_scroll_to.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK SC5 SC6 list_scroll_to put row 100 at the top, and list_range reports the rows on screen
+
+What the probe does: one `gpui::list` of 200 rows, 20 pixels a row, in a
+200-pixel viewport, so ten rows are on screen. At frame 2 it requires the
+reported range to start at row 0 and be non-empty; at frame 5 it scrolls row 100
+to the top; at frame 7 it requires an unknown strategy name to be refused; at
+frame 9 it requires the range to start at row 100.
+
+What makes it pass:
+
+  * `gpui-binding/src/list.rs` (new) — one `UniformListScrollHandle` per
+    `(window, list id)`, in a thread-local map, beside `scroll.rs`'s and for the
+    same reason.
+  * `gpui-binding/src/view.rs` — the `Kind::Virtual` arm calls
+    `.track_scroll(handle)` on the `uniform_list`, **and records the range gpui
+    hands the row-builder closure**. That closure argument is the rows that are
+    on screen, and it is the only reliable statement of them: gpui's own
+    `UniformListScrollHandle::logical_scroll_top_index` is
+    `#[cfg(any(test, feature = "support"))]`
+    (`gpui-0.2.2/src/elements/uniform_list.rs:218`) and does not exist in a
+    normal build.
+  * `gpui-binding/src/lib.rs` — `gpui::list_range(id) -> (first, last)` and
+    `gpui::list_scroll_to(id, index, strategy) -> bool`, the latter answering
+    `false` both for a list nothing has drawn and for a strategy that is not
+    `top`, `center` or `bottom`.
+
+Regression: `./scripts/regress` after the change — 27 examples, silent.
+
+One thing the tier harness caught while producing this transcript, and it is not
+this row's: the debug build of any program containing a `gpui::list` **panicked at
+exit**. See the round log — it is fixed, and it is why this row could be recorded
+`tested` on all five tiers at all.

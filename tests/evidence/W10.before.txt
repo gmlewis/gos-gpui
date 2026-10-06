@@ -7,7 +7,9 @@ BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
     cd /tmp/gpui-before
     timeout -k 5 30 gos run --main-thread tests/gui/w10_close_named_window.gos
 
-Output: nothing, and exit 124 — the timeout killed it. `gpui::close_window_in`
+Output: nothing, and exit 124 — the timeout killed it. Re-run with the
+runner's build lock cleared first (see "The stale build lock"): still nothing,
+still 124, so the transcript is the probe and not the lock. `gpui::close_window_in`
 does not exist at HEAD, so the probe's first call is unbound and the view
 callback is abandoned at its first line. The weak kind of red: an unresolved
 symbol, not the behaviour.

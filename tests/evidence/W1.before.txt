@@ -27,13 +27,21 @@ touched).
        timeout -k 5 60 gos run --main-thread tests/gui/w1_window_id.gos
 
    Output: nothing on stdout or stderr, and exit 124 — the timeout killed it.
+
+   Re-run later with the runner's build lock cleared first, to be sure the hang
+   was the probe and not the lock (see "The stale build lock"): still nothing,
+   still 124. So this transcript is the probe.
+
    The window opens, the view callback fails on its very first call, and the
-   binding catches the failure at its boundary the way it always does: the
-   error becomes a card drawn in the window, the callback body never runs past
-   it, and the frame that would have called `gpui::quit()` never happens. That
-   is the shape of every missing-capability GUI probe here, and it is why
-   `scripts/tiers` bounds every run and reaps the runner afterwards: a probe
-   that leaves a window open is not a check.
+   binding catches the failure at its boundary the way it always does: the error
+   becomes a card drawn in the window, and the callback body never runs past it.
+   The detail that makes it a *hang* rather than a failure is that
+   `gpui::animate()`, which every other path in the probe reaches, is below the
+   failing call: no later frame is ever asked for, the window goes idle, and the
+   `gpui::quit()` on some later frame never happens. A probe whose first call is
+   unbound therefore has no output at all, which is why `scripts/tiers` bounds
+   every run and reaps the runner afterwards — a probe that leaves a window open
+   is not a check.
 
 The capability is what is missing, not the plumbing: `view.rs` kept one
 process-global arena with one `ROOT` cell and one `FRAME` counter, `store.rs`

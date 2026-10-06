@@ -1,0 +1,93 @@
+// SC4 — a scroll handle survives a rebuild, a tab switch and a list recycle.
+//
+// Tier: every tier.
+//
+// The element tree is described from scratch every frame, so "surviving a
+// rebuild" is the ordinary case and proves little on its own. This probe puts
+// the handle through the two things that actually move an element out from under
+// state kept beside the tree:
+//
+//   * frames 7 and 8 — a tab switch: the container is not in the tree at all, so
+//     nothing renders it and nothing clamps it
+//   * frames 10 and 11 — a sibling appears *before* the container, which
+//     renumbers every automatic element id the frame issues
+//
+// Pass means the offset set before either of those is still there afterwards.
+// A handle keyed by anything the rebuild can change — an automatic id, or a slot
+// in the frame — is lost by one or the other.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("sc4 - scroll survives", 320.0, 260.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            let max = gpui::scroll_max_offset("panel", "y")
+            if max <= 0.0 {
+                println(f"FAIL SC4 the container has nothing to scroll: maximum is {max}")
+                gpui::quit()
+            }
+        }
+
+        if f == 4 && !gpui::scroll_to("panel", 0.0, -40.0) {
+            println("FAIL SC4 scroll_to did not recognise the container")
+            gpui::quit()
+        }
+
+        if f == 6 {
+            let at = gpui::scroll_offset("panel", "y")
+            if at > -39.0 || at < -41.0 {
+                println(f"FAIL SC4 the offset set to -40 reads back as {at}")
+                gpui::quit()
+            }
+        }
+
+        // Frames 7 and 8: the container is not in the tree, so nothing renders
+        // it and nothing clamps it. The offset must still be readable — this is
+        // the assertion that says the handle is kept beside the tree rather than
+        // inside it.
+        if f == 8 {
+            let at = gpui::scroll_offset("panel", "y")
+            if at > -39.0 || at < -41.0 {
+                println(f"FAIL SC4 the offset went with the container when it left the tree: {at}")
+                gpui::quit()
+            }
+        }
+
+        let root = gpui::column("p=8 bg=#111111 size=full")
+
+        // A sibling inserted ahead of the container, from frame 10. Every
+        // automatic id the frame issues after it shifts by one.
+        if f >= 10 && f < 12 {
+            gpui::child(root, gpui::panel("h=10 bg=#ff0000"))
+        }
+
+        // The tab switch: the container is simply not described.
+        if f < 7 || f >= 9 {
+            let scroller = gpui::scroll("id=panel h=100 w=240")
+            gpui::child(scroller, gpui::panel("h=400 shrink=0 bg=#222222"))
+            gpui::child(root, scroller)
+        }
+
+        if f >= 12 {
+            let at = gpui::scroll_offset("panel", "y")
+            if at > -39.0 || at < -41.0 {
+                println(f"FAIL SC4 the offset was lost when the tree moved: {at}")
+                gpui::quit()
+            } else {
+                println("OK SC4 the offset survived two frames off screen and a tree that renumbered around it")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL SC4 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

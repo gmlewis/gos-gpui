@@ -1,0 +1,45 @@
+CL1 — intercept and veto a window close (`on_window_should_close`).
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before), the runner build lock cleared first:
+
+    cd /tmp/gpui-before
+    timeout -k 5 30 gos run --main-thread tests/gui/cl1_should_close.gos
+
+Output: nothing on stdout or stderr, exit 124 — the timeout killed it. The probe's
+first call is `gpui::open_window`… no: it is `gpui::on_window_should_close` inside
+the first window's callback on frame 1, so the callback is abandoned before it has
+opened anything. The weak kind of red.
+
+What the source said: `gpui::Window::on_window_should_close` existed at HEAD
+(`gpui-0.2.2/src/window.rs:4329`) and was unexposed. It is a plain method —
+`&self`, `&App`, and a `Fn(&mut Window, &mut App) -> bool + 'static` — so the only
+obstacle was that a binding function has no `Window` to register it on. gpui wires
+it straight to the platform window's close request
+(`self.platform_window.on_should_close(...)`, `platform.rs:496`), which is what
+makes it a real interception rather than a binding-side convention.
+
+**A platform close request cannot be synthesized**, and the probe could not check
+anything if it could not produce one. So the binding routes its *own* close paths
+through the same handler — `close_window` and `close_window_in` ask before removing
+a window — and says so on `gpui::on_window_should_close`, where a reader will find
+it. Upstream's `remove_window` does not do that; this is a deliberate departure, and
+it is the only reason the row could be checked at all.
+
+The probe is two-directional for the same reason a one-directional one is not a
+check: a guard that always refuses is indistinguishable from a close that never
+worked. Two children, one refusing and one agreeing, closed by name from a third
+window that then watches whether each kept reporting. Both breaks were run:
+
+    BREAK A — every close allowed
+    exit=0
+    FAIL CL1 the refusing guard was ignored: its window stopped reporting at 6
+
+    BREAK B — no close allowed
+    exit=0
+    FAIL CL1 the agreeing guard was ignored: its window reported again, 8 then 12
+
+Each break fails exactly one direction and passes the other, which is what says
+the two assertions are measuring different things. Restored immediately; the
+five-tier transcript below is against the restored tree.

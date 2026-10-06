@@ -81,7 +81,7 @@ fn is_known(key: &str) -> bool {
         | "border" | "bordercolor" | "dashed" | "rounded" | "shadow"
         // type
         | "font" | "fs" | "weight" | "bold" | "semibold" | "italic" | "underline" | "strike"
-        | "lh" | "truncate"
+        | "lh" | "lhpx" | "truncate"
         // behaviour
         | "cursor" | "overflow" | "debug"
         // grid placement and decoration
@@ -97,6 +97,36 @@ fn is_known(key: &str) -> bool {
         // not reported as unknown)
         | "hover" | "active"
     )
+}
+
+/// The tokens a per-range highlight understands.
+///
+/// A vocabulary of its own, not the element one: `text_styled`'s highlights are
+/// `gpui::HighlightStyle`, whose seven properties — colour, background, weight,
+/// style, underline, strikethrough and fade — are not the set a `Styled` element
+/// takes, and sharing the table would let `p=16` through as a highlight.
+fn is_known_highlight(key: &str) -> bool {
+    matches!(
+        key,
+        // the seven properties
+        "color" | "bg" | "weight" | "bold" | "semibold" | "italic"
+        | "underline" | "strike" | "fade"
+        // and the detail each decoration can carry
+        | "undercolor" | "underthick" | "underwavy"
+        | "strikecolor" | "strikethick"
+    )
+}
+
+/// The highlight tokens in `props` this module does not understand.
+pub fn unknown_highlight_tokens(props: &str) -> Vec<String> {
+    tokens(props)
+        .into_iter()
+        .filter(|(k, _)| !is_known_highlight(k))
+        .map(|(k, v)| match v {
+            Some(v) => format!("{k}={v}"),
+            None => k,
+        })
+        .collect()
 }
 
 /// The interaction tokens in `spec` (`hover=...`, `active=...`), if any.
@@ -372,16 +402,11 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         },
 
         // ---- type -------------------------------------------------------------
-        "font" => match v {
-            "xs" => el.text_xs(),
-            "sm" => el.text_sm(),
-            "base" => el.text_base(),
-            "lg" => el.text_lg(),
-            "xl" => el.text_xl(),
-            "2xl" => el.text_2xl(),
-            "3xl" => el.text_3xl(),
-            _ => el.text_base(),
-        },
+        // `font=` is a size (`2xl`), a family (`Menlo`), or both — `Menlo,2xl`
+        // or `Menlo,17`. A family that is not one of the ramp names is a family,
+        // because a program that writes `font=Menlo` means the font and not the
+        // size five steps up.
+        "font" => apply_font(el, v),
         "fs" => el.text_size(px(num(v))),
         "weight" => el.font_weight(weight(v)),
         "bold" => el.font_weight(FontWeight::BOLD),
@@ -398,7 +423,13 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
             _ => el,
         },
         "decocolor" => el.text_decoration_color(colour(v)),
+        // `lh=` is a multiple of the font size; `lhpx=` is an absolute height.
+        // A line height is a `DefiniteLength`, which is exactly those two
+        // shapes, and a multi-line layout needs the absolute one as often as the
+        // relative: a fixed 22-pixel row is a number, not a multiple of whatever
+        // font the row happens to inherit.
         "lh" => el.line_height(relative(num(v) as f32)),
+        "lhpx" => el.line_height(px(num(v))),
         "truncate" => el.truncate(),
         "ellipsis" => el.text_ellipsis(),
         // `textoverflow=<suffix>` is GPUI's `TextOverflow::Truncate(suffix)`;
@@ -450,6 +481,96 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         #[cfg(not(debug_assertions))]
         "debug" => el,
 
+        _ => el,
+    }
+}
+
+/// The `font=` token: a size, a family, or both.
+///
+/// ```text
+/// font=2xl             a ramp size
+/// font=17              a pixel size — a bare number is not a family name
+/// font=Menlo           a family
+/// font=Menlo,2xl       a family and a ramp size
+/// font=Menlo,17        a family and a pixel size
+/// ```
+///
+/// The family is passed through as written; gpui resolves it against the
+/// platform's fonts and falls back if the machine has no such family, so a
+/// program that wants to know what is available asks
+/// [`gpui::font_families`](crate::font_families).
+fn apply_font<T: Styled>(el: T, v: &str) -> T {
+    let (family, size) = font_parts(v);
+
+    // With a comma the tail is a size and nothing else. `Menlo,garbage` keeps
+    // the family and takes no size — it must not quietly become a request for a
+    // font called "garbage", which is what an earlier version of this did.
+    if let Some(family) = family.filter(|family| !family.is_empty()) {
+        let el = el.font_family(family.to_string());
+        return match size.parse::<f32>() {
+            Ok(px_size) => el.text_size(px(px_size)),
+            Err(_) => match ramp(size, 1.0) {
+                Some(_) => text_ramp(el, size),
+                None => el,
+            },
+        };
+    }
+
+    // One word: a ramp name, a number, or a family.
+    if size.is_empty() {
+        return el;
+    }
+    if ramp(size, 1.0).is_some() {
+        return text_ramp(el, size);
+    }
+    match size.parse::<f32>() {
+        Ok(px_size) => el.text_size(px(px_size)),
+        Err(_) => el.font_family(size.to_string()),
+    }
+}
+
+/// The `font=` token split into its family and its size.
+///
+/// `font=Menlo,2xl` is `(Some("Menlo"), "2xl")`; `font=Menlo` is
+/// `(None, "Menlo")`, because a bare word is a family unless a known ramp name
+/// says otherwise; `font=,17` is `(Some(""), "17")`, a size with no family.
+pub fn font_parts(v: &str) -> (Option<&str>, &str) {
+    match v.split_once(',') {
+        Some((family, size)) => (Some(family), size),
+        None => (None, v),
+    }
+}
+
+/// A ramp name in rems, or `None` when the string is not one of them.
+///
+/// These are gpui's own numbers — `text_xs` is `rems(0.75)`, `text_2xl` is
+/// `rems(1.5)` — and they are kept here in one place so that a *measurement*
+/// resolves `font=2xl` to the same size an element is drawn at. The dispatch to
+/// gpui's helpers is [`text_ramp`].
+pub fn ramp(name: &str, rem: f32) -> Option<f32> {
+    let multiple = match name {
+        "xs" => 0.75,
+        "sm" => 0.875,
+        "base" => 1.0,
+        "lg" => 1.125,
+        "xl" => 1.25,
+        "2xl" => 1.5,
+        "3xl" => 1.875,
+        _ => return None,
+    };
+    Some(rem * multiple)
+}
+
+/// The gpui helper behind each ramp name.
+fn text_ramp<T: Styled>(el: T, name: &str) -> T {
+    match name {
+        "xs" => el.text_xs(),
+        "sm" => el.text_sm(),
+        "base" => el.text_base(),
+        "lg" => el.text_lg(),
+        "xl" => el.text_xl(),
+        "2xl" => el.text_2xl(),
+        "3xl" => el.text_3xl(),
         _ => el,
     }
 }

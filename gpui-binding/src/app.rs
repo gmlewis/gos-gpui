@@ -59,15 +59,41 @@ impl Render for Root {
 
 // Windows a frame asked for. Kept here rather than in `store::Request`
 // because a `static Mutex` would demand a `Send` callback.
-/// Windows a frame asked to open, once the frame that asked for them is done.
+// Windows a frame asked to open, once the frame that asked for them is done.
+// A plain comment: `rustdoc` does not document items a macro produces.
 thread_local! {
     static PENDING_OPEN: RefCell<Vec<PendingOpen>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Windows a frame asked to close *by name*, closed once that frame is done.
+/// Releases everything still holding a retained callback, while the runtime is
+/// standing.
 ///
-/// A `thread_local`, for the same reason as `PENDING_OPEN`: a `static Mutex`
-/// would have to hold whatever a `cx.defer` closure captures.
+/// A `uniform_list`'s row builder sits in the arena, and a window waiting to
+/// open holds a whole view callback. Both are `RetainedCallback`s whose `Drop`
+/// calls back into the runtime to release the registration — and a thread-local
+/// dropped at *thread exit* runs that after the runtime's own thread-locals are
+/// gone, so the runtime panics at its FFI entry:
+///
+/// ```text
+/// thread '<unnamed>' panicked: cannot access a Thread Local Storage value
+/// during or after destruction: AccessError
+///   ... _gos_rt_binding_callback_release
+/// ```
+///
+/// It has to happen here rather than after the event loop returns, because
+/// `Application::run` does not return: it ends the process. Every path that
+/// quits therefore calls this *before* `cx.quit()`.
+fn release_retained() {
+    view::release_retained();
+    PENDING_OPEN.with(|q| q.borrow_mut().clear());
+    PENDING_CLOSE.with(|q| q.borrow_mut().clear());
+}
+
+// Windows a frame asked to close *by name*, closed once that frame is done.
+//
+// A `thread_local`, for the same reason as `PENDING_OPEN`: a `static Mutex` would
+// have to hold whatever a `cx.defer` closure captures. A plain comment, not a doc
+// comment, because `rustdoc` does not document items a macro produces.
 thread_local! {
     static PENDING_CLOSE: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
 }
@@ -146,20 +172,41 @@ fn process_requests(
     entity: EntityId,
     win: i64,
 ) -> bool {
+    // A handler registered this frame goes to the platform here, where there is
+    // a `Window` to give it to.
+    if let Some(decide) = view::take_should_close_for_platform(win) {
+        window.on_window_should_close(cx, move |_window, _cx| {
+            view::ask_should_close(win, &decide)
+        });
+    }
+
     let mut animate = false;
     for request in store::take_requests() {
         match request {
             Request::Animate => animate = true,
 
-            Request::Quit => cx.quit(),
+            Request::Quit => {
+                release_retained();
+                cx.quit()
+            }
 
             Request::FocusNext => window.focus_next(),
             Request::FocusPrev => window.focus_prev(),
-            Request::CloseWindow => window.remove_window(),
+            // The platform's close request and the program's own go through the
+            // same handler, so a guard cannot be bypassed in code.
+            Request::CloseWindow => {
+                if view::may_close(win) {
+                    window.remove_window();
+                }
+            }
 
             Request::CloseWindowAt { target } => {
                 if target == win {
-                    window.remove_window();
+                    if view::may_close(win) {
+                        window.remove_window();
+                    }
+                } else if !view::may_close(target) {
+                    // The target refuses; nothing to defer.
                 } else {
                     // Not here: finding the handle means reading every open
                     // window's root view, and GPUI refuses a nested read of a
@@ -227,6 +274,8 @@ fn process_requests(
                 }]);
             }
             Request::ResizeWindow { w, h } => window.resize(size(px(w as f32), px(h as f32))),
+
+            Request::SetRemSize { px: rem } => window.set_rem_size(gpui::px(rem as f32)),
 
             Request::Tick { id, ms } => {
                 let fresh = TICKS.lock().unwrap().insert((win, id.clone()));
@@ -435,6 +484,9 @@ pub fn run_app(
         // installs the *light* set unconditionally, so the real scheme is
         // installed per window below, where `appearance()` is knowable.
         cx.init_colors();
+        // Kept for the whole run: "what fonts does this machine have" is not a
+        // per-window question, and the answer has to be there between frames too.
+        view::set_text_system(cx.text_system().clone());
         view::set_keyboard_layout(cx.keyboard_layout().name().to_string());
         let bounds = Bounds::centered(None, size(px(width as f32), px(height as f32)), cx);
         let options = WindowOptions {
@@ -485,6 +537,7 @@ pub fn run_app(
         // quit the moment any window closed.
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
+                release_retained();
                 cx.quit();
             }
         })

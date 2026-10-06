@@ -1,0 +1,44 @@
+TM1 — measure a text run (`advance`, `em_width`, `typographic_bounds`, `shape_line`).
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/tm1_text_measure.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK TM1 a text run is measurable, and the measurements scale and order the way text does
+
+The verdict carries no numbers on purpose — they are measured, and a verdict that
+carries measurements can differ from one tier to the next. What the probe checked,
+and what the numbers that were observed are:
+
+  * a width, an em width, a line height and an inherited-size width all positive
+  * two copies of a word wider than one
+  * **doubling the size doubles the width** — 41.6230583190918px at `fs=20`,
+    81.46484375px at `fs=40`, a ratio of 1.957, required to be within
+    1.8 to 2.2
+  * `W` advances further than `i` — 18.96px against 4.55px
+  * `fs=32` is wider than the window's inherited size
+
+None of those is a font's metric, so none of them depends on which font this
+machine resolves — which is what makes them a check rather than a transcription.
+
+What makes it pass:
+
+  * `gpui-binding/src/view.rs` — `begin_frame` captures, per window, the window's
+    own `Arc<WindowTextSystem>` and the font and size its inherited `text_style()`
+    resolves to. `text_width`, `text_em_width`, `text_advance` and
+    `text_line_height` shape and measure with them, applying `fs=`, `weight=`,
+    `bold`, `semibold` and `italic` from the style string over the inherited font.
+  * `gpui-binding/src/lib.rs` — the four bindings.
+  * The `Arc` is not a raw pointer: `WindowTextSystem` is refcounted, so keeping
+    one past the frame it came from is ordinary ownership, unlike `DISPATCH`.
+
+The style semantics matter and are documented on `text_width`: **the family and
+the size come from the window's inherited text style**, so `font=2xl` on an
+ancestor is inherited by everything measured inside it, and `fs=` overrides the
+size. A newline is flattened to a space first, because gpui's shaper panics on one —
+the same thing `editor.rs` does to everything that reaches it.
+
+Regression: `./scripts/regress` after the change — 27 examples, silent.

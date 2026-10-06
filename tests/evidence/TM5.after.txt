@@ -1,0 +1,37 @@
+TM5 — text layout tokens: wrapping, clamping, tab stops, per-line spacing.
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/tm5_text_layout.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK TM5 every layout token is known, and a line height is either a multiple of the font or a number of pixels
+
+What the probe does: it reads back the vocabulary a layout token belongs to with
+`gpui::unknown_style_tokens`, which is new here and is the reader behind the
+`unknown style tokens:` banner — so a spelling that drifted out of `is_known`
+fails in a test rather than becoming a card on screen. It then requires `lh=2` at
+`fs=20` to be 40 pixels, `lhpx=30` to be 30 whatever the font size, and a style
+naming neither to fall back to the font's own metrics. Finally it draws a text
+element carrying all of them, which is where the strict rule on stderr does its
+work.
+
+What makes it pass:
+
+  * `gpui-binding/src/style.rs` — `lhpx=<n>` is new, so a line height can be an
+    absolute number of pixels as well as a multiple of the font size.
+  * `gpui-binding/src/view.rs` — `text_metrics` carries the inherited
+    `DefiniteLength` and honours `lh=`/`lhpx=`, and `text_line_height` answers the
+    styled line height when the style names one. A relative `lh=` is resolved
+    against the size the style *ends up* asking for, so `fs=40 lh=2` is 80.
+  * `gpui-binding/src/lib.rs` — `gpui::unknown_style_tokens(style)`, a reader a
+    program that builds a style string from data can check itself with.
+
+**Tab stops are unreachable and are not claimed.** gpui 0.2.2 has no text
+tab-stop API — the evidence is in `TM5.before.txt` and in `## Unreachable`. The
+row is `tested` for the three parts that exist and says so for the fourth.
+
+Regression: `./scripts/regress` after the change — 27 examples, silent. That
+matters because `lh=` is used across the example set and `lhpx` shares its arm.

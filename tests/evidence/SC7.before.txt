@@ -1,0 +1,47 @@
+SC7 — a custom scrollbar whose thumb drags the real offset.
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before), the runner build lock cleared first:
+
+    cd /tmp/gpui-before
+    timeout -k 5 30 gos run --main-thread tests/gui/sc7_scrollbar.gos
+
+Output: nothing on stdout or stderr, exit 124 — the timeout killed it. The probe's
+first call is `gpui::scroll_max_offset` on frame 2, above the `gpui::animate()`
+that would ask for the next frame, so the callback is abandoned and the window goes
+idle. The weak kind of red, and the interesting half is what was *not* merely
+missing.
+
+The row's complaint is a picture of a scrollbar: `examples/02_data_table.gos`
+draws a grey thumb at `top=4` over a `ui::list`, and its own header says why it is
+inert —
+
+  * No scroll handle exists. Upstream's thumb is *positioned* from the list's
+    scroll state (`-scroll_top / scroll_height`) and *drags* through
+    `UniformListScrollHandle::set_offset`. The binding exposes no such handle: a
+    program can neither read the offset nor set it.
+
+— and the two gaps are different in kind:
+
+  * **Reading and writing a list's offset** was *unbuilt*, not impossible. gpui
+    runs a `uniform_list`'s scrolling through a `ScrollHandle` kept inside the
+    `UniformListScrollHandle`, hands that same handle to the inner scroller
+    (`gpui-0.2.2/src/elements/uniform_list.rs:676`), and then shares the handle's
+    offset *cell* with the list's own layout state outright
+    (`uniform_list.rs:349`). So a list's offset, maximum and `set_offset` are the
+    three operations a plain scrolled container already had — through the same
+    type — and the whole of SC1 to SC3 applies to it once the reader looks in the
+    right place.
+  * **Capturing the drag** is a real limit, and a different row's: `gpui::on_mouse`
+    reports while the pointer is over the element it was attached to and no
+    further (`PORTING.md`, "Pointer capture is element-scoped"; DD4). That is not
+    fixed here.
+
+The break that isolates this row's mechanism — the resolver not falling back to a
+list's base handle:
+
+    exit=0
+    FAIL SC7 a list of 200 rows in a 200 pixel viewport reports a maximum offset of 0
+
+Restored immediately; the five-tier transcript below is against the restored tree.

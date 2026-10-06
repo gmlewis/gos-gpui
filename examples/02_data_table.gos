@@ -14,28 +14,26 @@
 //   * a header line naming the visible row range;
 //   * a grey scrollbar thumb over the body, 8x100 with a hover refinement.
 //
-// Two of the binding's limits meet in this example — there is no scroll handle,
-// and pointer events cannot be captured window-wide — so read the deviations
+// One of the binding's limits meets this example — a drag is tracked only while
+// the pointer is over the element the handler is on — so read the deviations
 // before comparing the two windows.
 //
 // Deviations:
 //
-//   * No scroll handle exists. Upstream's thumb is *positioned* from the list's
-//     scroll state (`-scroll_top / scroll_height`) and *drags* through
-//     `UniformListScrollHandle::set_offset`. The binding exposes no such
-//     handle: a program can neither read the offset nor set it. The thumb is
-//     therefore drawn where upstream puts it when the list is at the top —
-//     `top=4 right=4`, 8x100, `#c0c0c0`, `rounded_lg`, hover `#a0a0a0` — and
-//     is otherwise inert: it does not track the list, and dragging it cannot
-//     scroll the list. The body still scrolls with the wheel, because
-//     `uniform_list` owns that itself.
-//   * Pointer events cannot be captured window-wide. Upstream registers
-//     `window.on_mouse_event` handlers on a canvas filling the thumb, so a
-//     drag keeps tracking after the pointer leaves it. The binding's
-//     `gpui::on_mouse` reports only while the pointer is over the element, so
-//     even with the thumb wired for `down up move`, tracking would stop at its
-//     edge. Nothing here is wired — for the reason above there is no offset to
-//     carry it to — but the difference is stated so it is not read as a bug.
+//   * The drag is element-scoped, where upstream captures the pointer
+//     window-wide. Upstream registers `window.on_mouse_event` handlers so a drag
+//     keeps tracking after the pointer leaves the thumb; `gpui::on_mouse`
+//     reports only while the pointer is over the element it was attached to. The
+//     thumb therefore listens through a 16-pixel strip at the right edge rather
+//     than on the 8x100 thumb itself: a vertical drag stays inside the strip for
+//     its whole length, so the drag works, and the strip is narrow enough that
+//     the wheel over the body still reaches the list. A drag that leaves the
+//     strip sideways stops, which is the difference from upstream.
+//   * Upstream sizes the thumb from the list's own visible height; this draws it
+//     at upstream's fixed 100 pixels, as the inert version did, and only its
+//     *position* is computed. The track is `scroll_bounds("items", "h")` less
+//     the thumb, and the fraction is `-scroll_top / scroll_height` as upstream
+//     has it, so the thumb sits where upstream would put it.
 //   * `cx.processor` does not exist. The row builder that `ui::list(..)` takes
 //     is the same hook: it is handed a row index instead of a whole range, and
 //     is called only for the rows on screen.
@@ -341,19 +339,64 @@ fn header_cell(key: String, width: i64) -> ui::El {
 
 // ---- the scrollbar ----------------------------------------------------
 
-/// Upstream's thumb. It is drawn at the position upstream computes when the
-/// list is scrolled to the top — `percentage` is 0, so the `clamp` floors
-/// `offset_top` at 4px — because the list's scroll offset cannot be read. It
-/// cannot be dragged either: see the header. Its hover refinement is
-/// upstream's, and works.
-fn scrollbar_thumb() -> ui::El {
-    ui::rect(f"absolute top=4 right=4 h={THUMB_HEIGHT} w={THUMB_WIDTH} bg=#c0c0c0 rounded=lg hover=bg:#a0a0a0")
+/// Keeps a fraction inside `0..=1`.
+fn clamp01(v: f64) -> f64 {
+    if v < 0.0 {
+        0.0
+    } else if v > 1.0 {
+        1.0
+    } else {
+        v
+    }
+}
+
+/// Upstream's thumb, and now a real one.
+///
+/// Upstream positions it from the list's scroll state and drags it through
+/// `UniformListScrollHandle::set_offset`. The binding reaches the same three
+/// numbers through `gpui::scroll_offset`, `gpui::scroll_max_offset` and
+/// `gpui::scroll_bounds`, and moves the list with `gpui::scroll_to` — which
+/// answers for a `ui::list` as well as for a scrolled container, because a
+/// uniform list runs its scrolling through a `ScrollHandle` of its own.
+///
+/// The 16-pixel strip listens rather than the 8x100 thumb. `gpui::on_mouse`
+/// reports only while the pointer is over the element it is attached to, so a
+/// handler on the thumb itself would stop tracking the moment a drag left it;
+/// on the strip, a vertical drag stays inside for its whole length. The strip is
+/// narrow so that the wheel over the body still reaches the list, and it sits at
+/// the right edge where a scrollbar belongs.
+fn scrollbar() -> ui::El {
+    let max = gpui::scroll_max_offset("items", "y")
+    let at = gpui::scroll_offset("items", "y")
+    let track = gpui::scroll_bounds("items", "h") - (THUMB_HEIGHT as f64)
+    let track = if track > 0.0 { track } else { 0.0 }
+    let frac = if max > 0.0 { clamp01(-at / max) } else { 0.0 }
+    let top = 4.0 + frac * track
+
+    ui::rect("absolute right=4 top=0 w=16 h=full bg=#00000000")
+        .on_mouse("down move", "thumb")
+        .child(ui::rect(f"absolute top={top} right=0 h={THUMB_HEIGHT} w={THUMB_WIDTH} bg=#c0c0c0 rounded=lg hover=bg:#a0a0a0"))
 }
 
 // ---- the frame --------------------------------------------------------
 
 fn main() {
     let outcome = gpui::run("02 - data_table", 1280.0, 1000.0, || {
+        // A drag of the scrollbar. `<id>.y` is the pointer's position inside the
+        // strip, and the strip is the track, so the fraction is direct — and the
+        // offset it asks for is the offset the list is set to.
+        for event in gpui::take_events() {
+            let id, _data = gpui::event_parts(event)
+            if id == "thumb" {
+                let track = gpui::scroll_bounds("items", "h") - (THUMB_HEIGHT as f64)
+                let max = gpui::scroll_max_offset("items", "y")
+                if track > 0.0 && max > 0.0 {
+                    let y = gpui::state_float("thumb.y", 0.0)
+                    gpui::scroll_to("items", 0.0, -clamp01(y / track) * max)
+                }
+            }
+        }
+
         // The header is written before the body is laid out, so it names what
         // the previous frame's row builder saw — the same one-frame lag
         // upstream's header has, its processor also running during layout. Read
@@ -378,7 +421,7 @@ fn main() {
                     .children(header))
                 .child(ui::stack("size=full")
                     .list("items", TOTAL_ITEMS, 22.0, "size=full", table_row)
-                    .child(scrollbar_thumb())))
+                    .child(scrollbar())))
             |> ui::root
     })
 

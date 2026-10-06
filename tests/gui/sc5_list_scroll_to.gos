@@ -1,0 +1,72 @@
+// SC5 — scroll a list row into view (`scroll_to_item` + `ScrollStrategy`).
+// SC6 — read the visible row range.
+//
+// Tier: every tier.
+//
+// One virtual list of 200 rows in a 200-pixel viewport at 20 pixels a row, so
+// ten of them are on screen at a time. Pass means all three:
+//
+//   SC6  the list reports the rows it has on screen, and starts at row 0
+//   SC5  `list_scroll_to(id, 100, "top")` moves them, so the range starts at
+//        row 100 on the frame after
+//   SC5  a strategy name that is not top, center or bottom is refused rather
+//        than quietly treated as "top"
+//
+// The range is the rows gpui actually handed the row builder while laying the
+// list out — not an estimate from the scroll offset — which is why this probe
+// can assert on it rather than on where a scrollbar would be drawn.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("sc5 - scroll a row into view", 320.0, 280.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            let first, last = gpui::list_range("rows")
+            if first != 0 {
+                println(f"FAIL SC6 a list nothing has scrolled reports rows {first}..{last}, not from row 0")
+                gpui::quit()
+            }
+            if last < first {
+                println(f"FAIL SC6 the list reports an empty visible range: {first}..{last}")
+                gpui::quit()
+            }
+        }
+
+        if f == 5 && !gpui::list_scroll_to("rows", 100, "top") {
+            println("FAIL SC5 list_scroll_to did not recognise the list it was given")
+            gpui::quit()
+        }
+
+        if f == 7 && gpui::list_scroll_to("rows", 100, "sideways") {
+            println("FAIL SC5 list_scroll_to accepted a strategy that is not top, center or bottom")
+            gpui::quit()
+        }
+
+        if f >= 9 {
+            let first, last = gpui::list_range("rows")
+            if first < 99 || first > 101 {
+                println(f"FAIL SC5 scrolling to row 100 left the visible range at {first}..{last}")
+                gpui::quit()
+            } else {
+                println("OK SC5 SC6 list_scroll_to put row 100 at the top, and list_range reports the rows on screen")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        let list = gpui::list("rows", 200, 20.0, "h=200 w=240", |i: i64| -> i64 {
+            gpui::text(f"row {i}", "p=2 color=#ffffff")
+        })
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(root, list)
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL SC5 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

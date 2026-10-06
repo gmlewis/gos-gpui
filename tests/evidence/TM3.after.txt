@@ -1,0 +1,42 @@
+TM3 — the full per-range highlight vocabulary.
+
+AFTER THE WORK. Command, in this tree:
+
+    env -u GOSSAMER_IN_RUNNER gos test tests
+
+Output:
+
+  PASS every_highlight_property_has_a_token (9 assertions, 27ms)
+  PASS all_seven_at_once_in_a_fixed_order (1 assertion, 26ms)
+  PASS a_detail_token_implies_its_decoration (5 assertions, 27ms)
+  PASS a_token_outside_the_vocabulary_sets_nothing (3 assertions, 27ms)
+test: 16 passed, 0 failed, 64 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s), across 16 file(s), 14 with no tests
+
+What makes it pass:
+
+  * `gpui-binding/src/view.rs` — `highlight_style` reaches all seven of
+    `HighlightStyle`'s properties, and the decorations carry their detail:
+    `undercolor`, `underthick`, `underwavy`, `strikecolor`, `strikethick` and
+    `fade`. A detail token **implies the decoration it belongs to**, so
+    `underthick=3` is an underline — which is why the property list is a
+    property list and not a token list.
+  * `gpui-binding/src/view.rs` — `check_highlight` reports a token outside the
+    vocabulary once, the way `check_style` reports an unknown style token, so a
+    typo is a banner rather than a silence.
+  * `gpui-binding/src/style.rs` — `is_known_highlight`, a vocabulary of its own.
+    It is deliberately **not** the element one: sharing the table would let
+    `p=16` through as a highlight, and the test says so.
+  * `gpui-binding/src/lib.rs` — `gpui::highlight_properties(props)`, which
+    answers what a spec sets as a comma-separated list in a fixed order.
+
+Why this row's check is headless and not a GUI probe: what `text_styled` acts on
+is the parse, and the parse is what can be wrong. Whether a colour reaches the
+screen is a pixel question, and this machine cannot capture pixels — see "Pixel
+verification is unavailable on this machine". A test of the parse is therefore as
+strong as a screenshot would be for everything except the paint itself.
+
+Regression: `./scripts/regress` after the change — 27 examples, silent. That
+matters because `text_styled` is used by `examples/20_text_layout.gos`, whose
+highlights are `"0-1 weight=800"` and `"2-3 italic"`: if the new vocabulary had
+been narrower than the old, that example would have grown an unknown-token banner
+and the strict rule would have caught it.

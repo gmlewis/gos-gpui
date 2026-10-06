@@ -1,0 +1,60 @@
+SC4 — scroll handles that survive a rebuild, a tab switch or a list recycle.
+Tier: `gos run --main-thread`, and every other tier.
+
+BEFORE THE WORK. Commands, against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before), the build lock cleared first so that
+what is being watched is the probe and not the lock:
+
+    cd /tmp/gpui-before
+    timeout -k 5 25 gos run --main-thread tests/gui/sc4_scroll_survives.gos
+
+Output (exit 124 — the timeout killed it; the line is on unbuffered stderr):
+
+  gpui: unknown style tokens: id=panel
+
+Re-run on its own to be sure, and the same. Two failures again:
+
+  * `id=panel` is reported as a typo and drawn as a banner, because at HEAD
+    `style::is_known` has no `id` token. The probe's container cannot be named at
+    all before this round.
+  * Frame 1 gets to the end — that is where the container is pushed and the banner
+    comes from — and frame 2's first call, `gpui::scroll_max_offset`, is unbound.
+    The callback is abandoned there, above the `gpui::animate()` that would have
+    asked for the next frame, so the window goes idle and the probe never quits.
+
+The weak kind of red, for the same reason as SC1: there is no handle at HEAD, so
+there is nothing for a probe to hold across a rebuild. What this row needs shown
+is that the check would notice a handle that *did not* survive, so the mechanism
+was broken on purpose:
+
+    # scroll::handle, temporarily creating one every time instead of keeping one
+    - HANDLES.with(|h| h.borrow_mut().entry((win, id.to_string())).or_insert_with(ScrollHandle::new).clone())
+    + let _ = (win, id); ScrollHandle::new()
+
+    # with the build lock cleared first — the first attempt at this blocked on a
+    # stale one and reported nothing but exit 124, which is a trap of its own
+    timeout -k 5 90 gos run --main-thread tests/gui/sc4_scroll_survives.gos
+    exit=0
+    FAIL SC4 the container has nothing to scroll: maximum is 0
+
+Restored immediately, and the five-tier run below is against the restored tree.
+
+**And it is a weaker demonstration than it looks, which is worth recording
+rather than glossing.** The break makes `handle()` stop storing anything, so the
+probe's *earliest* check — frame 2's `scroll_max_offset`, which needs `find()` to
+see a stored handle at all — fails first, and the run never reaches the
+tab-switch or renumbering assertions this row is actually about. A second attempt
+at a targeted break, keying the handle by the frame's arena position
+(`scroll::handle(win, &format!("{}#{}", el.id, mark()))`), failed the same way and
+for the same reason: it changes what the *writer* names a handle without changing
+what the reader looks for, so the reader finds nothing and the frame-2 check fires
+again. A break that isolates the two halves would have to move the lookup and the
+storage together, and that is no longer a break — it is a different design.
+
+So the honest position is this: the deliberate break shows the check is sensitive
+to the handle being *kept*, and the tab-switch and renumbering halves are
+exercised by the probe every tier but were **not** separately shown to be
+load-bearing. The frame-8 assertion below — which reads the offset while the
+container is off screen — is what carries the tab-switch half, added after this
+break so that the probe at least asserts the property directly rather than only
+downstream of it.

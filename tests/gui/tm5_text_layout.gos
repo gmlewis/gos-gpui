@@ -1,0 +1,69 @@
+// TM5 — the text layout tokens: wrapping, clamping, tab stops, per-line spacing.
+//
+// Tier: every tier.
+//
+// Pass means three things:
+//
+//   * every layout token the binding documents is a token it actually knows —
+//     read back with `gpui::unknown_style_tokens`, so a spelling that drifted
+//     out of `is_known` fails here rather than becoming a banner on screen
+//   * a line height can be a multiple of the font size (`lh=2`) or a number of
+//     pixels (`lhpx=30`), and the absolute one does not move with the font
+//   * a text element carrying all of them renders without complaint, which the
+//     strict rule on stderr is what checks
+//
+// **Tab stops are not checked because they cannot be**: gpui 0.2.2 has no
+// tab-stop API of any kind. `gpui-binding/src`'s `view.rs` and `style.rs` are
+// the whole surface, and the evidence is in `tests/evidence/TM5.before.txt`.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("tm5 - text layout tokens", 340.0, 220.0, || {
+        let f = gpui::frame()
+
+        if f >= 2 {
+            let layout = "ws=nowrap clamp=2 truncate ellipsis textoverflow=.. lh=1.5 lhpx=22 align=right";
+            let unknown = gpui::unknown_style_tokens(layout)
+            if unknown.len() != 0 {
+                println(f"FAIL TM5 the binding does not know {unknown.len()} of the layout tokens it documents")
+                gpui::quit()
+            }
+
+            let relative = gpui::text_line_height("fs=20 lh=2")
+            let absolute = gpui::text_line_height("fs=20 lhpx=30")
+            let inherited = gpui::text_line_height("fs=20")
+
+            if relative < 39.0 || relative > 41.0 {
+                println(f"FAIL TM5 lh=2 at fs=20 gives a line height of {relative}, not 40")
+                gpui::quit()
+            } else if absolute < 29.0 || absolute > 31.0 {
+                println(f"FAIL TM5 lhpx=30 gives a line height of {absolute}, not 30")
+                gpui::quit()
+            } else if inherited <= 0.0 {
+                println(f"FAIL TM5 a style naming no line height gives {inherited}")
+                gpui::quit()
+            } else {
+                println("OK TM5 every layout token is known, and a line height is either a multiple of the font or a number of pixels")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(
+            root,
+            gpui::text(
+                "wrapping, clamping and truncation of a line that is too long to fit",
+                "color=#ffffff ws=nowrap clamp=2 truncate ellipsis textoverflow=.. lhpx=22 align=right",
+            ),
+        )
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL TM5 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

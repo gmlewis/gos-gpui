@@ -8,7 +8,9 @@ BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
     cd /tmp/gpui-before
     timeout -k 5 30 gos run --main-thread tests/gui/w9_three_windows.gos
 
-Output: nothing, and exit 124 — the timeout killed it.
+Output: nothing, and exit 124 — the timeout killed it. Re-run with the
+runner's build lock cleared first (see "The stale build lock"): still nothing,
+still 124, so the transcript is the probe and not the lock.
 
 The probe fails its very first call: `gpui::window_id`, and then
 `gpui::set_int_in`, do not exist in the pristine binding, so the view callback

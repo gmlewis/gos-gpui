@@ -1,0 +1,72 @@
+// W6 — editor instances are per (window, key).
+//
+// Tier: every tier.
+//
+// Two windows each draw `gpui::editor("note", ..)` — the same key — and each
+// holds different text under it. The editor is the binding's, not the program's:
+// it owns an entity, a caret, a selection and a focus handle, and that entity is
+// registered under `(window, key)`. A registry keyed by `key` alone would hand
+// the second window the first window's editor, and every write it makes would
+// land in the first window's state.
+//
+// The write that makes this observable is `adopt_program_text`: a single-line
+// editor normalises a newline into a space and stores the result back. So the
+// child's text carries a newline, and where "beta line" ends up says which
+// window's editor did the normalising.
+//
+// Pass means each window's own text is still its own after both editors have
+// been alive for several frames.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("w6 - editor per window", 360.0, 220.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            gpui::set_text("note", "alpha")
+            // The child's text needs normalising, so its editor will write back.
+            gpui::set_text_in(2, "note", "beta\nline")
+            gpui::open_window("w6 - child", 420.0, 80.0, 260.0, 160.0, "", || {
+                let cf = gpui::frame()
+                if cf >= 3 {
+                    let theirs = gpui::state_text("note", "")
+                    if theirs != "beta line" {
+                        println(f"FAIL W6 the child window's editor is not its own: \"{theirs}\" is where \"beta line\" belongs")
+                        gpui::quit()
+                    }
+                }
+                gpui::animate()
+                let field = gpui::editor("note", "type here", "p=4 minh=28")
+                let root = gpui::column("p=8 bg=#222222 size=full")
+                gpui::child(root, field)
+                gpui::root(root)
+            })
+        }
+
+        if f >= 3 {
+            let mine = gpui::state_text("note", "")
+            if mine != "alpha" {
+                println(f"FAIL W6 the first window's editor is not its own: \"{mine}\" is where \"alpha\" belongs")
+                gpui::quit()
+            }
+        }
+
+        if f >= 8 {
+            println("OK W6 two windows each held an editor on the same key, and neither adopted the other's text")
+            gpui::quit()
+        }
+        gpui::animate()
+
+        let field = gpui::editor("note", "type here", "p=4 minh=28")
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(root, field)
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL W6 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

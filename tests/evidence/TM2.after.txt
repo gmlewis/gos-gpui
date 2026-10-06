@@ -1,0 +1,38 @@
+TM2 — select a font family, a rem size and a line height.
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/tm2_font_family.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK TM2 a font family is selectable, and the rem size moves the inherited text and the line height with it
+
+What the probe does, and why the check is a property rather than a metric: a
+monospaced family advances every character the same distance and a proportional
+one does not, so `W` and `i` measured in both says which family was used without
+naming a number that belongs to this machine. It requires `W` and `i` to advance
+**alike** in `font=Menlo` (within 0.01px) and **unlike** in the default font (by
+more than 1px). Then it raises the rem size from the platform default to 32 and
+requires the inherited text width and the window's line height both to grow.
+
+What makes it pass:
+
+  * `gpui-binding/src/style.rs` — `font=` is a size, a family, or both:
+    `font=2xl`, `font=17`, `font=Menlo`, `font=Menlo,2xl`, `font=Menlo,17`. One
+    ramp table (`ramp`, in rems, gpui's own numbers) decides whether a lone word
+    is a size or a family, and `text_ramp` dispatches to gpui's helpers.
+  * `gpui-binding/src/view.rs` — `text_metrics` reads the same shapes, so a
+    *measurement* selects the family an element would be drawn in.
+  * `gpui-binding/src/lib.rs` — `gpui::font_families()` (the app's text system,
+    kept for the whole run, because the machine's fonts are not a per-window
+    question), `gpui::line_height()`, and `gpui::set_rem_size(px)`.
+  * `gpui-binding/src/app.rs` and `store.rs` — `Request::SetRemSize`, applied to
+    the window after the frame that asks for it.
+
+Regression: `./scripts/regress` after the change — 27 examples, silent. That
+matters here because `font=` is one of the most-used tokens in the example set:
+every `font=xs` and `font=2xl` in the 27 ports now goes through `apply_font`
+instead of the old seven-arm match, and the strict rule would have caught any of
+them changing shape.

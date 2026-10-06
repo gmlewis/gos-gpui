@@ -1,0 +1,29 @@
+SC6 — read the visible row range.
+Tier: `gos run --main-thread`, and every other tier.
+
+SC5 and SC6 share one probe, `tests/gui/sc5_list_scroll_to.gos`, because they
+share one mechanism; `SC5.before.txt` holds the full account. This file records
+the half that belongs to this row.
+
+BEFORE THE WORK, the historical transcript: at HEAD neither `gpui::list_range`
+nor `gpui::list_scroll_to` exists, so the probe is abandoned at its first call on
+frame 2, above the `gpui::animate()` that would ask for the next frame — nothing
+on stdout or stderr, exit 124.
+
+And the break that isolates this row, with `list::set_range` removed from the
+row-builder closure so the range is never recorded:
+
+    exit=0
+    FAIL SC6 a list nothing has scrolled reports rows -1..-1, not from row 0
+
+`(-1, -1)` is the sentinel `list_range` answers for a list it has never laid out,
+which is why the probe's first assertion is that the range starts at row 0 rather
+than merely that it is non-empty: the sentinel would otherwise pass.
+
+A note on gpui's own version of this, because it is why the range is recorded on
+the way past rather than read back later:
+`UniformListScrollHandle::logical_scroll_top_index` looks like the right call, and
+is `#[cfg(any(test, feature = "test-support"))]`
+(`gpui-0.2.2/src/elements/uniform_list.rs:218`) — absent from any normal build.
+The closure argument gpui hands the row builder is the same number, at the only
+place it is reliably visible.
