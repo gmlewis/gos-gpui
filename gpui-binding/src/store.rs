@@ -98,6 +98,8 @@ pub enum Request {
     SetMenus { name: String, items: Vec<String> },
     /// Observe every keystroke the window receives.
     ObserveKeys { id: String },
+    /// Put `text` on the system clipboard.
+    SetClipboard { text: String },
 }
 
 /// Pending requests, one queue per window. A frame is answered by the window it

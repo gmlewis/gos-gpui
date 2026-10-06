@@ -253,6 +253,8 @@ struct TextMetrics {
     /// The window's appearance, `"light"` or `"dark"`, as of the start of the
     /// frame. What `gpui::default_color` is chosen from.
     appearance: String,
+    /// What the system clipboard held at the start of the frame.
+    clipboard: Clipboard,
     /// The inherited line height, which `lh=` and `lhpx=` override. A
     /// `DefiniteLength` rather than pixels, because a relative one has to be
     /// resolved against the size the style *ends up* asking for.
@@ -412,6 +414,65 @@ pub fn highlight_properties(props: &str) -> String {
         names.push("fade");
     }
     names.join(",")
+}
+
+/// What the system clipboard held when the frame began.
+///
+/// Read once per frame rather than on demand, because a binding function has no
+/// `App` to read it with — the same reason the default colours and the pointer's
+/// position are cached there.
+#[derive(Clone)]
+enum Clipboard {
+    Empty,
+    Text(String),
+    /// Something that is not text. An image, in practice.
+    Other,
+}
+
+/// Reads the clipboard.
+fn read_clipboard(cx: &App) -> Clipboard {
+    match cx.read_from_clipboard() {
+        Some(item) => match item.text() {
+            Some(text) => Clipboard::Text(text),
+            None => Clipboard::Other,
+        },
+        None => Clipboard::Empty,
+    }
+}
+
+/// The clipboard's text, or `""` when it holds none.
+pub fn clipboard_text() -> String {
+    let win = window::current();
+    TEXT.with(|t| {
+        t.borrow()
+            .get(&win)
+            .map(|m| match &m.clipboard {
+                Clipboard::Text(text) => text.clone(),
+                _ => String::new(),
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// What the clipboard holds: `"text"`, `"image"`, or `"empty"`.
+///
+/// `"image"` means the item is there and none of its entries is text, which is
+/// what a screenshot or a copied picture looks like. The binding does not decode
+/// it: writing an image needs gpui's own `Image` type, which nothing here
+/// constructs. See [`crate::clipboard_text`].
+pub fn clipboard_kind() -> String {
+    let win = window::current();
+    TEXT.with(|t| {
+        t.borrow()
+            .get(&win)
+            .map(|m| match m.clipboard {
+                Clipboard::Text(_) => "text",
+                Clipboard::Other => "image",
+                Clipboard::Empty => "empty",
+            })
+            .unwrap_or("empty")
+            .to_string()
+    })
 }
 
 /// Every [`gpui::colors::Colors`] field, named, as `#rrggbbaa`.
@@ -883,6 +944,7 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
             rem: window.rem_size(),
             line_length: text_style.line_height,
             appearance: appearance_of(window.appearance()),
+            clipboard: read_clipboard(cx),
         };
         TEXT.with(|t| {
             t.borrow_mut().insert(win, metrics);

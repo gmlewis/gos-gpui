@@ -622,6 +622,34 @@ gossamer_binding::register_module!(
         view::default_color(&name)
     }
 
+    /// The system clipboard's text, as of the start of this frame, or `""` when
+    /// it holds none.
+    ///
+    /// Read at the start of the frame, not when this is called, so a program that
+    /// writes the clipboard does not see its own write until the next frame —
+    /// which is also when every other program does.
+    fn clipboard_text() -> String {
+        view::clipboard_text()
+    }
+
+    /// What the system clipboard holds: `"text"`, `"image"` or `"empty"`.
+    ///
+    /// "image" means the item is there and none of its entries is text. The binding
+    /// does not read or write image *content*: writing one needs gpui's own `Image`
+    /// type, which nothing in this crate constructs, and that is the asset pipeline
+    /// the register carries as `DW7`.
+    fn clipboard_kind() -> String {
+        view::clipboard_kind()
+    }
+
+    /// Put `text` on the system clipboard.
+    ///
+    /// Applied after this frame, so [`gpui::clipboard_text`] answers it from the
+    /// frame after next.
+    fn set_clipboard_text(text: String) {
+        store::request(store::Request::SetClipboard { text })
+    }
+
     /// The window's appearance: `"light"` or `"dark"`.
     ///
     /// The live OS appearance, asked of the window rather than assumed. gpui's two

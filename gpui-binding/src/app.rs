@@ -332,6 +332,10 @@ fn process_requests(
 
             Request::SetRemSize { px: rem } => window.set_rem_size(gpui::px(rem as f32)),
 
+            Request::SetClipboard { text } => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))
+            }
+
             Request::Tick { id, ms } => {
                 let fresh = TICKS.lock().unwrap().insert((win, id.clone()));
                 if !fresh {
