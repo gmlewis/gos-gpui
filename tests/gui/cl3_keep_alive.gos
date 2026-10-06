@@ -1,0 +1,66 @@
+// CL3 — survive with zero windows.
+//
+// Tier: every tier.
+//
+// The application normally ends when its last window closes, which is what every
+// example here relies on. This probe turns that off, closes its only window, and
+// requires the app to still be running afterwards — running well enough to open a
+// window from a callback that has no window to work with.
+//
+// That is the whole shape of a dock menu or an `activate`: the program is alive
+// with nothing on screen, and something the platform calls brings a window back.
+//
+// Pass means the revived window renders, which it can only do if the process
+// outlived the window it closed. If the app had quit, nothing would print a verdict
+// at all — which is what `scripts/probes` fails on ("exited 0 but printed no
+// verdict"), and what the break in `CL3.before.txt` produced.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("cl3 - survive the last window", 320.0, 220.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            gpui::keep_alive(true)
+            gpui::on_window_closed(|| {
+                // With no window there is no frame, so this runs in window 0's
+                // namespace — and only once, or a second close would open another.
+                if !gpui::state_bool("cl3.revived", false) {
+                    gpui::set_bool("cl3.revived", true)
+                    gpui::open_window("cl3 - revived", 420.0, 90.0, 260.0, 160.0, "", || {
+                        if gpui::frame() == 2 {
+                            println("OK CL3 the app outlived its last window, and a window opened while it had none")
+                            gpui::quit()
+                        }
+                        gpui::animate()
+                        let root = gpui::column("p=8 bg=#224422 size=full")
+                        gpui::child(root, gpui::text("revived", "color=#ffffff"))
+                        gpui::root(root)
+                    })
+                }
+            })
+        }
+
+        if f == 3 {
+            // So that a run in which the app dies here says *something*: the verdict
+            // below is the only line that distinguishes survival from a clean exit.
+            println("CL3 closing the only window")
+        }
+
+        if f == 4 {
+            gpui::close_window()
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 bg=#111111 size=full")
+        gpui::child(root, gpui::text("the only window", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL CL3 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

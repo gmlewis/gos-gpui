@@ -12,8 +12,10 @@ each of the other four exits 0 with no stderr):
 What the probe does: two windows each draw `gpui::editor("note", ..)` — the same
 key — with "alpha" in one and "beta\nline" in the other. The child's text needs
 normalising, so on its second frame its editor writes "beta line" back. Each
-window then requires that its own text is still where it belongs: the parent
-"alpha", the child "beta line".
+window then requires that it did **not** end up with the other's text, and that the
+child's was normalised — naming the two wrong outcomes rather than an exact string,
+because the editor takes focus and this probe runs on a live desktop, where a stray
+keystroke appends a character. See `W6.before.txt`.
 
 What makes it pass: `EDITORS` is keyed by `(window, key)`, and `TextEditor`
 carries the window it was created in and re-enters through `window::with(self.win,

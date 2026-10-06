@@ -59,6 +59,61 @@ impl Render for Root {
 
 // Windows a frame asked for. Kept here rather than in `store::Request`
 // because a `static Mutex` would demand a `Send` callback.
+/// Whether the application survives its last window closing.
+///
+/// Off by default: a program that opens one window and closes it expects the
+/// process to end, which is what every example here does.
+static KEEP_ALIVE: AtomicBool = AtomicBool::new(false);
+
+/// Sets whether the application survives its last window closing.
+pub fn set_keep_alive(on: bool) {
+    KEEP_ALIVE.store(on, Ordering::SeqCst);
+}
+
+/// The last window has closed.
+///
+/// The program gets first say, through its `on_window_closed` handler; if that
+/// asked for a window, one is opened and the app carries on with it. Otherwise the
+/// app ends, unless the program asked to be kept alive — which is the state a dock
+/// menu or an `activate` needs.
+fn last_window_closed(cx: &mut App) {
+    view::window_closed();
+    let pending = PENDING_OPEN.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    if !pending.is_empty() {
+        // Deferred, not here: this runs while the last window is still being torn
+        // down, and `open_window` draws the new one immediately.
+        cx.defer(move |cx| open_pending(cx, pending));
+        return;
+    }
+    if KEEP_ALIVE.load(Ordering::SeqCst) {
+        return;
+    }
+    release_retained();
+    cx.quit();
+}
+
+/// Opens the windows a frame asked for, once that frame is done.
+fn open_pending(cx: &mut App, pending: Vec<PendingOpen>) {
+    for request in pending {
+        let options = window_options(
+            request.title,
+            request.x,
+            request.y,
+            request.w,
+            request.h,
+            &request.options,
+        );
+        let view = request.view.clone();
+        // Each window gets an id of its own before it is drawn, so the very first
+        // frame of the new window already knows which one it is.
+        let child = window::allocate();
+        let _ = cx.open_window(options, move |window, cx| {
+            install_appearance_colors(window, cx);
+            cx.new(|_| Root { view: view.clone(), window: child })
+        });
+    }
+}
+
 // Windows a frame asked to open, once the frame that asked for them is done.
 // A plain comment: `rustdoc` does not document items a macro produces.
 thread_local! {
@@ -336,27 +391,7 @@ fn process_requests(
     // Windows the frame asked for, opened once it is finished.
     let pending = PENDING_OPEN.with(|q| std::mem::take(&mut *q.borrow_mut()));
     if !pending.is_empty() {
-        cx.defer(move |cx| {
-            for request in pending {
-                let options = window_options(
-                    request.title,
-                    request.x,
-                    request.y,
-                    request.w,
-                    request.h,
-                    &request.options,
-                );
-                let view = request.view.clone();
-                // Each window gets an id of its own before it is drawn, so the
-                // very first frame of the new window already knows which one it
-                // is.
-                let child = window::allocate();
-                let _ = cx.open_window(options, move |window, cx| {
-                    install_appearance_colors(window, cx);
-                    cx.new(|_| Root { view: view.clone(), window: child })
-                });
-            }
-        });
+        cx.defer(move |cx| open_pending(cx, pending));
     }
 
     animate
@@ -537,8 +572,7 @@ pub fn run_app(
         // quit the moment any window closed.
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
-                release_retained();
-                cx.quit();
+                last_window_closed(cx);
             }
         })
         .detach();

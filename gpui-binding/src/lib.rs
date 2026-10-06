@@ -888,6 +888,36 @@ gossamer_binding::register_module!(
         view::set_should_close(decide.retain())
     }
 
+    /// Keep the application alive after its last window closes.
+    ///
+    /// Off by default: a program that opens one window and closes it expects the
+    /// process to end, which is what every example here does. Turned on, closing
+    /// the last window leaves the app running with none — the state a dock menu, a
+    /// notification, or a [`gpui::on_window_closed`] handler that opens another
+    /// window needs.
+    ///
+    /// With no window there is no frame and no view callback, so the only program
+    /// code that runs is [`gpui::on_window_closed`] and whatever a `gpui::tick` or
+    /// `gpui::task` closure raises. State written then belongs to
+    /// [`gpui::window_id`] `0`.
+    fn keep_alive(on: bool) {
+        app::set_keep_alive(on)
+    }
+
+    /// Be told when the last window has closed.
+    ///
+    /// `handler` runs *after* the last window is gone, in window 0's namespace. It
+    /// is where a program re-opens a window — the app is still running at that
+    /// moment, whether or not [`gpui::keep_alive`] is on, and a window it asks for
+    /// is opened even though no frame is in flight to ask it.
+    ///
+    /// Installed once; a second call replaces the first.
+    cb_fn on_window_closed(d, handler: PersistentCallback) -> () {
+        let _ = d;
+        // Retained: it runs when the last window closes, long after this returns.
+        view::set_window_closed(handler.retain())
+    }
+
     /// Close the window this frame belongs to.
     fn close_window() {
         store::request(store::Request::CloseWindow)

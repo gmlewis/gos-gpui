@@ -1,0 +1,42 @@
+CL3 — survive with zero windows.
+
+AFTER THE WORK. Command, in this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/cl3_keep_alive.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    CL3 closing the only window
+    OK CL3 the app outlived its last window, and a window opened while it had none
+
+What the probe does: it asks to be kept alive, installs an `on_window_closed`
+handler that opens a window, and then closes the only window it has. The revived
+window renders on its second frame and prints the verdict — which it can only do if
+the process outlived the window that closed.
+
+What makes it pass:
+
+  * `gpui-binding/src/app.rs` — `keep_alive` is an application-wide flag that
+    `last_window_closed` consults; and `open_pending` was lifted out of
+    `process_requests` so that a window asked for by the close handler is opened
+    even though no frame is in flight to ask for one. `last_window_closed` defers
+    that open, because it runs while the last window is still being torn down.
+  * `gpui-binding/src/view.rs` — the retained `on_window_closed` handler and
+    `window_closed()`, which runs it **in window 0's namespace** because there are
+    no windows: whatever state it reads and writes is the state a program has when
+    it has none, which is the same namespace `gos test` runs in.
+  * `gpui-binding/src/lib.rs` — `gpui::keep_alive(on)` and
+    `cb_fn on_window_closed(handler)`.
+
+What is claimed and what is not: the row is `tested` for **the app outliving its
+last window and being able to open one with none** — which is what surviving is
+*for*, and what a dock menu or an `activate` does. `keep_alive`'s other case —
+alive with nothing to reopen — is exercised only by the break above, because
+nothing in this binding reaches program code without a window. That is named in the
+row's residual doubt, with BG4 as what would close it.
+
+Regression: `./scripts/regress` after the change — 27 examples, silent. That
+matters here more than almost anywhere: `keep_alive` is off by default precisely so
+that every example's "close the window, end the program" still holds, and the
+refactor of `open_pending` moved the main window's own opening path.

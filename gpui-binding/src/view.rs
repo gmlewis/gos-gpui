@@ -684,6 +684,33 @@ pub fn take_should_close_for_platform(win: i64) -> Option<RetainedCallback> {
     SHOULD_CLOSE.with(|h| h.borrow().get(&win).cloned())
 }
 
+thread_local! {
+    /// The program's last-window-closed handler, if it installed one.
+    static WINDOW_CLOSED: RefCell<Option<RetainedCallback>> = const { RefCell::new(None) };
+}
+
+/// Installs the handler that runs when the last window has closed.
+pub fn set_window_closed(handler: RetainedCallback) {
+    WINDOW_CLOSED.with(|h| *h.borrow_mut() = Some(handler));
+}
+
+/// Runs the program's last-window-closed handler, answering whether there was
+/// one.
+///
+/// It runs in **window 0's namespace**, because there are no windows: whatever
+/// state it reads and writes is the state a program has when it has no window,
+/// which is the same namespace `gos test` runs in.
+pub fn window_closed() -> bool {
+    let handler = WINDOW_CLOSED.with(|h| h.borrow().clone());
+    let Some(handler) = handler else {
+        return false;
+    };
+    window::with(0, || {
+        let _ = invoke(&handler, vec![]);
+    });
+    true
+}
+
 /// Asks an already-taken handler, for the platform's own close request.
 pub fn ask_should_close(win: i64, handler: &RetainedCallback) -> bool {
     match window::with(win, || invoke(handler, vec![])) {

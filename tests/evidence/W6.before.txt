@@ -34,6 +34,22 @@ The failure is exactly the shape the row predicts: the child's editor was the
 parent's, so the normalisation the child's text needed never happened in the
 child's state, and `"beta\nline"` is still sitting there.
 
+**A later run of this probe failed once for a reason that was not the binding.**
+The first attempt inside a batch said:
+
+    FAIL W6 the child window's editor is not its own: "beta liney" is where "beta line" belongs
+
+`"beta liney"` — one character appended. The editor takes focus when it is created
+and these probes run on a live desktop, so a stray keystroke from whoever is at the
+keyboard lands in it. The check was therefore rewritten to name only the two
+*wrong* outcomes — the text was never normalised, or the editor took the other
+window's text — with the transcript below, and it still catches the break above:
+
+    FAIL W6 the child's editor never normalised its own window's text
+
+That is the third environment trap this project has produced, after the stale build
+lock and the window server: see "The probes share the desktop with a human".
+
 This technique — break the mechanism, watch the check fail, restore — is the
 answer to a row whose historical red can only be an unresolved symbol, and it is
 worth using whenever the capability *is* the reader or the setter. It does not
