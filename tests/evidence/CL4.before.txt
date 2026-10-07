@@ -1,0 +1,40 @@
+CL4 — a queued `window.prompt` with program-supplied buttons.
+
+BEFORE THE WORK, and the red is a good one: **behavioural, not an unresolved symbol.** The queue
+itself was built and tested in round 50 (`gpui::prompt` and `prompt_answer`), so the probe compiles,
+queues two prompts in one frame, prints what the queue holds, and then… nothing appears. No sheet, no
+answer, and the probe gives up on its own and says so:
+
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl4_prompt.gos 60
+    window-guard: windows ALLOWED (DSH_ALLOW_WINDOWS=1)
+    CL4 queued two prompts in one frame: 1 and 2 — the first sheet should be up, the second waiting
+    CL4 the head is "1|CL4 — one of two|Click Alpha, Beta or Cancel." with buttons #["Alpha", "Beta", "Cancel"]
+    CL4 waiting, 0 of 2 answers so far, 5.003068709 seconds in
+    CL4 waiting, 0 of 2 answers so far, 26.70997 seconds in
+    FAIL CL4 only 0 of 2 answers arrived — a sheet either never came up or was never answered
+    no runners left
+
+That is the row's obstacle in one transcript: a program can *ask* and nothing *shows*. The gap between
+round 50's queue and this row is exactly the call to the platform.
+
+**The first attempt at a check was narrower than it looked — for the tenth time in this run.** The
+probe's patience was counted in **frames**, and the liveness lines above are the evidence against it:
+5.0 seconds, then 26.7 — one frame every twenty-odd seconds. macOS throttles the animation frames of a
+window that is not frontmost, so a frame-based patience expires eventually, or not at all, and a
+frame-based *poll* would leave an answered sheet sitting there with the program's event arriving late.
+Two changes followed, and both are in the finished code:
+
+  * the probe's patience and its liveness line are counted in **seconds** (`gpui::now()`), not frames;
+  * the binding collects the answer **on a 100 ms timer in a task**, not once a frame — so a click is
+    picked up whether or not the window is being painted.
+
+**The second attempt taught the other half of the same lesson.** The probe printed its verdict and
+then printed it again on every frame that followed (`quit` still lets a few paint) — a verdict repeated
+thirty times is noise, not evidence. The verdict now fires once, behind a `done` flag.
+
+**And a third observation, which is why the round asked a human rather than guessing.** A run with the
+sheet up and nobody clicking produced no verdict at all: the harness killed it at its bound with the
+transcript ending at `CL4 a sheet came up for prompt.shown|1`. The window was raised, the sheet went up,
+and whether anybody *saw* it is not something a transcript can say. The user was asked instead of
+assumed — and it turned out they had moved on to other things, which is exactly the failure a
+"self-terminating probe" cannot report about itself.

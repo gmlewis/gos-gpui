@@ -8,11 +8,14 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
-use gpui::{px, size, AnyElement, App, Application, Context, EntityId, Render, Timer, Window};
+use gpui::{
+    px, size, AnyElement, App, Application, Context, EntityId, PromptLevel, Render, Timer, Window,
+};
 
 use gossamer_binding::{NativeDispatch, RetainedCallback};
 
 use crate::options::{self, Start};
+use crate::prompts;
 use crate::settings;
 use crate::store::{self, Request};
 use crate::view;
@@ -50,6 +53,9 @@ impl Render for Root {
                 // The program asked to keep animating: line up the next frame.
                 window.request_animation_frame();
             }
+            // The prompt queue's turn: raise its head as a platform sheet, and collect the answer to
+            // whichever sheet is up.
+            pump_prompt(win, window, cx);
 
             element
         })
@@ -58,6 +64,82 @@ impl Render for Root {
 
 // Windows a frame asked for. Kept here rather than in `store::Request`
 // because a `static Mutex` would demand a `Send` callback.
+thread_local! {
+    /// Which windows have a prompt-task running. One at a time per window: gpui can only have one
+    /// prompt up, and a second raised over a live one is a call it refuses in its own words
+    /// (`unreachable!("Re-entrant window prompting is not supported by GPUI")`).
+    static IN_FLIGHT: RefCell<HashSet<i64>> = RefCell::new(HashSet::new());
+}
+
+/// Turns `win`'s prompt queue into platform sheets, one at a time, collecting each answer.
+///
+/// This is where [`crate::prompts`]' queue becomes a *queue*: the head comes up and the next waits for
+/// the answer to arrive. That is the whole difference between a queue of prompts and a list of
+/// questions, and it is why gpui's one-prompt-at-a-time rule is not a program's problem.
+///
+/// **The answer is waited for on a timer, not on a frame.** macOS throttles the animation frames of a
+/// window that is not frontmost — measured this round at one frame every twenty seconds — so a
+/// per-frame poll would leave an answered sheet sitting there, and the program's event would arrive
+/// late. `try_recv` on a timer keeps running while the window is idle, and `cx.update` is how the task
+/// gets the window back to raise the next sheet.
+fn pump_prompt(win: i64, window: &mut Window, cx: &mut Context<Root>) {
+    if IN_FLIGHT.with(|flight| flight.borrow().contains(&win)) {
+        return;
+    }
+    if prompts::head_in(win).is_none() {
+        return;
+    }
+    IN_FLIGHT.with(|flight| {
+        flight.borrow_mut().insert(win);
+    });
+    let entity = cx.entity().entity_id();
+    window
+        .spawn(cx, async move |cx| {
+            loop {
+                // The head's turn. If the window has gone, there is nothing to raise.
+                let raised = cx
+                    .update(move |window, cx| {
+                        let prompt = prompts::head_in(win)?;
+                        let labels: Vec<&str> =
+                            prompt.buttons.iter().map(|label| label.as_str()).collect();
+                        let asked = window.prompt(
+                            PromptLevel::Info,
+                            &prompt.message,
+                            Some(&prompt.title),
+                            &labels,
+                            cx,
+                        );
+                        Some((prompt.id, asked))
+                    })
+                    .ok()
+                    .flatten();
+                let Some((id, mut asked)) = raised else {
+                    break;
+                };
+                // A program can hear that a question is on screen, which is the only way to tell a
+                // sheet that never came up from one nobody answered.
+                window::with(win, || {
+                    store::push_event_with_in(win, "prompt.shown", format!("{id}"));
+                });
+
+                let choice = loop {
+                    Timer::after(Duration::from_millis(100)).await;
+                    if let Ok(Some(choice)) = asked.try_recv() {
+                        break choice;
+                    }
+                };
+                window::with(win, || {
+                    prompts::answer_and_raise(win, id, choice as i64);
+                });
+                let _ = cx.update(|_window, cx| cx.notify(entity));
+            }
+            IN_FLIGHT.with(|flight| {
+                flight.borrow_mut().remove(&win);
+            });
+        })
+        .detach();
+}
+
 /// Whether the application survives its last window closing.
 ///
 /// Off by default: a program that opens one window and closes it expects the

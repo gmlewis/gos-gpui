@@ -516,14 +516,7 @@ gossamer_binding::register_module!(
     /// answer in the same place as every other event. A queued prompt cannot be answered before it
     /// comes up.
     fn prompt_answer(id: i64, button: i64) -> bool {
-        let win = crate::window::current();
-        match prompts::answer_in(win, id, button) {
-            Some(_) => {
-                store::push_event_with_in(win, "prompt", format!("{id}|{button}"));
-                true
-            }
-            None => false,
-        }
+        prompts::answer_and_raise(crate::window::current(), id, button)
     }
 
     /// Drop the prompt `id` wherever it is in this window's queue. Answers whether it was there.
@@ -560,13 +553,7 @@ gossamer_binding::register_module!(
 
     /// [`gpui::prompt_answer`] in a window named by hand.
     fn prompt_answer_in(win: i64, id: i64, button: i64) -> bool {
-        match prompts::answer_in(win, id, button) {
-            Some(_) => {
-                store::push_event_with_in(win, "prompt", format!("{id}|{button}"));
-                true
-            }
-            None => false,
-        }
+        prompts::answer_and_raise(win, id, button)
     }
 
     /// [`gpui::prompts_clear`] in a window named by hand.

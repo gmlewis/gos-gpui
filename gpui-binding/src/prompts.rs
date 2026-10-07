@@ -128,6 +128,20 @@ pub fn clear_in(win: i64) -> i64 {
     })
 }
 
+/// Answers `id` in `win` with the button at `button`, and raises `"prompt|<id>|<button>"` from that
+/// window. Answers whether that was the one whose turn it was.
+///
+/// **One function, three callers**: `gpui::prompt_answer`, its `_in` twin, and the platform sheet's
+/// answer in `app.rs`. A program that draws its own dialog and a program that lets the platform draw
+/// one are therefore answered by the same code, and cannot come to mean different things.
+pub fn answer_and_raise(win: i64, id: i64, button: i64) -> bool {
+    if answer_in(win, id, button).is_none() {
+        return false;
+    }
+    crate::store::push_event_with_in(win, "prompt", format!("{id}|{button}"));
+    true
+}
+
 /// `"<id>|<title>|<message>"` — the head, as a program drawing its own dialog reads it.
 ///
 /// The first two `|` are the separators; everything after the second is the message, so a message

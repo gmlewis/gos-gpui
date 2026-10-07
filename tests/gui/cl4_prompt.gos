@@ -1,0 +1,90 @@
+// CL4 — a queued `window.prompt` with program-supplied buttons.
+//
+// A probe, and one that needs a **person**: the dialog is the platform's — on macOS a sheet attached
+// to this window (`platform/mac/window.rs:1121`, `beginSheetModalForWindow:`) — and nothing in the
+// binding can click it. It asks **two** prompts in one frame, because the row's word is "queued": the
+// second must wait for the first, and gpui refuses a re-entrant prompt outright
+// (`unreachable!("Re-entrant window prompting is not supported by GPUI")`).
+//
+// Pass means: two sheets appear one after the other, each carrying the buttons the program supplied,
+// and each answer arrives as `"prompt|<id>|<button>"` — the button being the index of what was
+// clicked. Nobody clicks within the probe's patience: it says how far it got and quits rather than
+// leaving a sheet up.
+//
+// Run it with `DSH_ALLOW_WINDOWS=1 ./scripts/tiers tests/gui/cl4_prompt.gos` or
+// `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl4_prompt.gos 45`.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("CL4 — queued prompts", 520.0, 240.0, || {
+        if !gpui::state_bool("asked", false) {
+            gpui::set_bool("asked", true)
+            let first = gpui::prompt("CL4 — one of two", "Click Alpha, Beta or Cancel.", "Alpha;Beta;Cancel")
+            let second = gpui::prompt("CL4 — two of two", "The queue's turn: now click Done.", "Done")
+            gpui::set_int("first", first)
+            gpui::set_int("second", second)
+            println(
+                "CL4 queued two prompts in one frame: {} and {} — the first sheet should be up, the second waiting",
+                first, second,
+            )
+            println(
+                "CL4 the head is \"{}\" with buttons {}",
+                gpui::prompt_current(), gpui::prompt_buttons(),
+            )
+        }
+
+        let first = gpui::state_int("first", 0)
+        let second = gpui::state_int("second", 0)
+        let heard = gpui::state_int("heard", 0)
+
+        let replies = gpui::take_events()
+        let mut answers = heard
+        for event in replies {
+            let id, _payload = gpui::event_parts(event)
+            if id == "prompt.shown" {
+                println("CL4 a sheet came up for {}", event)
+            } else if id == "prompt" {
+                answers = answers + 1
+                println("CL4 heard answer {}: {}", answers, event)
+            }
+        }
+        gpui::set_int("heard", answers)
+
+        // Said once: `quit` lets a few more frames paint, and a verdict printed on every one of
+        // them is noise, not evidence.
+        let done = gpui::state_bool("done", false)
+        if !done && answers >= 2 {
+            gpui::set_bool("done", true)
+            println("OK CL4 two queued prompts came up in turn and both answers reached the program: prompt|{}|… then prompt|{}|…", first, second)
+            gpui::quit()
+        } else if !done && gpui::now() > 90.0 {
+            gpui::set_bool("done", true)
+            println(
+                "FAIL CL4 only {} of 2 answers arrived — a sheet either never came up or was never answered",
+                answers,
+            )
+            gpui::quit()
+        } else if !done && gpui::now() - gpui::state_float("said", 0.0) > 10.0 {
+            // Liveness, so a transcript shows the probe is alive while it waits. **Time**, not
+            // frames: a window that is not frontmost has its animation frames throttled, and a
+            // frame-based patience would then never expire.
+            gpui::set_float("said", gpui::now())
+            println(f"CL4 waiting, {answers} of 2 answers so far, {gpui::now()} seconds in")
+        }
+
+        // Keeps frames coming, so the patience above can expire even when the window is otherwise
+        // idle — and so a sheet that is up does not stop the probe from counting.
+        gpui::animate()
+        let root = gpui::column("p=10 size=full bg=#111111")
+        gpui::child(root, gpui::text("CL4 — answer the sheet, twice", "color=#ffffff"))
+        gpui::child(root, gpui::text(f"waiting: {gpui::now()}s", "color=#888888"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL CL4 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}
