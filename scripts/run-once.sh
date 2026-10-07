@@ -21,7 +21,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # Every window this project opens goes through this, and this script only ever runs a program.
-$(dirname "$0")/window-guard.sh" --why >&2 || exit $?
+"$(dirname "$0")/window-guard.sh" --why >&2 || exit $?
 
 export GOSSAMER_ROOT="${GOSSAMER_ROOT:-/Users/glenn/src/github.com/danpozmanter/gossamer}"
 
@@ -35,7 +35,7 @@ secs="${2:-40}"
 
 [ -f "$prog" ] || { echo "run-once: no such program: $prog" >&2; exit 2; }
 
-$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
+"$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
 
 timeout -k 5 "$secs" gos run --main-thread "$prog"
 status=$?

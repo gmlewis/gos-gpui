@@ -34,7 +34,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # This one both opens a window and changes the machine's appearance; it needs asking for twice.
-$(dirname "$0")/window-guard.sh" --why >&2 || exit $?
+"$(dirname "$0")/window-guard.sh" --why >&2 || exit $?
 
 if [ $# -lt 1 ]; then
   echo "usage: scripts/appearance-toggle.sh <command...>" >&2

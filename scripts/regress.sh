@@ -30,16 +30,16 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # A stale build lock makes every run below look like a hang; clear it first.
-$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
+"$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
 
 # Whether anything may open a window at all. The `check` tier never does; every run does.
 windows=0
-# Twenty-seven runs, twenty-seven windows: the bulk key, not the single one. See scripts/window-guard.
-$(dirname "$0")/window-guard.sh" --bulk "27 example windows" && windows=1
+# Twenty-seven runs, twenty-seven windows: the bulk key, not the single one. See scripts/window-guard.sh.
+"$(dirname "$0")/window-guard.sh" --bulk "27 example windows" && windows=1
 
 # A locked screen paints nothing: refuse rather than report every run as a hang.
 if [ "$windows" = 1 ]; then
-  $(dirname "$0")/screen-awake.sh" || exit $?
+  "$(dirname "$0")/screen-awake.sh" || exit $?
 fi
 
 export GOSSAMER_ROOT="${GOSSAMER_ROOT:-/Users/glenn/src/github.com/danpozmanter/gossamer}"

@@ -22,16 +22,16 @@ cd "$(dirname "$0")/.."
 # A probe opens a real window on someone's desktop, so this refuses unless asked for by name.
 # The count is read from the directory rather than written down, so it cannot go stale.
 probe_count=$(ls tests/gui/*.gos 2>/dev/null | wc -l | tr -d ' ')
-$(dirname "$0")/window-guard.sh" --bulk "$probe_count probes, each its own window" >&2 || {
+"$(dirname "$0")/window-guard.sh" --bulk "$probe_count probes, each its own window" >&2 || {
   echo "probes: every probe opens a window, so none were run" >&2
   exit 3
 }
 
 # A stale build lock makes every run below look like a hang; clear it first.
-$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
+"$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
 
 # A locked screen paints nothing: refuse rather than report every run as a hang.
-$(dirname "$0")/screen-awake.sh" || exit $?
+"$(dirname "$0")/screen-awake.sh" || exit $?
 
 export GOSSAMER_ROOT="${GOSSAMER_ROOT:-/Users/glenn/src/github.com/danpozmanter/gossamer}"
 
@@ -124,7 +124,7 @@ for p in "${probes[@]}"; do
   # blocks on it for five minutes and reads as a hang. That is not hypothetical —
   # it happened to `w4_requests` inside a batch, and passed the moment it was run
   # alone.
-  $(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
+  "$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
 
   if run_probe "$p" "$noted"; then
     echo "ok     $name: $(grep -m1 '^OK ' "$log")"
@@ -139,7 +139,7 @@ for p in "${probes[@]}"; do
   # is unreliable. Flaky counts as a pass and is named in the summary and on its
   # own line.
   first="$(sed -n '1p' "$log")"
-  $(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
+  "$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
   if run_probe "$p" "$noted"; then
     echo "FLAKY  $name: passed on retry; the first attempt said: ${first:-no output}"
     flaky=$((flaky + 1))

@@ -25,15 +25,15 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # A stale build lock makes every run below look like a hang; clear it first.
-$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
+"$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
 
 # Whether anything may open a window at all. `check` never does; the other four all do.
 windows=0
-$(dirname "$0")/window-guard.sh" && windows=1
+"$(dirname "$0")/window-guard.sh" && windows=1
 
 # A locked screen paints nothing: refuse rather than report every run as a hang.
 if [ "$windows" = 1 ]; then
-  $(dirname "$0")/screen-awake.sh" || exit $?
+  "$(dirname "$0")/screen-awake.sh" || exit $?
 fi
 
 export GOSSAMER_ROOT="${GOSSAMER_ROOT:-/Users/glenn/src/github.com/danpozmanter/gossamer}"
