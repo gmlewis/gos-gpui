@@ -1,0 +1,61 @@
+// MN4 — set the window title at runtime, with a dirty marker.
+//
+// **One window, no clicks.** Three frames and it quits itself: read the title the window opened with,
+// ask for a new one with a marker on it, then read back what the *platform* says the title is now.
+//
+// Pass means the platform's answer matches at both ends — the title the window was given by
+// `gpui::run`, and the one `gpui::set_window_title` asked for afterwards. The read-back is what makes
+// this a capability rather than a wish: `gpui::window_option("title")` reports what the window says,
+// not what this crate asked for, and the binding reads it off the window rather than remembering the
+// argument.
+//
+// A dirty marker is the program's to compose — `f"{name} — edited"` — and nothing in the binding needs
+// to know what "edited" means. That is the row's second half, and it is one string concatenation.
+//
+// Run it with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mn4_title.gos 30`. The window is up for
+// about a second; watch its titlebar change.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("MN4 — before", 480.0, 200.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            let opened = gpui::window_option("title")
+            println(f"MN4 the window opened with the platform's title \"{opened}\"")
+            if opened != "MN4 — before" {
+                println("FAIL MN4 the title the window opened with is not the one it was given")
+                gpui::quit()
+                return
+            }
+        }
+
+        if f == 2 {
+            gpui::set_window_title("MN4 — after (edited)")
+            println("MN4 asked for \"MN4 — after (edited)\" — the marker is the program's")
+        }
+
+        if f >= 3 {
+            let now = gpui::window_option("title")
+            if now == "MN4 — after (edited)" {
+                println(f"MN4 the platform now reports \"{now}\"")
+                println("OK MN4 the title was set at runtime, with a marker the program composed, and read back off the platform")
+            } else {
+                println(f"FAIL MN4 the platform still reports \"{now}\"")
+            }
+            gpui::quit()
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=10 size=full bg=#111111")
+        gpui::child(root, gpui::text("MN4 — watch this window's title change", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL MN4 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

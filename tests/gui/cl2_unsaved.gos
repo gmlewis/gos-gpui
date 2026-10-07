@@ -1,0 +1,121 @@
+// CL2 — an unsaved-changes prompt on close, end to end.
+//
+// **One window, one click.** The program installs a should-close guard, marks itself dirty and asks to
+// close *itself*, so the flow starts on its own and the only thing a person does is answer the sheet:
+// click **Discard**.
+//
+// The row's obstacle was "needs CL1 + CL4; nothing today", and both are now done — CL1's guard and CL4's
+// queued platform prompt — so this row needs no binding work at all. It is the *flow* that is being
+// checked, and it has five steps that have to happen in order:
+//
+//   1. the close is asked for while the program is dirty;
+//   2. the guard refuses it, so the window stays;
+//   3. the guard queues a prompt, and the platform raises it;
+//   4. the person answers, and the answer reaches the program as an event;
+//   5. the program drops the dirty mark and asks again — and *this* time the window really goes.
+//
+// Pass means all five, in that order, in the transcript. Clicking Cancel or Save is not a failure of
+// the check but a different answer: the guard keeps the window up and asks again, which is what an
+// unsaved-changes dialog is for.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("CL2 — unsaved changes", 560.0, 240.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            gpui::set_bool("dirty", true)
+            gpui::on_window_should_close(|| -> bool {
+                if !gpui::state_bool("dirty", true) {
+                    // The verdict is printed *here*, while the window is still alive. Printed after
+                    // `gpui::run` returns it is lost: stdout is block-buffered when it is a pipe, and
+                    // the process goes away with the last window before anything flushes it. Measured
+                    // on the first run of this probe, whose two closing lines never appeared.
+                    println("CL2 step 5: the guard allowed the close — nothing is unsaved now")
+                    println("OK CL2 the close was refused while unsaved, the question was raised and answered, and the guard has released the window")
+                    return true
+                }
+                if !gpui::state_bool("asking", false) {
+                    gpui::set_bool("asking", true)
+                    let id = gpui::prompt(
+                        "CL2 — unsaved changes",
+                        "Save, Discard or Cancel?",
+                        "Save;Discard;Cancel",
+                    )
+                    gpui::set_int("prompt", id)
+                    println(f"CL2 step 3: the guard queued a prompt, id {id} — please click Discard")
+                }
+                println("CL2 step 2: the guard refused the close, so the window stays")
+                false
+            })
+        }
+
+        // The close is asked for by the program, so nobody has to find the window's close button.
+        if f == 2 {
+            println("CL2 step 1: asking to close while there is unsaved work")
+            gpui::close_window()
+        }
+
+        for event in gpui::take_events() {
+            let id, payload = gpui::event_parts(event)
+            if id == "prompt.shown" {
+                println("CL2 a sheet came up: {}", event)
+            } else if id == "prompt" {
+                let asked = f"{gpui::state_int("prompt", 0)}"
+                // The button's **name**, not only its index. The first run of this probe printed
+                // "that answer keeps the window up" for both Save and Cancel, and the person reading the
+                // transcript — this run's own owner — had to correct the record. A probe that cannot say
+                // which button was pressed is a probe whose evidence somebody has to take on trust.
+                let label = if payload == f"{asked}|0" {
+                    "Save"
+                } else if payload == f"{asked}|1" {
+                    "Discard"
+                } else {
+                    "Cancel"
+                }
+                println(f"CL2 step 4: {label} was pressed — {event}")
+                if label == "Discard" {
+                    println("CL2 Discard: dropping the dirty mark and asking to close again")
+                    gpui::set_bool("dirty", false)
+                    gpui::close_window()
+                } else if gpui::state_int("retries", 0) < 1 {
+                    // Save and Cancel both leave this probe's window up: it has nothing to save to, and
+                    // a program that *does* would save and then close. It re-asks **once** so the other
+                    // answer is still one click away, and then stops: unbounded re-asking made the owner
+                    // click four times to get out of a question they had already answered.
+                    println(f"CL2 {label} leaves this probe's window up — asking once more, then stopping")
+                    gpui::set_int("retries", gpui::state_int("retries", 0) + 1)
+                    gpui::set_bool("asking", false)
+                    gpui::close_window()
+                } else {
+                    println(f"CL2 {label} again: the window stays up, which is what this probe does with it — stopping")
+                    gpui::quit()
+                }
+            }
+        }
+
+        if gpui::now() > 120.0 && gpui::state_bool("dirty", true) {
+            println("FAIL CL2 nobody answered the question, so the flow never finished")
+            gpui::quit()
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=10 size=full bg=#111111")
+        gpui::child(root, gpui::text("CL2 — unsaved changes. Answer the sheet with Discard.", "color=#ffffff"))
+        gpui::child(root, gpui::text(f"unsaved: {gpui::state_bool("dirty", true)} — {gpui::now()}s", "color=#888888"))
+        gpui::root(root)
+    })
+
+    // Reached only when the window really closed. These two lines may never appear — stdout is
+    // block-buffered when it is a pipe and the process ends with the last window — which is why the
+    // verdict is printed in step 5 instead. That they *were* reached is what the process ending before
+    // its bound proves.
+    println("CL2 the window is gone and gpui::run has returned")
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL CL2 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+    println("OK CL2 the close was refused while unsaved, the question was raised and answered, and the second close went through")
+}

@@ -1,0 +1,15 @@
+CL6 — the save-file picker (`prompt_for_new_path`).
+
+AFTER THE WORK. **One window, one press, and the panel opened where it was asked to.**
+
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl6_save_file.gos 150
+    CL6 asked where to save — the platform's panel should be up, in /tmp, with a name suggested
+    CL6 the panel answered "/private/tmp/gpui-cl6-saved.txt"
+    OK CL6 the save panel's path reached the program, and the panel opened where it was asked to
+
+Two things are visible in that path. It is **absolute**, and it is in `/tmp` — the directory the program asked
+for — which is the half of this row that could most easily have been quietly wrong. `/private/tmp` is macOS's own
+spelling of `/tmp`, and the binding passes through what the platform says rather than tidying it.
+
+Residual doubt: the compiled tiers are unrun. The suggested *name* reached the panel as asked, which the person
+performing the save confirms by having seen it prefilled; the transcript cannot show that. Tiers: `check`, `run`.

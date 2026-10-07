@@ -200,7 +200,27 @@ pub enum Request {
     /// Close another window, named by the id [`crate::window::current`] would
     /// have answered in it.
     CloseWindowAt { target: i64 },
-    /// Resize the window this frame belongs to.
+    /// Ask which window the platform calls active, for the asking window.
+    AskActiveWindow,
+    /// Hide the whole application, as the platform's Hide does.
+    HideApplication,
+    /// Ask the platform to re-read its windows — after a display change.
+    RefreshWindows,
+    /// Show a path in the platform's file manager.
+    Reveal { path: String },
+    /// Hand a path to the platform's own handler for its kind.
+    OpenWithSystem { path: String },
+    /// Open a URL in whatever the platform uses for URLs.
+    OpenUrl { url: String },
+    /// Open the platform's file or folder picker for `id`.
+    OpenPicker { id: String, what: String, prompt: String },
+    /// Open the platform's save panel for `id`.
+    SavePicker { id: String, directory: String, suggested: String },
+    /// Give focus to the element with this id, if it has a handle.
+    Focus { id: String },
+    /// Set the window's title, and read back what the platform says it is now.
+    SetTitle { title: String },
+    /// Write the current window's bounds to a settings file under `key`.
     ResizeWindow { w: f64, h: f64 },
     /// Toggle the window in and out of fullscreen.
     ToggleFullscreen,

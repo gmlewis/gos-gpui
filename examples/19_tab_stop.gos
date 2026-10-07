@@ -7,7 +7,12 @@
 //
 // The focus *order* is real: the boxes carry `focusable tabstop=1 tabindex=N`
 // and Tab calls `gpui::focus_next()`, so GPUI's own tab machinery is what
-// moves. The keys are real too, in the one shape the binding offers:
+// moves. **That last part is now in doubt rather than disproved (round 70):** a
+// probe whose window registers no `~root` handle — `gpui::on_keys` is what installs
+// one, and it does not — found `gpui::focus_next` reaching no element at all in
+// eleven presses across two runs, while focusing a handle *directly* with
+// `gpui::focus` worked as soon as it was tried. Whether the walk works here, where
+// the root *is* registered, has not been measured since. The keys are real too, in the one shape the binding offers:
 // upstream's `KeyBinding::new("tab", Tab, None)` and
 // `KeyBinding::new("shift-tab", TabPrev, None)` cannot be registered from here,
 // so they are read as `key|<stroke>` events instead — and both arrive

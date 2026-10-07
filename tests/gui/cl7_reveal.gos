@@ -1,0 +1,79 @@
+// CL7 — reveal in the file manager, and open with the platform's handler.
+//
+// **One window, and two windows of the platform's making.** This row's capability is that the *operating
+// system* does something — Finder shows a file, and the default application opens it — so the check is the one
+// instrument that can see those: **the person watching**, whose confirmation comes back as a button press and
+// therefore into this transcript where the evidence belongs.
+//
+// The probe writes `/tmp/gpui-cl7-reveal-me.txt`, asks the file manager to reveal it, then a few seconds later
+// asks the platform to open it, and offers two buttons: `I saw the file manager` and `I saw the file open`.
+// Both pressed is the row; neither before the patience is a failure with what was seen named.
+//
+// **Running this puts windows on the screen by design** — a Finder window, then whichever application owns
+// `.txt`. It is run only when its owner asks for it.
+//
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl7_reveal.gos 90`.
+
+use gpui
+use std::process
+use std::fs
+
+const PICKED: &str = "/tmp/gpui-cl7-reveal-me.txt"
+
+fn main() {
+    let _ = fs::write(*PICKED, "CL7 — the file the file manager is asked to reveal".as_bytes())
+
+    let outcome = gpui::run("CL7 — reveal and open", 620.0, 260.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            let _ = gpui::take_events()
+            gpui::reveal(*PICKED)
+            println("CL7 step 1: asked the file manager to reveal /tmp/gpui-cl7-reveal-me.txt — a Finder window should have appeared showing it")
+        }
+
+        if f == 200 {
+            gpui::open_with_system(*PICKED)
+            println("CL7 step 2: asked the platform to open the file — the application that owns .txt should have opened it")
+        }
+
+        for event in gpui::take_events() {
+            let name, _payload = gpui::event_parts(event)
+            if name == "cl7.saw.finder" {
+                println("CL7 the person watching confirms the file manager showed the file")
+                gpui::set_bool("cl7.saw.finder", true)
+            } else if name == "cl7.saw.opened" {
+                println("CL7 the person watching confirms the file was opened by its handler")
+                gpui::set_bool("cl7.saw.opened", true)
+            }
+        }
+
+        let saw_finder = gpui::state_bool("cl7.saw.finder", false)
+        let saw_opened = gpui::state_bool("cl7.saw.opened", false)
+        if saw_finder && saw_opened {
+            println("OK CL7 the file manager revealed the path and the platform's handler opened it, both confirmed by the person watching")
+            gpui::quit()
+            return
+        }
+
+        if gpui::now() > 75.0 {
+            println(f"FAIL CL7 after 75s the person confirmed file_manager={saw_finder}, opened={saw_opened}")
+            gpui::quit()
+            return
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=10 gap=6 size=full bg=#111111")
+        gpui::child(root, gpui::text("CL7 — two things should happen outside this window", "color=#ffffff"))
+        gpui::child(root, gpui::text("1. Finder shows /tmp/gpui-cl7-reveal-me.txt   2. that file opens in its app", "color=#aaaaaa"))
+        gpui::child(root, gpui::button("cl7.saw.finder", "I saw the file manager", "p=4 bg=#313244 color=#ffffff"))
+        gpui::child(root, gpui::button("cl7.saw.opened", "I saw the file open", "p=4 bg=#313244 color=#ffffff"))
+        gpui::child(root, gpui::text(f"{gpui::now()}s", "color=#888888"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL CL7 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

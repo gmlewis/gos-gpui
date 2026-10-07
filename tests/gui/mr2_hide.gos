@@ -1,0 +1,67 @@
+// MR2 — the `App` accessor batch: hiding the application, refreshing its windows, and the keyboard layout.
+//
+// **One window, one press, and one thing only you can see.** `gpui::hide()` puts the whole application away —
+// every window of it — and nothing comes back to the binding, so the instrument is the person watching: the
+// probe asks the platform to hide, and you bring it back from the dock and press one button.
+//
+// `gpui::refresh()` has **no observable at all**: it asks the platform to re-read its windows, and this binding
+// neither waits for it nor hears from it. The probe calls it so the call itself is exercised, and says plainly
+// that nothing can be concluded from it.
+//
+// `gpui::keyboard_layout()` is reported on the first frame — a real answer off the platform, and the
+// "companions" half of the row, which already existed.
+//
+// This is the Hide that a program cannot get from its application menu: gpui 0.2.2 offers no `os_action` for it,
+// which is why MN2's row found it inexpressible there.
+//
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mr2_hide.gos 150`.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("MR2 — hide the application", 600.0, 240.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            println(f"MR2 the keyboard layout this machine is using is \"{gpui::keyboard_layout()}\"")
+        }
+
+        if f == 2 {
+            let _ = gpui::take_events()
+            gpui::refresh()
+            println("MR2 called refresh() — no observable, and none claimed")
+            gpui::hide()
+            println("MR2 called hide() — the whole application should now be off the screen: bring it back from the dock, then press the button")
+        }
+
+        for event in gpui::take_events() {
+            let name, _payload = gpui::event_parts(event)
+            if name == "mr2.saw.hidden" {
+                println("MR2 the person watching confirms the application went away and came back")
+                println("OK MR2 hide() reached the platform and put the application away; refresh() was exercised with nothing to show for it")
+                gpui::quit()
+                return
+            }
+        }
+
+        if gpui::now() > 120.0 {
+            println("FAIL MR2 after 120s the person did not confirm the application had gone away")
+            gpui::quit()
+            return
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=10 gap=6 size=full bg=#111111")
+        gpui::child(root, gpui::text("MR2 — the application should have hidden itself", "color=#ffffff"))
+        gpui::child(root, gpui::text("bring it back from the dock, then press:", "color=#aaaaaa"))
+        gpui::child(root, gpui::button("mr2.saw.hidden", "I saw it go away and come back", "p=4 bg=#313244 color=#ffffff"))
+        gpui::child(root, gpui::text(f"{gpui::now()}s", "color=#888888"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL MR2 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

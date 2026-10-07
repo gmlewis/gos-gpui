@@ -276,6 +276,26 @@ fn close_named_window(cx: &mut App, target: i64) {
     }
 }
 
+/// Records which window the platform calls active, in the window that asked.
+///
+/// The answer is a handle, and turning it into a name this crate understands means reading each open window's
+/// root view — which GPUI refuses while a frame is on the stack, since the window that asked is the one being
+/// rendered. So this runs from a deferred callback, exactly as [`close_named_window`] does. A platform that
+/// names no window, or names one this crate does not track, leaves `0`.
+fn find_active_window(cx: &mut App, asker: i64) {
+    let active = cx.active_window().map(|handle| handle.window_id());
+    let mut found = 0;
+    for handle in cx.windows() {
+        if let Ok(id) = handle.read::<Root, _, _>(cx, |root, app| root.read(app).window)
+            && Some(handle.window_id()) == active
+        {
+            found = id;
+            break;
+        }
+    }
+    store::set_int_in(asker, "~active.window", found);
+}
+
 /// Installs the default colours for the window's actual appearance.
 ///
 /// `App::init_colors` installs `Colors::default()`, which is `Colors::light()`
@@ -1163,6 +1183,135 @@ fn process_requests(
                     });
                 })
                 .detach();
+            }
+
+            Request::AskActiveWindow => {
+                let asker = win;
+                cx.defer(move |cx| find_active_window(cx, asker));
+            }
+
+            Request::HideApplication => {
+                // `App::hide` takes `&self` and does the whole job: on macOS it puts the application away, every
+                // window of it. Nothing comes back, so a program learns it happened the way a person does.
+                cx.hide();
+            }
+
+            Request::RefreshWindows => {
+                cx.refresh_windows();
+            }
+
+            Request::Reveal { path } => {
+                // Three calls with no answer: the platform does the thing, and the binding has nothing to
+                // read back. `scripts/docs` and the register both say so rather than implying otherwise.
+                cx.reveal_path(std::path::Path::new(&path));
+            }
+
+            Request::OpenWithSystem { path } => {
+                cx.open_with_system(std::path::Path::new(&path));
+            }
+
+            Request::OpenUrl { url } => {
+                cx.open_url(&url);
+            }
+
+            Request::OpenPicker { id, what, prompt } => {
+                // `App::prompt_for_paths` takes `&self` — no window — and answers on a oneshot, so the
+                // wait belongs in a task. `Vec<PathBuf>` cannot cross this ABI, so what comes back is a
+                // list of strings under `"<id>.paths"` and an event carrying how many.
+                let folders = what == "folders";
+                let options = gpui::PathPromptOptions {
+                    files: !folders,
+                    directories: folders,
+                    multiple: true,
+                    prompt: if prompt.is_empty() {
+                        None
+                    } else {
+                        Some(prompt.into())
+                    },
+                };
+                let mut asked = cx.prompt_for_paths(options);
+                let entity = cx.entity().entity_id();
+                cx.spawn(async move |_this, cx| {
+                    let outcome = loop {
+                        Timer::after(Duration::from_millis(100)).await;
+                        match asked.try_recv() {
+                            Ok(Some(outcome)) => break Some(outcome),
+                            Ok(None) => continue,
+                            // The channel went away: the panel was dismissed in a way that reports nothing.
+                            Err(_) => break None,
+                        }
+                    };
+                    window::with(win, || match outcome {
+                        Some(Ok(Some(paths))) => {
+                            let names: Vec<String> = paths
+                                .iter()
+                                .map(|path| path.to_string_lossy().into_owned())
+                                .collect();
+                            store::set_texts(&format!("{id}.paths"), names.clone());
+                            store::push_event_with(&id, format!("{}", names.len()));
+                        }
+                        Some(Ok(None)) => store::push_event_with(&id, "cancelled"),
+                        _ => store::push_event_with(&id, "failed"),
+                    });
+                    let _ = cx.update(|cx| cx.notify(entity));
+                })
+                .detach();
+            }
+
+            Request::SavePicker {
+                id,
+                directory,
+                suggested,
+            } => {
+                let where_to = if directory.is_empty() {
+                    std::env::current_dir().unwrap_or_default()
+                } else {
+                    std::path::PathBuf::from(&directory)
+                };
+                let name = if suggested.is_empty() {
+                    None
+                } else {
+                    Some(suggested.as_str())
+                };
+                let mut asked = cx.prompt_for_new_path(&where_to, name);
+                let entity = cx.entity().entity_id();
+                cx.spawn(async move |_this, cx| {
+                    let outcome = loop {
+                        Timer::after(Duration::from_millis(100)).await;
+                        match asked.try_recv() {
+                            Ok(Some(outcome)) => break Some(outcome),
+                            Ok(None) => continue,
+                            Err(_) => break None,
+                        }
+                    };
+                    window::with(win, || match outcome {
+                        Some(Ok(Some(path))) => {
+                            store::set_text(&format!("{id}.path"), &path.to_string_lossy());
+                            store::push_event_with(&id, "saved");
+                        }
+                        Some(Ok(None)) => store::push_event_with(&id, "cancelled"),
+                        _ => store::push_event_with(&id, "failed"),
+                    });
+                    let _ = cx.update(|cx| cx.notify(entity));
+                })
+                .detach();
+            }
+
+            Request::Focus { id } => {
+                // Only an element that already has a handle can be focused; a request for one that
+                // does not is silently nothing, which is what the reader will report.
+                if let Some(handle) = view::handle_for(win, &id) {
+                    window.focus(&handle);
+                }
+            }
+
+            Request::SetTitle { title } => {
+                window.set_window_title(&title);
+                // The read-back happens on the **next frame**, not here: setting a title is synchronous
+                // on macOS and a request to the compositor on Wayland, and a binding that reads it back
+                // immediately would be answering "did the platform apply it yet", which is a different
+                // question on every platform. `begin_frame` samples it because this marks it stale.
+                options::mark_title_stale(win);
             }
 
             Request::SaveWindowState { path, key } => {

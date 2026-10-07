@@ -1,0 +1,39 @@
+MN4 — set the window title at runtime, with a dirty marker.
+
+AFTER THE WORK. **Passed in a real window**, and it is the platform's own answer that is checked.
+
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mn4_title.gos 30
+    window-guard: windows ALLOWED (DSH_ALLOW_WINDOWS=1)
+    MN4 the window opened with the platform's title "MN4 — before"
+    MN4 asked for "MN4 — after (edited)" — the marker is the program's
+    MN4 the platform now reports "MN4 — after (edited)"
+    OK MN4 the title was set at runtime, with a marker the program composed, and read back off the platform
+
+Read line by line:
+
+  1. **The title the window opened with** — `"MN4 — before"`, which is the argument `gpui::run` was given,
+     read back off the window (`Window::window_title()`) rather than copied from the argument. A binding
+     could have passed that assertion by echoing what it was told; this one cannot.
+  2. **The program asked for a new title**, with a dirty marker it composed itself — `f"{name} — edited"`
+     in miniature. Nothing in the binding knows what "edited" means, which is the row's second half.
+  3. **The platform's answer after the change**, read on the **next** frame: the title is set, the record
+     is marked stale, and `begin_frame` samples it. Round 61 found the reason that matters — an immediate
+     read-back is synchronous on macOS and a compositor round-trip on Wayland.
+
+What changed, in `gpui-binding/src/`: `options.rs` gained `Record.title` and `title_current`,
+`observe_title`, `mark_title_stale`, and `"title"` in `window_option`'s observed half; `view.rs` samples
+the title when it is not current; `store.rs` gained `Request::SetTitle`; `app.rs` sets the title and marks
+the record stale; `lib.rs` gained `gpui::set_window_title`. `README.md` documents it under "What the
+machine is".
+
+Residual doubt.
+
+  * **Tiers: `check` and `run` only.** The compiled tiers need one more run each, and this probe asks
+    nobody for anything — so unlike CL4's and CL2's, running them would be cheap. They were left for a
+    single pass with the owner's word rather than spent unannounced.
+  * **The red is argued, not transcribed** — see `MN4.before.txt`, including the stale-build reason the
+    attempt failed.
+  * A title changed by anything other than this crate reads stale until the next set, because the sample
+    is once at first paint and again on each set; only a program changes a title in gpui, so this is
+    deliberate rather than overlooked.
+  * A title with a multi-byte character is handed to the platform unverified.

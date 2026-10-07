@@ -1,0 +1,52 @@
+// CL8 — open a URL in the browser.
+//
+// **One window, and one window of the browser's making.** The capability is that the platform opens the URL;
+// the binding neither waits for the browser nor hears from it, so the instrument is the person watching, whose
+// confirmation comes back as a button press and lands in this transcript.
+//
+// **Running this opens a browser tab by design.** It is run only when its owner asks for it.
+//
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl8_open_url.gos 90`.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("CL8 — open a URL", 620.0, 240.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            let _ = gpui::take_events()
+            gpui::open_url("https://example.com/")
+            println("CL8 asked the platform to open https://example.com/ — a browser tab should have appeared")
+        }
+
+        for event in gpui::take_events() {
+            let name, _payload = gpui::event_parts(event)
+            if name == "cl8.saw.browser" {
+                println("CL8 the person watching confirms a browser opened the URL")
+                println("OK CL8 the URL reached the platform, and the platform opened it")
+                gpui::quit()
+                return
+            }
+        }
+
+        if gpui::now() > 75.0 {
+            println("FAIL CL8 after 75s the person did not confirm that a browser opened the URL")
+            gpui::quit()
+            return
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=10 gap=6 size=full bg=#111111")
+        gpui::child(root, gpui::text("CL8 — a browser tab should have opened example.com", "color=#ffffff"))
+        gpui::child(root, gpui::button("cl8.saw.browser", "I saw it open", "p=4 bg=#313244 color=#ffffff"))
+        gpui::child(root, gpui::text(f"{gpui::now()}s", "color=#888888"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL CL8 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

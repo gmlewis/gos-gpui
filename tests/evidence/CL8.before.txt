@@ -1,0 +1,4 @@
+CL8 — open a URL in the browser.
+
+BEFORE THE WORK. **Argued, not transcribed**: `gpui::open_url` landed in round 72 and nothing ran until round
+74. The red would have been `error[GX0002]: name gpui::open_url is not bound in this scope` on the check tier.

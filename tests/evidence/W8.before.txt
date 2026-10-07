@@ -1,0 +1,10 @@
+W8 — menus wired to the window that renders, not the first.
+
+BEFORE THE WORK. **Not staged, and the row is honest about it.** The fix is `MENU_OWNER` in `app.rs`, which
+records the window whose menu is installed and routes the action slots to it; it landed in round 20, long before
+any probe for it existed. So there is no transcript of the check failing.
+
+What the red would have shown is not in doubt — with the routing absent, window 2's `set_menus` would install on
+window 1, so the probe's second window would report **an empty menu** and its first would report the *second*
+window's. Both are FAIL cases in `tests/gui/w8_menu_owner.gos`. That is an argument, not a recording, and the
+row's `failure seen before the fix` column says `not attempted` rather than borrowing one.

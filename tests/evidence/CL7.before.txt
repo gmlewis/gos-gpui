@@ -1,0 +1,5 @@
+CL7 — reveal in the file manager, and open with the platform's handler.
+
+BEFORE THE WORK. **Argued, not transcribed**: `gpui::reveal` and `gpui::open_with_system` landed in round 72 and
+nothing ran until round 74. The red would have been `error[GX0002]: name gpui::reveal is not bound in this scope`
+on the check tier.

@@ -1,0 +1,11 @@
+MR1 — the `Window` accessor batch.
+
+BEFORE THE WORK. **Argued, not transcribed**: `gpui::ask_active_window` and `gpui::active_window` landed in round
+76 and nothing ran until round 78, so no transcript of the probe failing exists. The red would have been
+`error[GX0002]: name gpui::ask_active_window is not bound in this scope` on the check tier.
+
+One thing the *first* draft of the probe would have got wrong, and it is worth keeping: it asked once and quit
+after twelve frames — about a fifth of a second. The platform names no active window while this application is
+not frontmost, and the person running a probe has just been typing in a terminal, so that draft would have
+reported a **FAIL** for a reason that has nothing to do with the binding. The probe now keeps asking until the
+answer means something, with a patience that says which of the two a `0` is.

@@ -1,0 +1,68 @@
+// CL5 — the open-file picker (`prompt_for_paths`).
+//
+// **One window, one pick.** The probe asks for files; the platform shows its own panel; you choose anything
+// and press Open. There is nothing to click in the window itself.
+//
+// The shim is the point of the row: `prompt_for_paths` answers with a `Vec<PathBuf>`, which cannot cross this
+// ABI, so the paths arrive as **strings** in the store's list under `"cl5.paths"` and the event `"cl5"` carries
+// how many there were — or `"cancelled"`, or `"failed"`.
+//
+// A file is left at `/tmp/gpui-cl5-pick-me.txt` to make the picking easy, but anything will do.
+//
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl5_open_files.gos 120`.
+
+use gpui
+use std::process
+use std::fs
+
+fn main() {
+    let _ = fs::write("/tmp/gpui-cl5-pick-me.txt", "CL5 — this file exists so there is something easy to pick".as_bytes())
+
+    let outcome = gpui::run("CL5 — open-file picker", 560.0, 220.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            gpui::open_files("cl5", "files", "CL5 — choose any file, then press Open")
+            println("CL5 asked for files — the platform's panel should be up")
+        }
+
+        for event in gpui::take_events() {
+            let name, payload = gpui::event_parts(event)
+            if name != "cl5" {
+                continue
+            }
+            if payload == "cancelled" {
+                println("CL5 the panel was cancelled: the picker answered, and said so rather than nothing")
+                println("OK CL5 (cancelled) the open-file picker reached the program as an event")
+            } else if payload == "failed" {
+                println("FAIL CL5 the picker reported a failure — the shim, or the platform")
+            } else {
+                let paths = gpui::list_all("cl5.paths")
+                println(f"CL5 chose {payload} path(s), and the shim holds them as strings: {paths}")
+                if paths.len() > 0 && paths[0] == "" {
+                    println("FAIL CL5 the first path is empty")
+                } else {
+                    println("OK CL5 the open-file picker's paths reached the program as a list of strings")
+                }
+            }
+            gpui::quit()
+            return
+        }
+
+        if gpui::now() > 100.0 {
+            println("FAIL CL5 no answer in 100 seconds — the panel was not answered")
+            gpui::quit()
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=10 size=full bg=#111111")
+        gpui::child(root, gpui::text("CL5 — choose a file in the panel, then press Open", "color=#ffffff"))
+        gpui::child(root, gpui::text(f"{gpui::now()}s", "color=#888888"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL CL5 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

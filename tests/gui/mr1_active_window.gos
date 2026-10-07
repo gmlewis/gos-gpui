@@ -1,0 +1,74 @@
+// MR1 — the `Window` accessor batch: which window the platform calls active.
+//
+// **Two windows, no clicks.** Of the row's names, all but one were already reachable — `is_maximized` and
+// `is_fullscreen` are observed fields, `gpui::mouse_position()` is the cursor, `gpui::focused()` the focused
+// element, and `gpui::keyboard_layout()` the layout. `active_window` is the last, and it is not a flat call:
+// the platform answers with a handle, and turning that into a name this crate understands means reading every
+// open window's root view — which GPUI refuses from inside a frame. So it is asked for, and answered on the
+// next frame.
+//
+// Pass means the platform names **one of this program's own windows**. `0` means it named none, which is what
+// it says when this application is not frontmost — so keep this window in front while it runs, or the FAIL
+// line will say exactly that rather than pretending something else went wrong.
+//
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mr1_active_window.gos 45`.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("MR1 — the active window", 560.0, 200.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            gpui::open_window("MR1 — a second window", 580.0, 0.0, 400.0, 170.0, "", || {
+                gpui::animate()
+                let child = gpui::column("p=8 gap=4 size=full bg=#222222")
+                gpui::child(child, gpui::text("the second window", "color=#ffffff"))
+                gpui::child(child, gpui::text(f"{gpui::frame()}", "color=#888888"))
+                gpui::root(child)
+            })
+        }
+
+        // **Asked repeatedly, because the first answer depends on who is frontmost.** A platform names no
+        // active window while this application is not the frontmost one, and the person running the probe has
+        // just been typing in a terminal — so the check waits for a moment when the answer means something,
+        // rather than quitting on the first `0` and calling it a defect. Click this window and it will answer.
+        if f == 6 {
+            println(f"MR1 asking which window is active; before the answer, active_window() is {gpui::active_window()}")
+        }
+        if f >= 6 && f % 30 == 0 && gpui::active_window() == 0 {
+            gpui::ask_active_window()
+        }
+
+        if f >= 6 && gpui::active_window() != 0 {
+            let active = gpui::active_window()
+            let mine = gpui::window_id()
+            println(f"MR1 this is window {mine}, and the platform says window {active} is active")
+            if active == 1 || active == 2 {
+                println("OK MR1 the platform named one of this program's own windows as the active one, and the binding turned the handle into its own name")
+            } else {
+                println("FAIL MR1 the platform named no window of this one — if this application was not frontmost while the probe ran, that is the reason, and re-running with the window in front is the check")
+            }
+            gpui::quit()
+            return
+        }
+
+        if gpui::now() > 35.0 && gpui::active_window() == 0 {
+            println("FAIL MR1 in 35 seconds the platform never named one of this program's windows as active — which is what it says while this application is not frontmost, so click the window and re-run before believing it is a defect")
+            gpui::quit()
+            return
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 gap=4 size=full bg=#111111")
+        gpui::child(root, gpui::text("MR1 — keep this window in front", "color=#ffffff"))
+        gpui::child(root, gpui::text(f"{f}", "color=#888888"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL MR1 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

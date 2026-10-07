@@ -1445,11 +1445,138 @@ gossamer_binding::register_module!(
     ///
     /// Only the elements this binding builds a handle for are ever reported: an
     /// `input`, an `editor`, and the `~root` handle `gpui::on_keys` installs.
-    /// An element made focusable with the `focusable` token is **not** visible
-    /// here — GPUI builds that handle internally and never hands it over — so
-    /// this answers `false` for it even while it is focused.
+    /// An element made focusable with the `focusable` token *used* to be invisible
+    /// here — GPUI builds that handle internally and never hands it over — so this
+    /// answered `false` for it even while it was focused. `MR5`'s change gives such an
+    /// element a handle of this crate's own as well, so it *should* be visible now;
+    /// **that is unverified**, because the probe that would confirm it found no focus
+    /// moving at all (`tests/evidence/MR5.probe.txt`), and [`gpui::focused`] is the
+    /// instrument that will say which of the two is true.
     fn is_focused(id: String) -> bool {
         view::is_focused(&id)
+    }
+
+    /// The id of the element that currently holds focus, or `""` when none does.
+    ///
+    /// [`gpui::is_focused`] answers about one id a program already knows; this answers which one, which
+    /// is what a program drawing its own focus ring needs, and what tells a diagnostic "nothing has
+    /// focus" apart from "something has focus that you did not ask about".
+    ///
+    /// When more than one handle reports focus at once — a focused element inside a focused container —
+    /// this answers the lexicographically first, because a set has no order.
+    fn focused() -> String {
+        view::focused()
+    }
+
+    /// Ask the platform which of this program's windows is active.
+    ///
+    /// The answer arrives on the **next frame**, because finding it means reading every open window and GPUI
+    /// refuses that from inside a frame. Read it with [`gpui::active_window`].
+    fn ask_active_window() {
+        store::request(store::Request::AskActiveWindow)
+    }
+
+    /// The window the platform last named as active, or `0` when it named none this binding tracks.
+    ///
+    /// `0` is also what this answers before [`gpui::ask_active_window`] has been called, and what it answers if
+    /// the platform names no active window at all — which happens when this application is not frontmost. The
+    /// two are not distinguished, on purpose: both mean "no window of ours is the active one".
+    fn active_window() -> i64 {
+        store::get_int("~active.window", 0)
+    }
+
+    /// Hide the application, every window of it — the platform's own Hide.
+    ///
+    /// **Nothing comes back**, and the program does not stop: its windows are put away, and a person brings them
+    /// back from the dock. This is the Hide that MN2's row found no way to express in the application menu —
+    /// gpui 0.2.2 offers no `os_action` for it — so a program that wants one calls this from a menu item of its
+    /// own.
+    fn hide() {
+        store::request(store::Request::HideApplication)
+    }
+
+    /// Ask the platform to re-read its windows.
+    ///
+    /// For a program that has seen a display change or a window it did not open; gpui keeps its own list, and
+    /// this is the call that refreshes it. Nothing comes back.
+    fn refresh() {
+        store::request(store::Request::RefreshWindows)
+    }
+
+    /// Show `path` in the platform's file manager — Finder on this machine.
+    ///
+    /// **Nothing observable comes back.** The platform opens a window of its own, the binding has nothing to
+    /// read, and no event is raised; a program hears about it only from the person watching. That is the whole
+    /// of the capability, and the row says so rather than pretending a check exists.
+    fn reveal(path: String) {
+        store::request(store::Request::Reveal { path })
+    }
+
+    /// Hand `path` to whatever the platform uses to open a file of its kind.
+    ///
+    /// As unobservable as [`gpui::reveal`], and for the same reason. On macOS this opens the file in its
+    /// default application, which is why it is worth having — and why it must be asked for rather than
+    /// assumed.
+    fn open_with_system(path: String) {
+        store::request(store::Request::OpenWithSystem { path })
+    }
+
+    /// Open `url` in whatever the platform uses for URLs — the default browser, on this machine.
+    ///
+    /// As unobservable as [`gpui::reveal`] and [`gpui::open_with_system`]: the browser is another program's
+    /// window, and this binding neither waits for it nor hears from it. The URL is handed over unvalidated —
+    /// the platform decides what it will accept.
+    fn open_url(url: String) {
+        store::request(store::Request::OpenUrl { url })
+    }
+
+    /// Ask the person for files or folders, with `prompt_for_paths` behind it.
+    ///
+    /// `id` names the answer. `what` is `"files"` or `"folders"` — `"folders"` asks for a directory instead.
+    /// `prompt` is the sentence the panel shows; empty means the platform's own.
+    ///
+    /// The answer arrives as the event `id`, whose payload is the **number of paths chosen**, or
+    /// `"cancelled"`, or `"failed"`. The paths themselves are left in the store's list under `"<id>.paths"`:
+    ///
+    /// ```gossamer
+    /// gpui::open_files("open", "files", "Choose a document")
+    /// // …and later, in a frame…
+    /// for event in gpui::take_events() {
+    ///     let name, count = gpui::event_parts(event)
+    ///     if name == "open" { let paths = gpui::list_all("open.paths") … }
+    /// }
+    /// ```
+    ///
+    /// A `Vec<PathBuf>` cannot cross this ABI, so the shim is **strings** — one path per entry, absolute,
+    /// exactly as the platform reported them.
+    fn open_files(id: String, what: String, prompt: String) {
+        store::request(store::Request::OpenPicker { id, what, prompt })
+    }
+
+    /// Ask the person where to save a file, with `prompt_for_new_path` behind it.
+    ///
+    /// `directory` is where the panel opens — empty means the program's working directory. `suggested` is a
+    /// name to start from; empty means none.
+    ///
+    /// The chosen path is left as text under `"<id>.path"`, and the event `id` carries `"saved"`,
+    /// `"cancelled"` or `"failed"`.
+    fn save_file(id: String, directory: String, suggested: String) {
+        store::request(store::Request::SavePicker {
+            id,
+            directory,
+            suggested,
+        })
+    }
+
+    /// Give focus to the element with this id.
+    ///
+    /// The element must be one this binding has a handle for — an `input`, an `editor`, a `button`, or any
+    /// element whose style asks to be `focusable`. An id with no handle does nothing, and the reader says
+    /// so: ask [`gpui::focused`] on the next frame to see whether it took.
+    ///
+    /// This is how a program opens a dialog with its first field ready, rather than making a person click.
+    fn focus(id: String) {
+        store::request(store::Request::Focus { id })
     }
 
     // -----------------------------------------------------------------
@@ -1596,6 +1723,17 @@ gossamer_binding::register_module!(
     /// `gpui::window_id()` inside that window, or from the `_in` accessors.
     fn close_window_in(win: i64) {
         store::request(store::Request::CloseWindowAt { target: win })
+    }
+
+    /// Set this window's title, at any time.
+    ///
+    /// The title is a program's to change as its state changes — an editor's dirty marker is the usual
+    /// reason, and it is the program's to compose: `gpui::set_window_title(f"{name} — edited")`.
+    ///
+    /// Read back with [`gpui::window_option`]`("title")`, which answers what the **platform** says the
+    /// title is, not what this call asked for. That is `""` until the window has painted once.
+    fn set_window_title(title: String) {
+        store::request(store::Request::SetTitle { title })
     }
 
     /// Resize the window this frame belongs to.

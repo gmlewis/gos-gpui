@@ -1010,6 +1010,12 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
     // Once per window, and not every frame: the driver's name cannot change while a program runs,
     // and the call is a trip through the platform layer.
     crate::gpu::sample(win, window);
+    // Likewise the title: sampled once here, and again by `Request::SetTitle` whenever a program
+    // changes it. A program can read the title its window opened with, which is the platform's own
+    // answer rather than a copy of the argument it passed to `gpui::run`.
+    if !crate::options::title_current(win) {
+        crate::options::observe_title(win, &window.window_title());
+    }
     let position = window.mouse_position();
     MOUSE_AT.with(|p| {
         p.borrow_mut().insert(
@@ -1218,6 +1224,38 @@ pub fn mouse_position() -> (f64, f64) {
 }
 
 /// Whether a registered focus handle is the focused one this frame.
+/// The id of the element that currently holds focus, or `""` when none does.
+///
+/// **One id, because a program can act on one.** More than one handle can report focus at once — a
+/// focused element inside a focused container — and a set has no order, so this answers the
+/// lexicographically first and says so rather than pretending the choice is meaningful. A program that
+/// needs to know about a *particular* element asks [`is_focused`].
+///
+/// It is also the instrument for a question this crate could not answer about itself: `MR5` changed how the
+/// `focusable` token builds its handle, and `gpui::focus_next` then appeared to focus nothing at all.
+/// `is_focused` can only be asked about ids a program already knows, so it could not say whether the tab
+/// order was empty or whether focus had arrived somewhere `is_focused` failed to report. This can.
+/// The focus handle for `id` in `win`, if the element ever asked for one.
+///
+/// [`focus_for`] creates one; this only looks. It is what lets a request focus an element by name without
+/// inventing a handle for an element that is not drawn.
+pub fn handle_for(win: i64, id: &str) -> Option<FocusHandle> {
+    FOCUS.with(|f| f.borrow().get(&(win, id.to_string())).cloned())
+}
+
+pub fn focused() -> String {
+    let win = window::current();
+    FOCUSED_NOW.with(|set| {
+        let set = set.borrow();
+        let Some(focused) = set.get(&win) else {
+            return String::new();
+        };
+        let mut ids: Vec<&String> = focused.iter().collect();
+        ids.sort();
+        ids.first().map(|id| id.to_string()).unwrap_or_default()
+    })
+}
+
 pub fn is_focused(id: &str) -> bool {
     let win = window::current();
     FOCUSED_NOW.with(|set| set.borrow().get(&win).map(|s| s.contains(id)).unwrap_or(false))
@@ -1689,6 +1727,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                             &el.style,
                         ),
                         &el.style,
+                        win,
+                        &el.id,
+                        cx,
                     );
                     let handle = scroll::handle(win, &el.id);
                     scrolled
@@ -1704,6 +1745,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                             &el.style,
                         ),
                         &el.style,
+                        win,
+                        &el.id,
+                        cx,
                     );
                     let handle = scroll::handle(win, &el.id);
                     scrolled
@@ -1719,6 +1763,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                             &el.style,
                         ),
                         &el.style,
+                        win,
+                        &el.id,
+                        cx,
                     );
                     let handle = scroll::handle(win, &el.id);
                     scrolled
@@ -1742,6 +1789,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                             &el.style,
                         ),
                         &el.style,
+                        win,
+                        &el.id,
+                        cx,
                     );
                     interactive.children(children).into_any_element()
                 }
@@ -1762,7 +1812,11 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 &el.style,
             )
             .id(ElementId::Name(id.into()));
+            let focus_id = el.id.clone();
             let base = apply_interactions(base, &el.style);
+            // A button is the element a person tabs to, and until round 60 it was the one element that
+            // could not be focused: it never applied the focus tokens at all.
+            let base = apply_focus_order(base, &el.style, win, &focus_id, cx);
             base.child(label.clone())
                 .on_click(move |_event, _window, cx| {
                     window::with(win, || store::push_event(click_id.clone()));
@@ -2216,12 +2270,32 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
 }
 
 /// Applies the focus-order tokens to an already identified element.
-fn apply_focus_order<T: StatefulInteractiveElement + 'static>(el: T, spec: &str) -> T {
+fn apply_focus_order<T: StatefulInteractiveElement + 'static>(
+    el: T,
+    spec: &str,
+    win: i64,
+    id: &str,
+    cx: &mut App,
+) -> T {
     let mut el = el;
     for (key, value) in style::tokens(spec) {
         let v = value.as_deref().unwrap_or("");
         el = match key.as_str() {
-            "focusable" => el.focusable(),
+            // **The binding's own handle, not gpui's.** `focusable()` only sets a flag on gpui's
+            // internal interactivity, and gpui then makes a focus handle of its own — one
+            // `gpui::is_focused` cannot see, because it reads back the handles *this* crate keeps.
+            // Tracking our own handle is enough for gpui to use it: div.rs:1584 does exactly that
+            // ("If there's an explicit focus handle we're tracking, use that. Otherwise create a new
+            // handle"), so clicking still focuses the element and the tab map still gets an entry.
+            //
+            // **`focusable()` stays, and the handle is *added* to it** — round 65 thought it could
+            // replace it, and round 69's probe disproved that: with the flag gone, `gpui::focus_next`
+            // found no tab stop at all and `is_focused` still said no, so both halves of the row failed
+            // together. gpui's own tab machinery keys on that flag (`div.rs:1584`), and the tracked
+            // handle is what makes the element's focus *ours* rather than one gpui keeps to itself.
+            "focusable" if v != "0" && v != "false" => el
+                .focusable()
+                .track_focus(&focus_for(win, id, cx)),
             "tabstop" => el.tab_stop(v != "0"),
             "tabindex" => el.tab_index(v.parse::<isize>().unwrap_or(0)),
             _ => el,

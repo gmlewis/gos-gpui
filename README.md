@@ -400,7 +400,7 @@ println("line {} of {}, spanning {}", line, gpui::text_lines(text), bound)
 | `gpui::text_line_move(text, offset, lines, column)` | where the caret lands `lines` lines away, aiming `column` bytes in — negative is up, so a page move is one call |
 | `gpui::text_word(text, offset)` | the word at an offset, as `"start,end"` |
 
-**Offsets are UTF-8 byte offsets**, the same as `gpui::styled_text`'s highlight ranges, and every
+**Offsets are UTF-8 byte offsets**, the same as `gpui::text_styled`'s highlight ranges, and every
 answer is snapped down to a character boundary and clamped into the text: an offset inside a
 multi-byte character gets a whole one, and one past the end belongs at the end. A word is a run of
 letters, digits and underscores — **anything else is not a word**, so a double-click on a comma takes
@@ -408,9 +408,63 @@ the comma, not the run of punctuation and spaces around it. And the **column is 
 `text_line_move` remembers nothing, so a caret that should return to the column it left passes the
 same number again.
 
+### Asking the operating system
+
+| | |
+|---|---|
+| `gpui::open_files(id, what, prompt)` | the platform's file panel, for `"files"` or `"folders"` |
+| `gpui::save_file(id, directory, suggested)` | the platform's save panel, starting in `directory` with `suggested` filled in |
+
+A panel answers asynchronously, so the program asks and then listens: the event `id` carries the **number of
+paths** for `open_files`, or `"saved"` for `save_file`, or `"cancelled"`, or `"failed"`. The paths themselves
+are in the store — `gpui::list_all("id.paths")` for the files, `gpui::state_text("id.path")` for the saved one.
+
+```gossamer
+gpui::open_files("open", "files", "Choose a document")
+
+// …and later, in a frame…
+for event in gpui::take_events() {
+    let name, count = gpui::event_parts(event)
+    if name == "open" {
+        let paths = gpui::list_all("open.paths")   // absolute, as strings
+    }
+}
+```
+
+| | |
+|---|---|
+| `gpui::hide()` | put the whole application away, as the platform's Hide does — the program does not stop, and a person brings it back from the dock |
+| `gpui::refresh()` | ask the platform to re-read its windows, after a display change |
+| `gpui::keyboard_layout()` | which keyboard layout is in use, by its platform identity |
+| `gpui::ask_active_window()` / `active_window()` | which of the program's windows the platform calls active; the answer arrives on the next frame, and `0` means none of ours |
+| `gpui::reveal(path)` | show a path in the file manager |
+| `gpui::open_with_system(path)` | hand a path to the platform's handler for its kind |
+| `gpui::open_url(url)` | open a URL in the browser |
+
+**These three answer nothing.** The platform acts, and this binding neither waits for it nor hears from it — no
+return value, no event, no state to read, and a URL the platform will not accept fails silently. They are for
+the effect, not for a result.
+
+A `Vec<PathBuf>` cannot cross this binding's ABI, so the shim is **strings** — one path per entry, exactly as
+the platform reported them.
+
+### Who has focus
+
+| | |
+|---|---|
+| `gpui::focused()` | the id of the element that currently holds focus, or `""` |
+| `gpui::focus(id)` | give focus to that element — how a dialog opens with its first field ready, rather than making a person click |
+| `gpui::is_focused(id)` | whether that one element holds focus |
+
+`gpui::focus` works on any element this binding has a handle for: an `input`, an `editor`, a `button`, or
+anything whose style asks to be `focusable`. An id with no handle does nothing and says nothing — ask
+`gpui::focused()` on the next frame to see whether it took. **The tab order is a separate matter:** a probe in
+round 70 found `gpui::focus_next()` reaching no element at all, so `tabstop=` and `tabindex=` are applied to
+the element but their *ordering* has not been seen to work.
+
 ### What the machine is
 
-`gpui::gpu_specs()` is public in gpui, but only a window can answer it, so the binding samples it
+gpui's own `Window::gpu_specs()` is public, but only a window can answer it, so the binding samples it
 **once**, on that window's first frame, and keeps it:
 
 ```gossamer

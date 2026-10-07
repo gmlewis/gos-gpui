@@ -423,6 +423,16 @@ struct Record {
     // ---- observed, once a frame ----
     live: bool,
     scale: f64,
+    /// The window's own title, as the platform reports it — not as this crate last asked for it.
+    ///
+    /// Sampled when the window first paints, and again on the frame after that title has been asked
+    /// for. Asking the platform every frame would be a string across the FFI for a value that only a
+    /// program ever changes; asking *immediately* after setting it would be worse — see
+    /// [`mark_title_stale`].
+    title: String,
+    /// Whether `title` is up to date: read at least once, and not asked for since. `false` is what makes
+    /// the next frame sample it.
+    title_current: bool,
     maximized: bool,
     fullscreen: bool,
     display: i64,
@@ -565,8 +575,49 @@ pub fn window_option(name: &str) -> String {
         "maximized" if record.live => flag(record.maximized),
         "fullscreen" if record.live => flag(record.fullscreen),
         "display" if record.live => format!("{}", record.display),
+        "title" if record.title_current => record.title.clone(),
         _ => String::new(),
     }
+}
+
+/// Whether `win`'s title is up to date in the record — or, in other words, whether the next frame needs
+/// to ask the platform for it.
+pub fn title_current(win: i64) -> bool {
+    RECORDS.with(|r| {
+        r.borrow()
+            .get(&win)
+            .map(|record| record.title_current)
+            .unwrap_or(false)
+    })
+}
+
+/// Marks `win`'s title as needing to be read off the platform again, on the next frame.
+///
+/// **This is deliberately not an immediate read-back.** `Window::set_window_title` is synchronous on
+/// macOS — the title is set on the `NSWindow` before the call returns — but on Wayland a title is a
+/// request to the compositor, and reading it back straight away can answer the *old* one. Sampling on
+/// the next frame costs a frame of latency a program cannot see and works wherever the platform's own
+/// timing is different from this one's. Found in review, before the probe ever ran.
+pub fn mark_title_stale(win: i64) {
+    RECORDS.with(|r| {
+        if let Some(record) = r.borrow_mut().get_mut(&win) {
+            record.title_current = false;
+        }
+    });
+}
+
+/// Remembers the title the **platform** reports for `win`.
+///
+/// Called when the window first paints and on the frame after one has been asked for — so the reader
+/// never reports a title this crate merely *wanted*, which is the difference between a read-back and a
+/// store of its own wishes.
+pub fn observe_title(win: i64, title: &str) {
+    RECORDS.with(|r| {
+        if let Some(record) = r.borrow_mut().get_mut(&win) {
+            record.title = title.to_string();
+            record.title_current = true;
+        }
+    });
 }
 
 /// The window options in `spec` this crate does not understand.
