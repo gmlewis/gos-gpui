@@ -30,7 +30,7 @@ examples and `run.sh` will not accept them.
 - **macOS:** Xcode command-line tools (`xcode-select --install`).
 - **Linux:** the build and runtime packages listed under
   [On Linux](#on-linux).
-- **Gosammer 0.66.0** — `gos --version`.
+- **Gosammer 0.68.0** — `gos --version` (the version `project.toml` pins).
 - **A Rust toolchain.** GPUI needs a recent stable `rustc` and a Cargo that
   understands edition 2024, so 1.85 is the floor for the binding crate.
   Building `gos` itself from source wants 1.95 — see its
@@ -136,7 +136,7 @@ and the two scripts, and it is already wired up:
 
 `gos run` needs no LLVM: the [install page](https://gossamer-lang.org/docs/install/)
 is explicit that only `gos build` wants LLVM 18–22. So the minimum is `gos`
-0.66.0, a Rust toolchain, and GPUI's Linux build dependencies.
+0.68.0, a Rust toolchain, and GPUI's Linux build dependencies.
 
 Of GPUI's dependency tree, only `x11`, `freetype-sys` and
 `yeslogic-fontconfig-sys` shell out to `pkg-config`, and the last of those is
@@ -181,7 +181,7 @@ per-machine and regenerates cleanly.
 
 **Both tiers work now.** `gos build` used to produce a binary that aborted
 before the window appeared, with a misaligned-pointer panic inside the runtime
-(`c_abi/bufio.rs`); as of `gos` 0.66.0 as rebuilt on this machine it links and
+(`c_abi/bufio.rs`); as of the released `gos` 0.68.0 it links and
 renders, and `07_hello_world` draws its swatches at the same panel geometry and
 the same colours as `gos run` and as upstream — see
 [Notes and limits](#notes-and-limits).
@@ -817,8 +817,7 @@ Knowing these keeps a difference from being mistaken for a bug:
 
   *On the native tier* (`gos build`), the same shape used to abort before any
   window appeared, reproducing on a twenty-line program with no `ui` module and
-  surviving `gos clean`. **That is fixed** as of `gos` 0.66.0 rebuilt on this
-  machine: `./build.sh 07` links and renders, and the swatches land where the
+  surviving `gos clean`. **That is fixed** as of the released `gos` 0.68.0: `./build.sh 07` links and renders, and the swatches land where the
   interpreter puts them. So `build.sh` is now a supported path alongside
   `run.sh` — with the caveat that its linker plan still needs `$CC` pointed at
   `tools/cc-gpui.sh`, which `build.sh` does.

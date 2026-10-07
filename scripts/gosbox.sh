@@ -7,8 +7,7 @@
 #   ./scripts/gosbox.sh probes                               # every probe, the bulk pass
 #   ./scripts/gosbox.sh probes w3 w7                         # only those whose name matches
 #   ./scripts/gosbox.sh check tests/gui/w3_events.gos        # compile only, no window
-#   ./scripts/gosbox.sh tiers tests/gui/w3_events.gos        # the five tiers — see "tiers" below:
-#                                                            # check + both runs here, both builds skipped
+#   ./scripts/gosbox.sh tiers tests/gui/w3_events.gos        # all five tiers, when the image has LLVM
 #   ./scripts/gosbox.sh shell                                # a shell in the same environment
 #
 # # Why this exists
@@ -17,22 +16,44 @@
 # work, and `scripts/window-guard.sh` made that the default. The runtime tiers — running a
 # program, not merely compiling it — went with it, because on this Mac a run *is* a window.
 #
-# This is the way back. `gosbox:1` is a Linux image with Xvfb, a window manager and a software
-# Vulkan device, so a GPUI window opens onto a virtual display that belongs to the container and
-# never reaches the Mac's screen. `scripts/pointer.sh` — which drives a window from outside the
-# process through the macOS event tap — has no counterpart here; a probe that needs a click is
-# listed as such by its own `// needs:` line and skipped, exactly as `scripts/probes.sh` does.
+# This is the way back. `gosbox:2` is a Linux image with Xvfb, a window manager, a software
+# Vulkan device and LLVM 22, so a GPUI window opens onto a virtual display that belongs to the
+# container and never reaches the Mac's screen. `scripts/pointer.sh` — which drives a window from
+# outside the process through the macOS event tap — has no counterpart here; a probe that needs a
+# click is listed as such by its own `// needs:` line and skipped, exactly as `scripts/probes.sh`
+# does.
 #
 # # What is mounted
 #
-#   docker-stage/   this working tree, rsynced in (no tools/, target/, .gos-cache/ — 9MB)
+#   docker-stage/   this working tree, rsynced in (no tools/upstream/, target/, .gos-cache/ — 11MB
+#                   of source; /work/target/ is excluded from the rsync but survives it, so it
+#                   grows to ~130MB once a build tier has run — that is cargo's cache, kept on
+#                   purpose, and it is in the cache directory and never in this tree)
 #   docker-home/    /root, so the cargo and runner caches survive between runs
-#   gossamer-head/  /gos, the pristine toolchain source the binding builds against
-#   linux-head/     /tool, the Linux `gos` and its runtime archive
+#   gossamer-068/   /gos, the pristine toolchain source the binding builds against
+#   linux068/       /tool, the Linux `gos` and its runtime archive
 #
-# The toolchain is chosen by `GOSBOX_TOOLCHAIN` (default `linux-head`) and the source by
-# `GOSBOX_GOSSAMER` (default `gossamer-head`), so a second toolchain can be exercised without
-# editing this file.
+# The toolchain is chosen by `GOSBOX_TOOLCHAIN` (default `linux068`) and the source by
+# `GOSBOX_GOSSAMER` (default `gossamer-068`), so a second toolchain can be exercised without
+# editing this file. Both track the pin in `project.toml`, which moved to 0.68.0 in round 88: the
+# container has to build the binding against the version the project asks for, or cargo stops at
+# version resolution before any of this matters.
+#
+# # The build tiers, and why `tools/` is staged
+#
+# `gos build` links the binary itself and its linker plan has no key for linker arguments, so a
+# GPUI binary comes out with the windowing symbols undefined. `tools/cc-gpui.sh` is a `cc` that
+# supplies them; it is read by `gos` through `$CC`. It lives under `tools/`, which used to be
+# excluded from the stage — so the container could run a window but never link one. It is now
+# staged (everything under `tools/` but the 5.9GB `tools/upstream/` checkout), and `inbox` sets
+# `CC` and `GOS_LINUX_LIBS` for every run, which is what lets `build` and `build --release` be
+# witnessed here instead of skipped.
+#
+# `GOS_LINUX_LIBS` is passed because `cc-gpui.sh` puts its libraries *before* the objects, and
+# Debian's `ld` defaults to `--as-needed`: without `-Wl,--no-as-needed` a library nothing has
+# asked for yet is dropped on the floor. The set itself was measured, not guessed — the first
+# symbol the link cannot find is `xkb_x11_state_new_from_device`, which is in `libxkbcommon-x11`,
+# not `libxkbcommon`.
 #
 # # What this does not do
 #
@@ -46,9 +67,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 CACHE="${GOSBOX_CACHE:-$HOME/.cache/learn-gpui}"
-IMAGE="${GOSBOX_IMAGE:-gosbox:1}"
-TOOLCHAIN="${GOSBOX_TOOLCHAIN:-linux-head}"
-GOSSAMER="${GOSBOX_GOSSAMER:-gossamer-head}"
+IMAGE="${GOSBOX_IMAGE:-gosbox:2}"
+TOOLCHAIN="${GOSBOX_TOOLCHAIN:-linux068}"
+GOSSAMER="${GOSBOX_GOSSAMER:-gossamer-068}"
 STAGE="$CACHE/docker-stage"
 DHOME="$CACHE/docker-home"
 
@@ -70,7 +91,7 @@ docker info >/dev/null 2>&1 || die "Docker is not running"
 stage() {
   mkdir -p "$STAGE" "$DHOME"
   rsync -a --delete \
-    --exclude 'tools/' --exclude 'target/' --exclude '.gos-cache/' \
+    --exclude 'tools/upstream/' --exclude 'target/' --exclude '.gos-cache/' \
     --exclude 'gpui-binding/target/' --exclude '.git/' \
     . "$STAGE/"
 }
@@ -85,14 +106,23 @@ stage() {
 # rather than in the container's environment, where the profile cannot reach it.
 CONTAINER_PATH='/usr/local/cargo/bin:/tool/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
+# The libraries `tools/cc-gpui.sh` is told to hand the linker, and the reason it has to be told:
+# `-Wl,--no-as-needed` because the wrapper's `-l` flags precede the objects and Debian's `ld` would
+# otherwise discard them, and `-lxkbcommon-x11` before `-lxkbcommon` because that is where
+# `xkb_x11_*` lives. Everything after those two measured as unnecessary to link this program; a
+# symbol this set cannot find is a line to add here, not a reason to touch `tools/`.
+GOS_LINUX_LIBS="${GOSBOX_LIBS:--Wl,--no-as-needed -lxkbcommon-x11 -lxkbcommon -lX11 -lxcb -lfontconfig -lfreetype -ldl -lpthread -lm}"
+
 # The environment every container run gets. `CARGO_HOME` and `RUSTUP_HOME` are set because /root is
-# a mounted volume, which hides the ones the rust image baked in.
+# a mounted volume, which hides the ones the rust image baked in. `CC` points at the staged copy of
+# `tools/cc-gpui.sh`, so the two build tiers have a linker plan at all — see the header.
 inbox() {
   docker run --rm -i \
     -v "$STAGE":/work -v "$DHOME":/root \
     -v "$CACHE/$GOSSAMER":/gos -v "$CACHE/$TOOLCHAIN":/tool \
     -e DISPLAY=:99 -e GOSBOX=1 -e GOSSAMER_ROOT=/gos \
     -e GOSSAMER_NOTED_ERRORS=1 \
+    -e CC=/work/tools/cc-gpui.sh -e GOS_LINUX_LIBS="$GOS_LINUX_LIBS" \
     -e PATH=/usr/local/cargo/bin:/tool/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
     -w /work "$IMAGE" "$@"
@@ -149,11 +179,14 @@ compile_verdict() {
 }
 
 # Does this image carry the LLVM the native backend needs? `gos build` shells out to `opt` and
-# `llc`; the image has no LLVM, so both build tiers answer
-# `error: build: native backend failed: opt (LLVM toolchain) not found`. That is a property of the
-# environment, not of the program, and reporting it as a failure would be this harness crying
-# wolf — the same reason a probe's `// linux:` line is a skip. It is reported as a skip, with the
-# reason, and a skip is never counted as a pass.
+# `llc`, and an image without them answers `error: build: native backend failed: opt (LLVM
+# toolchain) not found`. That is a property of the environment, not of the program, so it is
+# reported as a skip, with the reason, rather than as a failure — the same reason a probe's
+# `// linux:` line is a skip. A skip is never counted as a pass.
+#
+# `gosbox:2` does have them (Debian's `llvm-22`, `1:22.1.8-1~deb12u1`), so this normally answers
+# yes and both build tiers run. `GOSBOX_IMAGE=gosbox:1` is the case it exists for: that image has
+# neither LLVM nor the staged `tools/`, and there the two build tiers still skip, by name.
 have_llvm() { incmd 'command -v opt >/dev/null 2>&1'; }
 
 cmd="${1:-}"; shift || true
@@ -165,6 +198,8 @@ case "$cmd" in
       -v "$STAGE":/work -v "$DHOME":/root \
       -v "$CACHE/$GOSSAMER":/gos -v "$CACHE/$TOOLCHAIN":/tool \
       -e DISPLAY=:99 -e GOSBOX=1 -e GOSSAMER_ROOT=/gos \
+      -e GOSSAMER_NOTED_ERRORS=1 \
+      -e CC=/work/tools/cc-gpui.sh -e GOS_LINUX_LIBS="$GOS_LINUX_LIBS" \
       -e PATH=/usr/local/cargo/bin:/tool/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
       -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
       -w /work "$IMAGE" bash -l
@@ -207,12 +242,11 @@ case "$cmd" in
     # build --release compile; run and run --no-jit execute. `--no-jit` exists on the interpreter
     # tier only, so it is asked for the way the toolchain spells it.
     #
-    # Two of the five do not carry as far as the others, and this says so rather than pretending:
-    # `check` is judged by whether it compiled (it prints `check: ok (N items typed)`, not the
-    # running program's `OK `), and both build tiers are **skipped** because this image cannot link
-    # a GPUI binary at all. What the container is *for* — running a window headlessly, which is the
-    # thing the Mac may not do in bulk — is the two run tiers, and they are judged exactly as
-    # `scripts/probes.sh` judges a probe.
+    # `check` is judged by whether it compiled — it prints `check: ok (N items typed)`, not the
+    # running program's `OK ` — and the two run tiers exactly as `scripts/probes.sh` judges a
+    # probe. The two build tiers compile *and link*, which needs LLVM plus the staged
+    # `tools/cc-gpui.sh`; when the image has both they run here like any other tier, and when it
+    # has neither they skip, by name and with the reason.
     [ $# -ge 1 ] || die "tiers needs a program"
     prog="$1"
     stage
@@ -228,18 +262,11 @@ case "$cmd" in
         build)         cmdline="timeout -k 5 600 gos build '$prog'"; kind=compile ;;
         build-release) cmdline="timeout -k 5 600 gos build --release '$prog'"; kind=compile ;;
       esac
-      # A compile tier needs LLVM, and this image has none: skip it by name, with the reason,
-      # rather than report the image's own gap as the program's failure. Skipped is never counted
-      # as a pass, and both build tiers are witnessed on the Mac, headless (`gos build` compiles
-      # and links; it does not run, so no window opens) — see the register's "The container".
-      #
-      # Measured, not assumed: installing llvm-22 into this image gets the compile further and the
-      # *link* then fails on GPUI's Linux libraries (`undefined reference to xkb_state_unref` and
-      # friends), because `tools/cc-gpui.sh` — the wrapper that supplies them — lives under
-      # `tools/`, which `stage()` excludes. So the container would need both LLVM and a staged
-      # Linux shim, and until it has them this tier is not witnessable here.
+      # A build tier needs LLVM; an image without it is skipped by name, with the reason, rather
+      # than having the image's own gap reported as the program's failure. Skipped is never
+      # counted as a pass.
       if [ "$kind" = compile ] && [ "$t" != check ] && [ "$llvm" = 0 ]; then
-        echo "skip   $t: this image cannot link a GPUI binary — no LLVM (\`opt\`/\`llc\`) and \`tools/\` is not staged, so \`cc-gpui.sh\` is absent; witnessed headless on the Mac instead"
+        echo "skip   $t: this image cannot link a GPUI binary — no LLVM (\`opt\`/\`llc\`); witnessed headless on the Mac instead"
         continue
       fi
       log="$(mktemp -t gosbox.XXXXXX)"

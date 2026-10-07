@@ -8,7 +8,7 @@
 #
 # NOTE: `gos build` used to miscompile this shape — the binary linked but
 # aborted at startup with a misaligned-pointer panic in the runtime. That is
-# fixed as of `gos` 0.66.0 rebuilt on this machine, so a native build renders
+# fixed as of the released `gos` 0.68.0, so a native build renders
 # the same pixels `./run.sh` does. The *linker* half of the problem is still
 # real and is why the wrapper below is required.
 #

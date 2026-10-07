@@ -1,0 +1,111 @@
+DW3 — the five tiers, all of them in the container, after the pin moved to 0.68.0
+================================================================================
+
+Round 87 measured three of the five tiers for this row and had to say why the other
+two could not be had: `gosbox:1` carried no LLVM, and giving it one only moved the
+failure to the link, because the `cc` that supplies GPUI's Linux libraries
+(`tools/cc-gpui.sh`) lived under the `tools/` that `stage()` excluded. Both halves are
+fixed in round 88 — the image below has `llvm-22`, and `tools/` is staged — so the two
+build tiers are no longer skipped. This file is the run that shows it, and it is the
+answer to the DW3 register row's `Tiers` cell.
+
+`tests/evidence/DW3.tiers.txt` is kept as well: it is round 87's run, three tiers with
+two named skips, and the measurement of why the skips were there. Deleting it would
+delete the reason this one is worth anything.
+
+--------------------------------------------------------------------------------
+Provenance of the environment
+
+  $ docker image inspect gosbox:2   # built from scripts/gosbox.Dockerfile, in this tree
+  $ opt --version
+  Debian LLVM version 22.1.8
+    Optimized build.
+    Default target: aarch64-unknown-linux-gnu
+    Host CPU: (unknown)
+
+  $ gos --version                   # /tool is ~/.cache/learn-gpui/linux068
+  gos 0.68.0
+
+`0.68.0` is not a coincidence: it is the version this project now pins
+(`project.toml` `^v0.68.0`, `gpui-binding/Cargo.toml` `0.68.0`) and the version the
+released `gos` on this Mac's `PATH` is, so the container builds the binding against the
+version the project asks for and against a stock released toolchain — not a locally
+rebuilt one.
+
+--------------------------------------------------------------------------------
+The run
+
+  $ GOSBOX_TIMEOUT=90 ./scripts/gosbox.sh tiers tests/gui/dw3_input_ime.gos
+  ok     check: check: ok (1 items typed)
+  ok     run: OK DW3 the field inserted at the caret ("ac" then "abc"), cmd-a and backspace cleared it, a composin
+  ok     run-nosjit: OK DW3 the field inserted at the caret ("ac" then "abc"), cmd-a and backspace cleared it, a composin
+  ok     build: build: 84594720B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+  ok     build-release: build: 24368296B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+  exit=0
+
+(The `run` and `run-nosjit` lines are truncated by `gosbox.sh` at 100 columns, as every
+tier verdict is; the full `OK DW3 …` line is in `tests/evidence/DW3.after.txt`.)
+
+--------------------------------------------------------------------------------
+How `GOS_LINUX_LIBS` was measured, not guessed
+
+`tools/cc-gpui.sh` puts its libraries *before* the objects on the link line
+(`exec cc ${GOS_LINUX_LIBS:-} "$@"`), and Debian's `ld` defaults to `--as-needed`, so a
+library nothing has asked for yet is dropped. Hence `-Wl,--no-as-needed` first. Then the
+set was found by following the linker's own complaints, in this order:
+
+  1. No LLVM at all   ->  error: build: native backend failed: opt (LLVM toolchain) not found
+  2. llvm-22, no CC   ->  error occurred in cc-rs: failed to find tool "/work/tools/cc-gpui.sh"
+  3. CC, no libs      ->  undefined reference to `xkb_state_unref`
+  4. +xkbcommon       ->  undefined reference to `xkb_x11_state_new_from_device`
+                          (that symbol is in libxkbcommon-x11, not libxkbcommon — the
+                           two are separate packages and separate libraries)
+  5. +xkbcommon-x11   ->  build: 84594720B native executable at target/debug/learn-gpui
+
+Every named library that could not be found is left out of the shipped default rather
+than shipped as a hopeful no-op: `-lwayland-client` and `-lvulkan` were tried and both
+answered `cannot find`, since gpui's Linux build resolves them through `dlopen` and the
+image needs no `-dev` package for them. The default in `scripts/gosbox.sh` is the set
+that step 5 needed and no more; `GOSBOX_LIBS` overrides it.
+
+--------------------------------------------------------------------------------
+What this does and does not claim
+
+**Claims:** the program type-checks, runs, and runs again with the JIT off, in the
+container; and it compiles and *links* to native executables on both build tiers, in the
+container, against the released 0.68.0.
+
+**Does not claim:** that either built binary **runs**. `gos build` compiles and links and
+executes nothing, and this tier therefore says so and no more — `tools/cc-gpui.sh`'s own
+header records that this program shape has aborted at startup before, and nothing here
+tests that it does not now. A run of a built binary would be a sixth thing, and it is not
+in the five tiers.
+
+The Mac makes the same claim and no larger one, headless, on the released 0.68.0 — and it
+needs the *same* wrapper for the same reason, which is worth writing down because it is
+easy to mistake for a failure:
+
+  $ env -u GOSSAMER_IN_RUNNER gos check examples/07_hello_world.gos
+  check: ok (4 items typed)
+
+  $ env -u GOSSAMER_IN_RUNNER gos build examples/07_hello_world.gos
+  ld: symbol(s) not found for architecture arm64
+  clang: error: linker command failed with exit code 1 (use -v to see invocation)
+  error: build: linker failed: cc exited with exit status: 1
+
+  $ CC=$PWD/tools/cc-gpui.sh env -u GOSSAMER_IN_RUNNER gos build examples/07_hello_world.gos
+  build: 27695432B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+
+  $ CC=$PWD/tools/cc-gpui.sh env -u GOSSAMER_IN_RUNNER gos build --release examples/07_hello_world.gos
+  build: 7959608B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+
+The bare `gos build` failing is not a regression and not a difference between the
+platforms: `gos build` links the binary itself and has no key for linker arguments, so on
+macOS it drops AppKit/Metal/CoreText and on Linux `libxkbcommon-x11` — the wrapper is what
+supplies them on both, and `build.sh` has always set `$CC` for exactly this. The container
+does the same thing from the other end (`inbox` exports `CC=/work/tools/cc-gpui.sh`).
+Executable sizes differ by a few kilobytes between runs because the paths embedded in them
+differ; the numbers above are this round's, not round 87's.
+
+Nothing was left running: each `docker run` above is `--rm`, and `docker ps` afterwards
+shows no container from this round.
