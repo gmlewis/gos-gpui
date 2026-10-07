@@ -2140,8 +2140,17 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                                 None
                             }
                         };
+                        // The render has to run as this window too: `render`
+                        // turns each child handle back into an element by
+                        // reading the arena, and `arena()` keys on
+                        // `window::current()`. A list is built during layout,
+                        // after the frame that asked for it returned, so the
+                        // window it was described in is no longer current —
+                        // and without this the arena lookup misses and every
+                        // container's children are dropped, leaving rows that
+                        // paint their background and nothing else.
                         let element = match row {
-                            Some(row) => render(&row, window, cx, entity),
+                            Some(row) => window::with(win, || render(&row, window, cx, entity)),
                             None => div().into_any_element(),
                         };
                         window::with(win, || release_to(mark));
@@ -2183,19 +2192,72 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
         }
 
         Kind::Mouse { child, id, kinds } => {
-            let inner = snapshot(*child as i64)
-                .map(|c| render(&c, window, cx, entity))
-                .unwrap_or_else(|| div().into_any_element());
+            // `on_mouse` reports for the element it was handed and adds no box
+            // of its own, so whatever carries the handler has to *be* that
+            // element. A bare `div()` wrapped around the receiver's render is
+            // not: gpui makes every div a containing block (`Style::default`
+            // is `Position::Relative`), so the wrapper became the containing
+            // block of an out-of-flow receiver, and
+            // `ui::rect("absolute right=4 top=0 w=16 h=full")` measured its
+            // height against a wrapper that had none. The whole element, its
+            // background and its children went to zero — which is what lost
+            // 02_data_table's scrollbar strip and the thumb inside it — and
+            // the box a click was tested against was that same empty wrapper.
+            //
+            // So a plain receiver is *folded*: its style and interactions
+            // become the wrapper's, its children are rendered inside it, and a
+            // child written after `.on_mouse(..)` is added beside them. That
+            // is the receiver's own box in the receiver's own place, in flow
+            // or out of it. (A receiver that scrolls would lose its handle
+            // here; none does.)
+            //
+            // A text, button, image or list receiver keeps the older shape —
+            // it renders itself and the handler goes on a wrapper around it.
+            // No program chains a child after `.on_mouse` on one of those, so
+            // that wrapper has never had to be the receiver's box.
+            let receiver = snapshot(*child as i64);
+            let folds = matches!(receiver.as_ref().map(|c| &c.kind), Some(Kind::Plain));
             let bounds_key = id.clone();
-            let mut wrapper = style::apply(div(), &el.style)
-                .on_children_prepainted(move |bounds, _window, _cx| {
-                    if let Some(first) = bounds.first() {
-                        MOUSE_BOUNDS
-                            .with(|m| m.borrow_mut().insert((win, bounds_key.clone()), *first));
+            let mut wrapper = match receiver {
+                Some(receiver) if folds => {
+                    let mut children: Vec<AnyElement> = Vec::new();
+                    for handle in receiver.children.iter().chain(el.children.iter()) {
+                        if let Some(child) = snapshot(*handle as i64) {
+                            children.push(render(&child, window, cx, entity));
+                        }
                     }
-                })
-                .id(ElementId::Name(el.id.clone().into()))
-                .child(inner);
+                    let base = style::apply(div(), &receiver.style)
+                        .on_children_prepainted(move |bounds, _window, _cx| {
+                            if let Some(first) = bounds.first() {
+                                MOUSE_BOUNDS.with(|m| {
+                                    m.borrow_mut().insert((win, bounds_key.clone()), *first)
+                                });
+                            }
+                        })
+                        .id(ElementId::Name(receiver.id.clone().into()));
+                    let base = apply_interactions(base, &receiver.style);
+                    apply_focus_order(base, &receiver.style, win, &receiver.id, cx)
+                        .children(children)
+                }
+                receiver => {
+                    let inner = receiver
+                        .map(|mut c| {
+                            c.children.extend(el.children.iter().copied());
+                            window::with(win, || render(&c, window, cx, entity))
+                        })
+                        .unwrap_or_else(|| div().into_any_element());
+                    style::apply(div(), &el.style)
+                        .on_children_prepainted(move |bounds, _window, _cx| {
+                            if let Some(first) = bounds.first() {
+                                MOUSE_BOUNDS.with(|m| {
+                                    m.borrow_mut().insert((win, bounds_key.clone()), *first)
+                                });
+                            }
+                        })
+                        .id(ElementId::Name(el.id.clone().into()))
+                        .child(inner)
+                }
+            };
 
             if kinds.contains("down") {
                 let key = id.clone();
