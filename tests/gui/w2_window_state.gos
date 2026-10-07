@@ -41,23 +41,41 @@ fn window_body(value: i64, other: i64, other_value: i64, frame: i64) -> bool {
     true
 }
 
+/// The second window's view.
+///
+/// There is one view callback for the program — the one `gpui::run` was given —
+/// and every window is drawn by it. `window::allocate` gives the window `run`
+/// opened the first id, 1, so that one is the parent and every other id is a
+/// window this program opened. It used to be a callback of its own passed to
+/// `gpui::open_window`; `open_window` returns before the window is ever drawn, and
+/// a callback handed to a binding function is valid only for that call, so on the
+/// compiled tiers the child's view answered an error.
+///
+/// The child is window 2 and holds 22, while window 1 holds 11 — the values
+/// `main`'s own body uses, the other way round.
+fn child_view() {
+    let cf = gpui::frame()
+    if !window_body(22, 1, 11, cf) {
+        gpui::quit()
+    }
+    gpui::animate()
+    let child = gpui::column("p=8 bg=#222222 size=full")
+    gpui::child(child, gpui::text("child", "color=#ffffff"))
+    gpui::root(child)
+}
+
 fn main() {
     let outcome = gpui::run("w2 - per-window state", 320.0, 200.0, || {
+        if gpui::window_id() != 1 {
+            return child_view()
+        }
+
         let f = gpui::frame()
         let me = gpui::window_id()
 
         if f == 1 {
             // Window 2: the same experiment, the other value.
-            gpui::open_window("w2 - child", 380.0, 80.0, 260.0, 160.0, "", || {
-                let cf = gpui::frame()
-                if !window_body(22, 1, 11, cf) {
-                    gpui::quit()
-                }
-                gpui::animate()
-                let child = gpui::column("p=8 bg=#222222 size=full")
-                gpui::child(child, gpui::text("child", "color=#ffffff"))
-                gpui::root(child)
-            })
+            gpui::open_window("w2 - child", 380.0, 80.0, 260.0, 160.0, "")
         }
 
         if !window_body(11, 2, 22, f) {

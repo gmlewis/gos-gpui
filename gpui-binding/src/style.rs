@@ -264,7 +264,7 @@ pub fn token_colour(spec: &str, key: &str) -> Option<gpui::Hsla> {
     for (name, value) in tokens(spec) {
         if name == key {
             if let Some(value) = value {
-                let value = decode_quoted(&value);
+                let value = decode_value(&value);
                 if !value.is_empty() {
                     return Some(colour(&value));
                 }
@@ -284,7 +284,7 @@ pub fn token_number(spec: &str, key: &str) -> Option<f32> {
     for (name, value) in tokens(spec) {
         if name == key {
             if let Some(value) = value {
-                let value = decode_quoted(&value);
+                let value = decode_value(&value);
                 if !value.is_empty() {
                     return value.parse::<f32>().ok();
                 }
@@ -318,7 +318,7 @@ pub fn key_context(spec: &str) -> Option<String> {
     for (key, value) in tokens(spec) {
         if key == "ctx" {
             if let Some(value) = value {
-                let value = decode_quoted(&value);
+                let value = decode_value(&value);
                 if !value.is_empty() {
                     return Some(value);
                 }
@@ -396,6 +396,32 @@ fn slash(v: &str) -> gpui::Background {
     let width = parts.get(1).and_then(|w| w.parse::<f32>().ok()).unwrap_or(4.0);
     let interval = parts.get(2).and_then(|i| i.parse::<f32>().ok()).unwrap_or(width);
     gpui::pattern_slash(colour, width, interval)
+}
+
+/// A token **value** as the readers below want it.
+///
+/// [`decode_quoted`] is for *refinements* — `hover=`, `active=`, `focus=` — where a
+/// nested `key:value` is shorthand for `key=value` and `_` stands in for the space
+/// that cannot be written. A value is not a refinement, and running it through the
+/// same decoder quietly broke every `theme:` value read this way:
+///
+///   * `caret=theme:border` became `theme=border`, which is not a colour this crate
+///     knows, so it resolved to the fallback **black**;
+///   * `theme:selected_text` — one of the eight field names — became
+///     `theme:selected text`, which resolves to nothing for the same reason.
+///
+/// Both are silent: a colour that resolves to black is indistinguishable from a
+/// deliberate black, which is the failure mode the token language exists to avoid,
+/// and no note was raised either way. It is why an editor asked for the window's
+/// border colour painted its caret black. **Found by running `DW5` in the
+/// container**, which is the first run of a GUI probe this project could make
+/// without a window on someone's desk — the assertion is one a macOS run had
+/// recorded as passing, so the check was believed and the code was not.
+fn decode_value(raw: &str) -> String {
+    if raw.starts_with("theme:") {
+        return raw.to_string();
+    }
+    decode_quoted(raw)
 }
 
 /// `hover=bg:#313244 opacity:0.9` is awkward to nest inside a whitespace

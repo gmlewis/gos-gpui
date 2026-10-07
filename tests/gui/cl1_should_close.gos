@@ -17,34 +17,66 @@
 //
 // Nothing here touches the traffic lights: a platform close request cannot be
 // synthesized, which is why the program's own `close_window` and `close_window_in`
-// go through the same guard. See `gpui::on_window_should_close`.
+// go through the same guard. See `gpui::guard_close`.
+//
+// The guard is **state and an event**, not a callback. `gpui::guard_close(true)`
+// arms it, a close is then refused and raised as the event `gpui::close_requested()`
+// names, and the program answers on the frame it reads that event —
+// `gpui::allow_close()` to let it go, or nothing at all to keep it open. It used
+// to be `on_window_should_close(decide)`, a callback answering `true`/`false`. A
+// callback handed to a binding function is valid only for that call, and the guard
+// is consulted long after that call returned, so on the compiled tiers the guard
+// answered an error and every close went through — silently useless.
 
 use gpui
 use std::process
 
+/// Window 2: arms the guard and never answers, so its close is refused.
+///
+/// One view callback serves every window — the one `gpui::run` was given — and
+/// `window::allocate` gives the window `run` opened the first id, 1, so 2 and 3
+/// are the windows this program opened.
+fn refusing_view() {
+    gpui::guard_close(true)
+    gpui::set_int_in(1, "cl1.refusing.alive", gpui::frame())
+    gpui::animate()
+    let child = gpui::column("p=8 bg=#222222 size=full")
+    gpui::child(child, gpui::text("refusing", "color=#ffffff"))
+    gpui::root(child)
+}
+
+/// Window 3: arms the guard, then answers the refusal by letting it close.
+fn agreeing_view() {
+    gpui::guard_close(true)
+    for event in gpui::take_events() {
+        if gpui::event_id(event) == gpui::close_requested() {
+            gpui::allow_close()
+        }
+    }
+    gpui::set_int_in(1, "cl1.agreeing.alive", gpui::frame())
+    gpui::animate()
+    let child = gpui::column("p=8 bg=#333333 size=full")
+    gpui::child(child, gpui::text("agreeing", "color=#ffffff"))
+    gpui::root(child)
+}
+
 fn main() {
     let outcome = gpui::run("cl1 - refuse to close", 340.0, 220.0, || {
+        let me = gpui::window_id()
+        if me == 2 {
+            return refusing_view()
+        }
+        if me != 1 {
+            return agreeing_view()
+        }
+
         let f = gpui::frame()
 
         if f == 1 {
             // Window 2: refuses, so it must still be here afterwards.
-            gpui::open_window("cl1 - refusing", 380.0, 70.0, 240.0, 150.0, "", || {
-                gpui::on_window_should_close(|| -> bool { false })
-                gpui::set_int_in(1, "cl1.refusing.alive", gpui::frame())
-                gpui::animate()
-                let child = gpui::column("p=8 bg=#222222 size=full")
-                gpui::child(child, gpui::text("refusing", "color=#ffffff"))
-                gpui::root(child)
-            })
+            gpui::open_window("cl1 - refusing", 380.0, 70.0, 240.0, 150.0, "")
             // Window 3: agrees, so it must be gone afterwards.
-            gpui::open_window("cl1 - agreeing", 660.0, 70.0, 240.0, 150.0, "", || {
-                gpui::on_window_should_close(|| -> bool { true })
-                gpui::set_int_in(1, "cl1.agreeing.alive", gpui::frame())
-                gpui::animate()
-                let child = gpui::column("p=8 bg=#333333 size=full")
-                gpui::child(child, gpui::text("agreeing", "color=#ffffff"))
-                gpui::root(child)
-            })
+            gpui::open_window("cl1 - agreeing", 660.0, 70.0, 240.0, 150.0, "")
         }
 
         if f == 6 {

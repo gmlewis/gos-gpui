@@ -1,4 +1,5 @@
 // CL8 — open a URL in the browser.
+// linux: opening a URL needs a desktop handler and a browser and the check is a person watching the tab, and the container has neither.
 //
 // **One window, and one window of the browser's making.** The capability is that the platform opens the URL;
 // the binding neither waits for the browser nor hears from it, so the instrument is the person watching, whose

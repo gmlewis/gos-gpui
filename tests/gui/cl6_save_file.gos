@@ -1,4 +1,5 @@
 // CL6 — the save-file picker (`prompt_for_new_path`).
+// linux: gpui's Linux picker is an XDG Desktop Portal panel (`ashpd`), and the container runs no portal.
 //
 // **One window, one press.** The probe asks where to save, with a name already suggested; the platform shows
 // its own panel; you press Save. Nothing in the window itself needs clicking.

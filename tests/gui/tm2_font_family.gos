@@ -1,6 +1,7 @@
 // TM2 — select a font family, a rem size and a line height.
 //
 // Tier: every tier.
+// linux: the family under test is `Menlo`, which is a macOS font the container does not have.
 //
 // The check that a `font=` family was really *selected* and not quietly fallen
 // back from is a property of the family rather than a metric of it: a monospaced

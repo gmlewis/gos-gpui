@@ -3,19 +3,22 @@
 //
 // Tier: every tier.
 //
-// The row is what the widget paints that a box cannot be styled into. Four
+// The row is what the widget paints that a box cannot be styled into. Five
 // editors, each with a different style string, and every claim is a read-back
 // through `gpui::editor_chrome`, which answers what the *widget* resolved —
 // defaults and all — rather than what the program wrote. A reader that echoed
 // the style string would pass a test of the style string and tell us nothing
 // about the widget, so the assertions that matter are the ones where the two
 // differ: the defaults an unstyled editor has, and a `theme:` value that must
-// come back resolved against this window's own colour table.
+// come back resolved against this window's own colour table. Two of the five
+// ask for a `theme:` colour — `theme:border` and `theme:selected_text` — because
+// the two are mangled by different halves of the token decoder, so one passing
+// says nothing about the other.
 //
 // The `softwrap` clause is a layout rather than a value, so its evidence is the
 // pixels in `DW5.after.png`; here it is checked only as the flag it is.
 //
-// Pass means every one of the four style strings resolved to the chrome the
+// Pass means every one of the five style strings resolved to the chrome the
 // widget's own defaults and token vocabulary say it should.
 
 use gpui
@@ -86,6 +89,19 @@ fn main() {
                 failed = failed + 1
             }
 
+            // The same for a field whose name has an underscore in it, and it is a
+            // **second** assertion rather than the same one twice: the two halves of a
+            // `theme:` value are mangled by different parts of the token decoder —
+            // the colon by one, the underscore by the other — so a fix for the colon
+            // alone would leave this one black. Both were black until the container
+            // found them; see `decode_value` in `gpui-binding/src/style.rs`.
+            let named = gpui::default_color("selected_text")
+            let underscored = gpui::editor_chrome("underscored", "caret")
+            if underscored != named {
+                println(f"FAIL DW5 caret=theme:selected_text reads \"{underscored}\", not this window's selected_text \"{named}\"")
+                failed = failed + 1
+            }
+
             // The two ways of asking about nothing. A key no editor is drawn on answers
             // the defaults — the same reading `gpui::editor_text` gives for text, where
             // "nothing is drawing it" is not a failure — and a field that is not one of
@@ -94,7 +110,7 @@ fn main() {
             failed = failed + check("plain", "nosuchfield", "")
 
             if failed == 0 {
-                println("OK DW5 four style strings resolved to the chrome the widget's defaults and tokens say — including a theme: colour answered resolved, not echoed")
+                println("OK DW5 five style strings resolved to the chrome the widget's defaults and tokens say — including two theme: colours answered resolved, not echoed, one of them naming a field with an underscore in it")
             }
             gpui::quit()
         }
@@ -108,6 +124,7 @@ fn main() {
         )
         gpui::child(root, gpui::editor("bare", "type here", "gutter"))
         gpui::child(root, gpui::editor("themed", "type here", "caret=theme:border"))
+        gpui::child(root, gpui::editor("underscored", "type here", "caret=theme:selected_text"))
         gpui::root(root)
     })
 

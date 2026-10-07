@@ -1,4 +1,5 @@
 // CL7 — reveal in the file manager, and open with the platform's handler.
+// linux: the work is the desktop's file manager and the instrument is a person watching, and the container has neither.
 //
 // **One window, and two windows of the platform's making.** This row's capability is that the *operating
 // system* does something — Finder shows a file, and the default application opens it — so the check is the one

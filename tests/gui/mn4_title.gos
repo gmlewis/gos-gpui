@@ -1,4 +1,5 @@
 // MN4 — set the window title at runtime, with a dirty marker.
+// linux: upstream gpui's `PlatformWindow::get_title()` is implemented by the macOS backend alone — on Linux it answers an empty string, so there is no title to read back.
 //
 // **One window, no clicks.** Three frames and it quits itself: read the title the window opened with,
 // ask for a new one with a marker on it, then read back what the *platform* says the title is now.

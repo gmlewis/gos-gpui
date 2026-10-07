@@ -12,8 +12,9 @@ use gpui::{
     px, size, AnyElement, App, Application, Context, EntityId, PromptLevel, Render, Timer, Window,
 };
 
-use gossamer_binding::{NativeDispatch, RetainedCallback};
+use gossamer_binding::{NativeDispatch, PersistentCallback};
 
+use crate::editor;
 use crate::options::{self, Start};
 use crate::prompts;
 use crate::settings;
@@ -21,10 +22,19 @@ use crate::store::{self, Request};
 use crate::view;
 use crate::window;
 
-/// One root view per window. It owns that window's Gossamer view callback and
-/// rebuilds the element tree from scratch on every frame it is asked for.
+/// One root view per window. Every window's root holds the *same* callback —
+/// the one `gpui::run` was given — and rebuilds the element tree from scratch
+/// on every frame it is asked for.
+///
+/// A window used to be able to have a view callback of its own, handed to
+/// `gpui::open_window`. That callback is released the moment `open_window`
+/// returns to its caller, so on the compiled tiers a second window's view
+/// answered an error and drew an empty frame. There is exactly one callback a
+/// binding may store at HEAD — the one `run` was given, which is never
+/// released because `run` does not return — so there is exactly one view, and a
+/// program tells its windows apart with `gpui::window_id()`.
 pub struct Root {
-    view: RetainedCallback,
+    view: PersistentCallback,
     /// The window this root is the view of. Everything the frame touches is
     /// scoped to it.
     window: i64,
@@ -151,15 +161,38 @@ pub fn set_keep_alive(on: bool) {
     KEEP_ALIVE.store(on, Ordering::SeqCst);
 }
 
+/// The event a revived window finds waiting in its own queue when it opens.
+///
+/// It is the program's way of *learning* that it had closed its last window:
+/// no frame runs while an app has no windows, so there is no moment at which a
+/// program could be told. The window the binding opens in answer to
+/// `gpui::revive_window` is that moment, and the event is what makes it
+/// observable rather than merely true.
+pub const WINDOW_CLOSED_EVENT: &str = "window.closed";
+
 /// The last window has closed.
 ///
-/// The program gets first say, through its `on_window_closed` handler; if that
-/// asked for a window, one is opened and the app carries on with it. Otherwise the
-/// app ends, unless the program asked to be kept alive — which is the state a dock
-/// menu or an `activate` needs.
+/// The program's standing instruction — `gpui::revive_window`, recorded during a
+/// frame while it still had a window — is carried out here: one is opened and the
+/// app carries on with it. Otherwise the app ends, unless the program asked to be
+/// kept alive, which leaves it running and inert — nothing of the program's runs
+/// without a window.
+///
+/// This used to run the program's `on_window_closed` *handler*, a stored Gossamer
+/// callback. A compiled caller releases that callback when the binding fn that
+/// received it returns, so on the compiled tiers the handler failed; and it is the
+/// one capability whose moment — an app with no window — is defined by there being
+/// no frame to run program code in.
 fn last_window_closed(cx: &mut App) {
-    view::window_closed();
-    let pending = PENDING_OPEN.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    let mut pending = PENDING_OPEN.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    // Taken, not read: a revival is one window for one closure. A program that
+    // wants to be revived again asks again, which it can do in the revived
+    // window's first frame — and a program that asked once is not trapped in a
+    // window it cannot close.
+    if let Some(mut revive) = REVIVE.with(|r| r.borrow_mut().take()) {
+        revive.revival = true;
+        pending.push(revive);
+    }
     if !pending.is_empty() {
         // Deferred, not here: this runs while the last window is still being torn
         // down, and `open_window` draws the new one immediately.
@@ -190,9 +223,23 @@ fn open_pending(cx: &mut App, pending: Vec<PendingOpen>) {
             false,
             child,
         );
-        let view = request.view.clone();
+        let Some(view) = app_view() else {
+            // No frame can have asked for a window, so there is no view to draw
+            // it with; saying so beats a window that never paints.
+            eprintln!("gpui: open_window was called with no run() view in place");
+            continue;
+        };
+        if request.revival {
+            // Waiting in its queue before its first frame runs, so the program
+            // sees it the first time it drains events in the new window.
+            store::push_event_in(child, WINDOW_CLOSED_EVENT);
+        }
         let _ = cx.open_window(options, move |window, cx| {
             install_appearance_colors(window, cx);
+            // Here, where the window is built, rather than on its first frame:
+            // see `process_requests`. This is the last moment before the draw
+            // that holds the platform's callback table.
+            window.on_window_should_close(cx, move |_window, _cx| view::may_close(child));
             cx.new(|_| Root { view: view.clone(), window: child })
         });
     }
@@ -202,16 +249,29 @@ fn open_pending(cx: &mut App, pending: Vec<PendingOpen>) {
 // A plain comment: `rustdoc` does not document items a macro produces.
 thread_local! {
     static PENDING_OPEN: RefCell<Vec<PendingOpen>> = const { RefCell::new(Vec::new()) };
+    /// The view callback `gpui::run` was given, kept for the life of the app.
+    ///
+    /// Every window's root holds a clone of it, which is what makes a second
+    /// window possible without a second callback. It is the one callback a
+    /// binding may store at HEAD: `run` does not return until the app exits, so
+    /// the caller's release — the one a compiled caller emits as soon as a
+    /// binding fn returns — is never reached.
+    static APP_VIEW: RefCell<Option<PersistentCallback>> = const { RefCell::new(None) };
 }
 
-/// Releases everything still holding a retained callback, while the runtime is
-/// standing.
+/// The view callback `gpui::run` was given.
+fn app_view() -> Option<PersistentCallback> {
+    APP_VIEW.with(|v| v.borrow().clone())
+}
+
+/// Forgets everything the app was holding, on the way out.
 ///
-/// A `uniform_list`'s row builder sits in the arena, and a window waiting to
-/// open holds a whole view callback. Both are `RetainedCallback`s whose `Drop`
-/// calls back into the runtime to release the registration — and a thread-local
-/// dropped at *thread exit* runs that after the runtime's own thread-locals are
-/// gone, so the runtime panics at its FFI entry:
+/// It used to be load-bearing. A `uniform_list`'s row builder sat in the arena
+/// and a window waiting to open held a whole view callback, both
+/// `RetainedCallback`s whose `Drop` called back into the runtime to release a
+/// registration — and a thread-local dropped at *thread exit* ran that after the
+/// runtime's own thread-locals were gone, so the runtime panicked at its FFI
+/// entry:
 ///
 /// ```text
 /// thread '<unnamed>' panicked: cannot access a Thread Local Storage value
@@ -219,13 +279,17 @@ thread_local! {
 ///   ... _gos_rt_binding_callback_release
 /// ```
 ///
-/// It has to happen here rather than after the event loop returns, because
-/// `Application::run` does not return: it ends the process. Every path that
-/// quits therefore calls this *before* `cx.quit()`.
+/// No callback this binding stores has a `Drop` that calls anything now: the row
+/// builder and the per-window views are gone, and the one callback left is a
+/// `PersistentCallback`, which at HEAD frees nothing when dropped. So the panic
+/// cannot happen and this is housekeeping — but it stays on every quit path,
+/// because the next thing to be stored there might not be so lucky.
 fn release_retained() {
     view::release_retained();
     PENDING_OPEN.with(|q| q.borrow_mut().clear());
     PENDING_CLOSE.with(|q| q.borrow_mut().clear());
+    REVIVE.with(|r| *r.borrow_mut() = None);
+    APP_VIEW.with(|v| *v.borrow_mut() = None);
 }
 
 // Windows a frame asked to close *by name*, closed once that frame is done.
@@ -238,6 +302,9 @@ thread_local! {
 }
 
 /// One window waiting to be opened, once the frame that asked for it is done.
+///
+/// It carries a *description*, not a view: every window is drawn by the one
+/// view `gpui::run` was given (see [`Root`]).
 pub struct PendingOpen {
     pub title: String,
     pub x: f64,
@@ -245,7 +312,26 @@ pub struct PendingOpen {
     pub w: f64,
     pub h: f64,
     pub options: String,
-    pub view: RetainedCallback,
+    /// Whether this is the window a program asked for with
+    /// `gpui::revive_window`, opened because it had none. The revived window
+    /// finds `window.closed` waiting in its queue, which is how a program learns
+    /// what happened.
+    pub revival: bool,
+}
+
+thread_local! {
+    /// The window a program asked to have opened when it has none, if it asked.
+    static REVIVE: RefCell<Option<PendingOpen>> = const { RefCell::new(None) };
+}
+
+/// Records the window to open when this app's last window closes.
+///
+/// It is a description rather than a handler, and it has to be: at that moment
+/// there is no window and so no frame, and no program code can run at all. What
+/// the program *can* do is say beforehand what it wants, which is exactly
+/// `gpui::revive_window`.
+pub fn set_revive(pending: PendingOpen) {
+    REVIVE.with(|r| *r.borrow_mut() = Some(pending));
 }
 
 /// Queues a window. It is opened after the current frame, never during it:
@@ -904,13 +990,20 @@ fn process_requests(
     entity: EntityId,
     win: i64,
 ) -> bool {
-    // A handler registered this frame goes to the platform here, where there is
-    // a `Window` to give it to.
-    if let Some(decide) = view::take_should_close_for_platform(win) {
-        window.on_window_should_close(cx, move |_window, _cx| {
-            view::ask_should_close(win, &decide)
-        });
-    }
+    // Every window is given the platform's should-close closure when it is *built*,
+    // guarded or not, because a program may arm its guard at any later frame. The
+    // closure is a native one — it reads state — rather than the program's own
+    // callback, and that is what makes the guard work on the compiled tiers: a
+    // Gossamer callback stored by a binding fn that returns is released, and the
+    // guard silently answered "yes, close" there.
+    //
+    // It is not installed here, in the middle of a frame, and that is not a
+    // style choice: gpui's X11 backend holds its callback table borrowed while it
+    // draws, so registering one from inside `render` panics there
+    // (`RefCell already borrowed`, `x11/window.rs:1459`) — the first frame of
+    // every window after the first died this way, which is what the container
+    // found after the macOS run could no longer be used to test. See `Root`'s two
+    // construction sites.
 
     // The state a window asked to open in — `start=maximized` or
     // `start=fullscreen` — is a platform call, not a size: gpui reads the bounds
@@ -988,6 +1081,14 @@ fn process_requests(
                     window::with(win, || store::push_event_with("~key.bad", &stroke));
                 }
             },
+
+            Request::Compose { key, text } => {
+                // Not deferred, unlike `SendKey` beside it: a composition is a write to the field,
+                // not an event that has to walk a dispatch tree, so it lands now and the frame being
+                // built already draws it. That is also what a real input method gets — the platform
+                // calls the handler the moment the composition changes, not a frame later.
+                editor::compose(win, &key, &text, window, cx);
+            }
 
             Request::ObserveBounds { id } => {
                 // Upstream's `cx.observe_window_bounds`: the callback runs when the
@@ -1514,14 +1615,15 @@ fn process_requests(
 /// Opens the window and runs GPUI's event loop until the program quits.
 ///
 /// This call does not return until the app exits: the Gossamer view callback
-/// stays valid (and is re-invoked once per frame) for its whole duration.
+/// stays valid (and is re-invoked once per frame) for its whole duration, and
+/// every window this app ever opens is drawn by it.
 pub fn run_app(
     dispatch: &mut dyn NativeDispatch,
     title: String,
     width: f64,
     height: f64,
     options: &str,
-    view: RetainedCallback,
+    view: PersistentCallback,
 ) -> Result<(), String> {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::SeqCst) {
@@ -1529,6 +1631,9 @@ pub fn run_app(
     }
 
     view::stash_dispatch(dispatch);
+    // Kept for the life of the app: every window's root, now and later, clones
+    // this one callback. See `APP_VIEW`.
+    APP_VIEW.with(|v| *v.borrow_mut() = Some(view.clone()));
 
     // The first window and every other: a window's id is allocated before it
     // is drawn, so its very first frame already knows which window it is.
@@ -1553,6 +1658,9 @@ pub fn run_app(
 
         let opened = cx.open_window(window_options, move |window, cx| {
             install_appearance_colors(window, cx);
+            // Here, where the window is built, rather than on its first frame:
+            // see `process_requests`.
+            window.on_window_should_close(cx, move |_window, _cx| view::may_close(main_window));
             cx.new(|_| Root { view: root_view.clone(), window: main_window })
         });
 

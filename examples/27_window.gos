@@ -147,22 +147,40 @@ fn sub_view(close_id: String, custom_titlebar: bool) -> ui::El {
         .child(button(close_id, "Close")))
 }
 
+/// A sub-window's view.
+///
+/// It is the one view `gpui::run` was given, running for a window that is not the
+/// host — the host is 1 and each sub-window opened here is another id. What it
+/// draws comes from the description `open_sub` wrote under this window's own id,
+/// before the window existed, so it is already there on the first frame.
+fn sub_window_view() {
+    let close_id = gpui::state_text("sub.close_id", "")
+    let custom_titlebar = gpui::state_bool("sub.custom_titlebar", false)
+    sub_view(close_id, custom_titlebar) |> ui::root
+}
+
 /// Open one sub-window. `options` is the binding's vocabulary for the
 /// `WindowOptions` upstream builds, and `custom_titlebar` is upstream's
 /// `SubWindow` flag.
 ///
-/// This is `gpui::open_window`, not `ui::open_window`: a window's view names
-/// its root by calling `ui::root`, so the callback answers nothing, and the
-/// `ui` wrapper declares its view as `Fn() -> El`.
+/// What the window will draw is not a callback. `open_window` used to take the
+/// window's own view; a callback handed to a binding function is valid only for
+/// the call that received it, and `open_window` returns before the window is ever
+/// drawn, so on the compiled tiers every sub-window's view answered an error and
+/// drew nothing. Instead the description goes into the window's own state, under
+/// the id it is about to be given — `window::allocate` hands out ids in the order
+/// windows are opened, and the host took 1, so the n-th sub-window is id `n + 1`.
 fn open_sub(title: String, options: String, custom_titlebar: bool) {
     let sequence = gpui::state_int("sub_window", 0) + 1
     gpui::set_int("sub_window", sequence)
     let close_id = f"sub{sequence}.close"
 
+    let child = sequence + 1
+    gpui::set_text_in(child, "sub.close_id", close_id)
+    gpui::set_bool_in(child, "sub.custom_titlebar", custom_titlebar)
+
     let x, y = centred(300.0, 300.0)
-    gpui::open_window(title, x, y, 300.0, 300.0, options, || {
-        sub_view(close_id, custom_titlebar) |> ui::root
-    })
+    gpui::open_window(title, x, y, 300.0, 300.0, options)
 }
 
 /// Upstream's `WindowDemo`: `p_4 flex flex_wrap bg(white) size_full
@@ -248,6 +266,11 @@ fn window_view() -> ui::El {
 
 fn main() {
     let outcome = gpui::run("27 - window", 800.0, 600.0, || {
+        // Every window runs this view; the host is 1 and the sub-windows are the
+        // rest, told apart by what `open_sub` wrote for them.
+        if gpui::window_id() != 1 {
+            return sub_window_view()
+        }
         window_view() |> ui::root
     })
 

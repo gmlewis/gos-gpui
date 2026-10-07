@@ -241,6 +241,8 @@ pub enum Request {
     ObserveKeys { id: String },
     /// Deliver a keystroke to the window as if it had been typed.
     SendKey { stroke: String },
+    /// Deliver `text` to a field as a composition, the way an input method does.
+    Compose { key: String, text: String },
     /// Raise `id` with the new geometry whenever the window is moved or resized.
     ObserveBounds { id: String },
     /// Raise `id` with the new appearance whenever the system's changes.

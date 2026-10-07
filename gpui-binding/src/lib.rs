@@ -79,15 +79,60 @@ gossamer_binding::register_module!(
     /// `view` is called once per frame and must *answer* the window's root
     /// element — end it with `ui::column(..)` or another element, not with a
     /// bare statement.
+    ///
+    /// It is drawn for **every** window the program opens, not just the first:
+    /// [`gpui::open_window`] adds a window, and the view tells them apart with
+    /// [`gpui::window_id`]. This is the only callback this binding stores, and
+    /// the reason it may is that this call does not return until the app exits —
+    /// a callback a binding fn stores is released by its caller the moment that
+    /// fn returns, which is why every other one is expressed as state and events.
     cb_fn run(d, title: String, width: f64, height: f64, view: PersistentCallback) -> Result<(), String> {
-        // Retained: the view is invoked once per frame, for the whole life of
-        // the app, which outlasts the call that handed it over.
-        app::run_app(d, title, width, height, "", view.retain())
+        app::run_app(d, title, width, height, "", view)
     }
 
     /// `run`, with window options: `"resizable=false titlebar=none float=true background=blur"`.
     cb_fn run_with(d, title: String, width: f64, height: f64, options: String, view: PersistentCallback) -> Result<(), String> {
-        app::run_app(d, title, width, height, &options, view.retain())
+        app::run_app(d, title, width, height, &options, view)
+    }
+
+    /// `run_with`, plus the row builder every [`gpui::list`] this program draws
+    /// will use.
+    ///
+    /// `rows` is called with a list's id and a row's index, for the rows on
+    /// screen only, and answers that row's element:
+    ///
+    ///     gpui::run_with_rows("app", 800.0, 600.0, "", |list, row| {
+    ///         ui::row("py=2").text(f"row {row}", "")
+    ///     }, || {
+    ///         ui::column("size=full").list("items", 10_000, 22.0, "size=full") |> ui::root
+    ///     })
+    ///
+    /// **It is handed to `run` rather than to `list` because `run` is the only
+    /// binding call that does not return.** A callback handed to a binding
+    /// function is valid for exactly that call: a compiled caller registers the
+    /// closure, the binding receives a handle, and the caller releases the
+    /// registration as soon as the call returns — freeing the closure's
+    /// environment, which lives in the caller's own frame. `gpui::list` returns
+    /// immediately, so a row builder given to *it* was released long before the
+    /// list laid out, and on the compiled tiers every row answered an error.
+    /// `gpui::run` runs the event loop until the app exits, so a callback given
+    /// to it stays valid for the whole app — which is why the view works there
+    /// too, and why this is the shape that needs no toolchain change.
+    ///
+    /// A program with no list draws none of this and uses [`gpui::run`]. A
+    /// program that draws a list without it reports, per list, that it has no
+    /// rows to draw.
+    cb_fn run_with_rows(
+        d,
+        title: String,
+        width: f64,
+        height: f64,
+        options: String,
+        rows: PersistentCallback,
+        view: PersistentCallback,
+    ) -> Result<(), String> {
+        view::set_row_builder(rows);
+        app::run_app(d, title, width, height, &options, view)
     }
 
     /// Close the window and end the program.
@@ -1200,7 +1245,18 @@ gossamer_binding::register_module!(
 
     /// A single-line text field backed by the string stored under `key`.
     ///
-    /// Raises `<key>|submit` on Return and `<key>|cancel` on Escape.
+    /// Raises `<key>|submit` on Return, `<key>|cancel` on Escape, `<key>|focus` when the field is
+    /// clicked, and `<key>|change` as it is edited.
+    ///
+    /// It is the same engine [`gpui::editor`] is — upstream's text input, with a caret, a selection,
+    /// the clipboard, an undo history and a **marked range** for a composing word — with one line to
+    /// work in. So a field takes a composition from an input method ([`gpui::compose`], read back
+    /// with [`gpui::composing`]), inserts where the caret is rather than only at the end, and
+    /// answers `cmd-a`, `cmd-c`, `cmd-v` and `cmd-z` as a text field should.
+    ///
+    /// The one line is load-bearing rather than cosmetic: Return submits instead of inserting a
+    /// break, a pasted value with breaks in it arrives flattened, and `up`/`down` keep bubbling to
+    /// the program's own keymap because there is nowhere for the caret to go.
     fn input(key: String, placeholder: String, style: String) -> i64 {
         view::push(Kind::Input { placeholder }, style, key)
     }
@@ -1509,6 +1565,42 @@ gossamer_binding::register_module!(
         store::request(store::Request::SendKey { stroke })
     }
 
+    /// Deliver `text` to the `input` or `editor` on `key` as a **composition** — the word an input
+    /// method has put in a field but not yet committed.
+    ///
+    /// This is the entry a real input method's delivery ends in. gpui hands a composed word to the
+    /// focused field's own input handler and that handler marks the range; this calls the same
+    /// method on the field named here, so the field takes it exactly as it takes a real composition:
+    /// the word is *marked*, drawn underlined, and replaced whole by the next insertion — while
+    /// still counting as the field's text until then. [`gpui::composing`] reads it back.
+    ///
+    /// It is a program's call, standing in for the platform, and that is what makes the marked-range
+    /// path checkable without a person typing into an input method: `compose` and `composing` are
+    /// the whole of what the platform does here, minus the typing.
+    ///
+    /// The field's focus is left alone, and a window drawing no `input` or `editor` on that key
+    /// ignores the call. `compose(key, "")` unmarks without inserting anything, which is how a
+    /// composition is cancelled.
+    fn compose(key: String, text: String) {
+        store::request(store::Request::Compose { key, text })
+    }
+
+    /// The text the `input` or `editor` on `key` in this window is **composing**, or `""` when it is
+    /// composing nothing.
+    ///
+    /// The counterpart to [`gpui::compose`]: what an input method has marked in the field. A program
+    /// that submits, validates or searches on a field's value wants to know whether what it is
+    /// reading is a committed value or a half-typed word — this is the difference between
+    /// [`gpui::state_text`], which reports both, and the part that is still being built.
+    ///
+    /// `""` means this window is composing nothing there, which is also what a window drawing no
+    /// field on that key answers — the same reading [`gpui::editor_text`] gives for text. Both can
+    /// be asked with nothing going wrong: the text a field holds and the part of it that is
+    /// provisional are two questions, and a field can hold a half-typed word with nothing marked.
+    fn composing(key: String) -> String {
+        editor::composing(&key)
+    }
+
     /// The name of the current keyboard layout, e.g. `"U.S."`.
     fn keyboard_layout() -> String {
         view::keyboard_layout()
@@ -1703,13 +1795,23 @@ gossamer_binding::register_module!(
         store::get_floats(&key)
     }
 
-    /// A virtualised list of `count` rows: `build` runs only for the rows on
-    /// screen, is called with the row's index, and answers that row's element.
-    cb_fn list(_d, id: String, count: i64, row_height: f64, style: String, build: PersistentCallback) -> i64 {
+    /// A virtualised list of `count` rows of `row_height` each.
+    ///
+    /// The rows come from the program's row builder — the callback handed to
+    /// [`gpui::run_with_rows`] — which is called once for each row on screen and
+    /// answers that row's element. Only the rows on screen are ever built, which
+    /// is the point of a virtual list: a hundred thousand rows cost what the
+    /// window holds.
+    ///
+    /// The builder used to be this function's own last argument. A callback
+    /// handed to a binding function is valid for exactly that call — a compiled
+    /// caller releases the registration the moment the function returns, freeing
+    /// the closure's environment — and this function returns long before the list
+    /// lays out, so on the compiled tiers every row answered an error. `run` is
+    /// the one binding call that does not return, so the builder lives there.
+    fn list(id: String, count: i64, row_height: f64, style: String) -> i64 {
         view::push(
-            // Retained: rows are built while the list lays out, after this
-            // call has returned.
-            Kind::Virtual { count: count.max(0) as usize, build: build.retain(), row_height },
+            Kind::Virtual { count: count.max(0) as usize, row_height },
             style,
             id,
         )
@@ -1755,70 +1857,129 @@ gossamer_binding::register_module!(
     // windows
     // -----------------------------------------------------------------
 
-    /// Open another window. Its `view` becomes a permanent callback, valid for
-    /// the life of the program.
+    /// Open another window, drawn by the same view `run` was given.
     ///
     /// The window is opened once the frame that asked for it has finished —
     /// opening one draws it immediately, and a nested draw would disturb the
-    /// frame being built.
-    cb_fn open_window(d, title: String, x: f64, y: f64, w: f64, h: f64, options: String, view: PersistentCallback) -> () {
-        let _ = d;
-        // Retained: the window opens after the frame that asked for it, and
-        // its view is invoked from then on.
-        app::queue_window(app::PendingOpen { title, x, y, w, h, options, view: view.retain() })
+    /// frame being built. Its id is ready before its first frame, so
+    /// [`gpui::window_id`] in that frame names it, and the view is where a
+    /// program decides what each of its windows holds:
+    ///
+    ///     gpui::run("app", 800.0, 600.0, || {
+    ///         match gpui::window_id() {
+    ///             1 => main_view(),
+    ///             _ => side_view(),
+    ///         }
+    ///     })
+    ///
+    /// It used to take a view callback of its own. A callback handed to a binding
+    /// function is released the moment that function returns to its caller, and
+    /// this one returns before the new window is ever drawn — so on the compiled
+    /// tiers a second window's view answered an error and drew nothing. One
+    /// callback, every window, distinguished by id, is the shape that works on
+    /// every tier.
+    fn open_window(title: String, x: f64, y: f64, w: f64, h: f64, options: String) -> () {
+        app::queue_window(app::PendingOpen { title, x, y, w, h, options, revival: false })
     }
 
-    /// Ask to be told before this window closes, and be able to refuse.
+    /// Ask to be consulted before this window closes, and be able to refuse.
     ///
-    /// `decide` answers `true` to let the window close and `false` to keep it
-    /// open — upstream's `Window::on_window_should_close`, whose docstring is
-    /// "if the callback returns false, the window won't be closed". The obvious
-    /// use is an unsaved-changes guard.
+    /// The close guard, as state: arming it means a close request — the
+    /// platform's, from the traffic lights or the window's close item, or the
+    /// program's own [`gpui::close_window`] — is **refused**, and raised as a
+    /// `close.requested` event in this window instead. The program answers on the
+    /// frame it reads that event:
     ///
-    /// It is consulted for the platform's own close request — the traffic lights,
-    /// the window's close item — **and for [`gpui::close_window`] and
-    /// [`gpui::close_window_in`]**, so a program cannot bypass its own guard by
-    /// closing a window in code. That is a deliberate departure: upstream's
-    /// `remove_window` does not go through the handler.
+    /// * [`gpui::allow_close`] lets it close;
+    /// * nothing at all keeps the window open, which is the unsaved-changes
+    ///   prompt: show the question, and answer "no" by not answering.
     ///
-    /// Installed once; a second call replaces the first. A handler that fails to
-    /// run is treated as answering `true`, as gpui treats its own — a broken guard
-    /// must not trap a window forever.
-    cb_fn on_window_should_close(d, decide: PersistentCallback) -> () {
-        let _ = d;
-        // Retained: the handler is invoked when the platform asks, long after
-        // this call has returned.
-        view::set_should_close(decide.retain())
+    /// Events are read with [`gpui::take_events`], and the event is the one
+    /// [`gpui::close_requested`] names, arriving with no payload.
+    /// `gpui::guard_close(false)` disarms the guard.
+    ///
+    /// This replaced `on_window_should_close(decide)`, a callback that answered
+    /// `true`/`false`. A callback handed to a binding function is released when
+    /// that function returns, long before a person clicks anything, so on the
+    /// compiled tiers the guard answered an error and every close went through —
+    /// silently useless. State and an event are the same capability without the
+    /// callback, and work on every tier.
+    fn guard_close(on: bool) -> () {
+        view::set_guard(on)
+    }
+
+    /// Let this window close after [`gpui::guard_close`] refused.
+    ///
+    /// The answer to `close.requested`: it clears the refusal and asks again, so
+    /// the close the person asked for goes through. A no is the absence of this
+    /// call.
+    fn allow_close() -> () {
+        view::allow_close();
+        store::request(store::Request::CloseWindow)
+    }
+
+    /// The id of the event [`gpui::guard_close`] raises when it refuses a close.
+    ///
+    /// A program compares it against what [`gpui::take_events`] answers, rather
+    /// than spelling the string itself, so the name the binding raises and the
+    /// name the program looks for cannot drift apart:
+    ///
+    ///     for event in gpui::take_events() {
+    ///         if gpui::event_id(event) == gpui::close_requested() {
+    ///             gpui::allow_close()
+    ///         }
+    ///     }
+    fn close_requested() -> String {
+        view::CLOSE_REQUESTED.to_string()
+    }
+
+    /// The id of the event a revived window finds waiting for it.
+    ///
+    /// [`gpui::revive_window`] records a window to open when the last one closes,
+    /// and the binding opens it. That window's first frame finds this event in its
+    /// queue, which is how the program learns it happened; the name is read here
+    /// rather than spelled out, for the same reason as [`gpui::close_requested`].
+    fn window_closed_event() -> String {
+        app::WINDOW_CLOSED_EVENT.to_string()
     }
 
     /// Keep the application alive after its last window closes.
     ///
     /// Off by default: a program that opens one window and closes it expects the
     /// process to end, which is what every example here does. Turned on, closing
-    /// the last window leaves the app running with none — the state a dock menu, a
-    /// notification, or a [`gpui::on_window_closed`] handler that opens another
-    /// window needs.
+    /// the last window leaves the app running with none — the state a dock menu,
+    /// a notification, or a [`gpui::revive_window`] needs.
     ///
-    /// With no window there is no frame and no view callback, so the only program
-    /// code that runs is [`gpui::on_window_closed`] and whatever a `gpui::tick` or
-    /// `gpui::task` closure raises. State written then belongs to
-    /// [`gpui::window_id`] `0`.
+    /// On its own it is inert: with no window there is no frame, so no code of
+    /// the program's runs at all. Pair it with [`gpui::revive_window`] to come
+    /// back, or use it for what the platform does on its own — the dock menu,
+    /// which lives in the application menu rather than in a window.
     fn keep_alive(on: bool) {
         app::set_keep_alive(on)
     }
 
-    /// Be told when the last window has closed.
+    /// Be told when the last window has closed, by having another one opened.
     ///
-    /// `handler` runs *after* the last window is gone, in window 0's namespace. It
-    /// is where a program re-opens a window — the app is still running at that
-    /// moment, whether or not [`gpui::keep_alive`] is on, and a window it asks for
-    /// is opened even though no frame is in flight to ask it.
+    /// A program with no windows runs no code: there is no frame, and so no view
+    /// callback, at exactly the moment this is about. What a program can do is
+    /// say beforehand what it wants — this records the window to open when the
+    /// last one closes, and the binding opens it. The revived window's first
+    /// frame finds a `window.closed` event waiting in its queue, which is how the
+    /// program learns that it happened at all; it is read with
+    /// [`gpui::take_events`], and it carries no payload.
     ///
-    /// Installed once; a second call replaces the first.
-    cb_fn on_window_closed(d, handler: PersistentCallback) -> () {
-        let _ = d;
-        // Retained: it runs when the last window closes, long after this returns.
-        view::set_window_closed(handler.retain())
+    /// A revival is **one window for one closure**. A program that wants to come
+    /// back every time asks again — from the revived window's first frame — and
+    /// one that asked once is not trapped: closing the revived window ends the
+    /// app, as closing any last window does.
+    ///
+    /// This replaced `on_window_closed(handler)`, a callback run with no window
+    /// in existence. A callback handed to a binding function is released when
+    /// that function returns, so on the compiled tiers the handler failed; and
+    /// the shape was wrong besides, because it asked for program code to run at
+    /// the one moment the binding cannot run any.
+    fn revive_window(title: String, x: f64, y: f64, w: f64, h: f64, options: String) -> () {
+        app::set_revive(app::PendingOpen { title, x, y, w, h, options, revival: true })
     }
 
     /// Close the window this frame belongs to.

@@ -13,7 +13,13 @@ crate-type = ["rlib"]
 # The binding ABI this crate is built against. The toolchain
 # resolves it to the `gos` that builds the project, so it
 # tracks the version stated in `project.toml`.
-gossamer-binding = "0.66.0"
+#
+# Moved to 0.68.0 in round 88, by the owner's decision, so that the `gos` on
+# `PATH` — a released 0.68.0 — builds this project instead of stopping at
+# cargo's version resolution. Nothing here needs an unreleased change: the
+# binding stores only `gpui::run`'s callback and expresses every other late
+# invocation as state plus events, so it compiles against a stock toolchain.
+gossamer-binding = "0.68.0"
 
 # The editor moves the caret by grapheme cluster, as upstream's does.
 unicode-segmentation = "1"

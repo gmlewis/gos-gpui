@@ -1,4 +1,5 @@
 // CL4 — a queued `window.prompt` with program-supplied buttons.
+// linux: gpui's Linux prompt is an XDG Desktop Portal panel (`ashpd`), and the container runs no portal.
 //
 // A probe, and one that needs a **person**: the dialog is the platform's — on macOS a sheet attached
 // to this window (`platform/mac/window.rs:1121`, `beginSheetModalForWindow:`) — and nothing in the

@@ -21,34 +21,54 @@ fn report(key: String, count: String) -> i64 {
     n
 }
 
+/// Windows 2 and 3's views.
+///
+/// One view callback serves every window — the one `gpui::run` was given — and
+/// `window::allocate` hands out 1 first, then 2, then 3, so the ids are the
+/// windows' creation order. `run`'s own window is 1; anything else is a window
+/// this program opened. Both of these used to be callbacks of their own passed to
+/// `gpui::open_window`, which returns before the window is drawn — and a callback
+/// handed to a binding function is valid only for that call — so on the compiled
+/// tiers both windows' views answered an error.
+fn child_view() {
+    let cf = gpui::frame()
+    if cf == 1 {
+        gpui::open_window("w10 - third", 640.0, 120.0, 220.0, 140.0, "")
+    }
+
+    // Window 2 closes window 3 — not itself — once, by name.
+    if cf == 3 {
+        gpui::close_window_in(3)
+    }
+    let n = report("w10.w2", "w10.w2.n")
+    gpui::animate()
+    let child = gpui::column("p=8 bg=#222222 size=full")
+    gpui::child(child, gpui::text(f"second, frame {n}", "color=#ffffff"))
+    gpui::root(child)
+}
+
+fn grandchild_view() {
+    let n = report("w10.w3", "w10.w3.n")
+    gpui::animate()
+    let leaf = gpui::column("p=8 bg=#333333 size=full")
+    gpui::child(leaf, gpui::text(f"third, frame {n}", "color=#ffffff"))
+    gpui::root(leaf)
+}
+
 fn main() {
     let outcome = gpui::run("w10 - close a named window", 340.0, 200.0, || {
         let f = gpui::frame()
         let me = gpui::window_id()
 
-        if f == 1 {
-            gpui::open_window("w10 - second", 370.0, 70.0, 240.0, 150.0, "", || {
-                let cf = gpui::frame()
-                if cf == 1 {
-                    gpui::open_window("w10 - third", 640.0, 120.0, 220.0, 140.0, "", || {
-                        let n = report("w10.w3", "w10.w3.n")
-                        gpui::animate()
-                        let leaf = gpui::column("p=8 bg=#333333 size=full")
-                        gpui::child(leaf, gpui::text(f"third, frame {n}", "color=#ffffff"))
-                        gpui::root(leaf)
-                    })
-                }
+        if me == 2 {
+            return child_view()
+        }
+        if me != 1 {
+            return grandchild_view()
+        }
 
-                // Window 2 closes window 3 — not itself — once, by name.
-                if cf == 3 {
-                    gpui::close_window_in(3)
-                }
-                let n = report("w10.w2", "w10.w2.n")
-                gpui::animate()
-                let child = gpui::column("p=8 bg=#222222 size=full")
-                gpui::child(child, gpui::text(f"second, frame {n}", "color=#ffffff"))
-                gpui::root(child)
-            })
+        if f == 1 {
+            gpui::open_window("w10 - second", 370.0, 70.0, 240.0, 150.0, "")
         }
 
         // Window 1 is the witness.

@@ -2,9 +2,16 @@
 //
 // Fifty rows, built only for the visible window, each logging its click.
 //
-// One deviation: upstream's `uniform_list(id, count, f)` derives the row height
-// from the first row it lays out, while this binding's `ui::list` takes an
-// explicit `row_height`. 22.0 is this port's reading of the natural height.
+// Two deviations:
+//
+//   * upstream's `uniform_list(id, count, f)` derives the row height from the
+//     first row it lays out, while this binding's `ui::list` takes an explicit
+//     `row_height`. 22.0 is this port's reading of the natural height.
+//   * upstream's builder is `uniform_list`'s own argument. Here it is handed to
+//     `gpui::run_with_rows` instead, because `run` is the only binding call that
+//     does not return — a callback handed to a binding function is valid for
+//     exactly that call. The builder takes the list id as well as the row index,
+//     so one builder can serve every list a program draws.
 //
 // Upstream prints to stdout on click; so does this port. Watch the terminal.
 
@@ -14,8 +21,14 @@ use ui
 
 const ROWS: i64 = 50
 
+/// One row. `index` is zero-based, as upstream's is; the label is one-based.
+fn entry_row(_list: String, index: i64) -> ui::El {
+    let item = index + 1
+    ui::button(f"item-{index}", f"Item {item}", "px=8 cursor=pointer")
+}
+
 fn main() {
-    let outcome = gpui::run("24 - uniform_list", 300.0, 300.0, || {
+    let outcome = gpui::run_with_rows("24 - uniform_list", 300.0, 300.0, "", entry_row, || {
         for event in gpui::take_events() {
             let id, _data = gpui::event_parts(event)
             if id == "item" {
@@ -25,10 +38,7 @@ fn main() {
         }
 
         ui::panel("size=full bg=#ffffff")
-            .list("entries", ROWS, 22.0, "w=full h=full", |index| {
-                let item = index + 1
-                ui::button(f"item-{index}", f"Item {item}", "px=8 cursor=pointer")
-            })
+            .list("entries", ROWS, 22.0, "w=full h=full")
             |> ui::root
     })
 

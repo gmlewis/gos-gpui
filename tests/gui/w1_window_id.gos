@@ -13,8 +13,34 @@
 use gpui
 use std::process
 
+/// The second window's view.
+///
+/// There is one view callback for the whole program — the one `gpui::run` was
+/// given — and every window it opens is drawn by it. A window tells itself apart
+/// with `gpui::window_id()`, and the window `run` opened itself is always **1**
+/// (`window::allocate` hands out the first id before any other window can ask),
+/// so `1` is the parent and anything else is a window this program opened.
+///
+/// It used to be a callback of its own passed to `gpui::open_window`. A callback
+/// handed to a binding function is valid for exactly that call, and `open_window`
+/// returns before the new window is ever drawn, so on the compiled tiers the
+/// child's view answered an error and the child drew nothing.
+fn child_view() {
+    if !gpui::state_bool("w1.child.reported", false) {
+        gpui::set_bool("w1.child.reported", true)
+        println(f"w1 child  id={gpui::window_id()}")
+    }
+    let child = gpui::column("p=8 bg=#222222 size=full")
+    gpui::child(child, gpui::text("child", "color=#ffffff"))
+    gpui::root(child)
+}
+
 fn main() {
     let outcome = gpui::run("w1 - window identity", 320.0, 240.0, || {
+        if gpui::window_id() != 1 {
+            return child_view()
+        }
+
         let f = gpui::frame()
         let me = gpui::window_id()
 
@@ -22,16 +48,9 @@ fn main() {
             // One id per window, for the life of the window.
             println(f"w1 parent id={me}")
             gpui::set_int("w1.seen", me)
-            // A second window, with a view callback of its own.
-            gpui::open_window("w1 - child", 400.0, 80.0, 240.0, 160.0, "", || {
-                if !gpui::state_bool("w1.child.reported", false) {
-                    gpui::set_bool("w1.child.reported", true)
-                    println(f"w1 child  id={gpui::window_id()}")
-                }
-                let child = gpui::column("p=8 bg=#222222 size=full")
-                gpui::child(child, gpui::text("child", "color=#ffffff"))
-                gpui::root(child)
-            })
+            // A second window. It is drawn by this same view, which finds it by
+            // its id — see `child_view`.
+            gpui::open_window("w1 - child", 400.0, 80.0, 240.0, 160.0, "")
         }
 
         // The same window must answer the same id on every frame.

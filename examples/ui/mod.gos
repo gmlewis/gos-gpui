@@ -115,17 +115,10 @@ impl El {
         self.child(paths(handles, backgrounds, style))
     }
 
-    /// A virtualised list. `build` is called with a row's index, for the rows
-    /// on screen only, and answers that row's element.
-    pub fn list(
-        &self,
-        id: String,
-        count: i64,
-        row_height: f64,
-        style: String,
-        build: Fn(i64) -> El,
-    ) -> El {
-        self.child(list(id, count, row_height, style, build))
+    /// A virtualised list. Its rows come from the row builder handed to
+    /// `gpui::run_with_rows`; only the rows on screen are built.
+    pub fn list(&self, id: String, count: i64, row_height: f64, style: String) -> El {
+        self.child(list(id, count, row_height, style))
     }
 }
 
@@ -202,11 +195,11 @@ pub fn draw(painter: String, phase: f64, style: String) -> El {
     gpui::draw(painter, phase, style).into()
 }
 
-/// A virtualised list. `build` is called with a row's index, for the rows on
-/// screen only, and answers that row's element — which is why it takes a
-/// closure where the other leaves take a style string.
-pub fn list(id: String, count: i64, row_height: f64, style: String, build: Fn(i64) -> El) -> El {
-    gpui::list(id, count, row_height, style, build).into()
+/// A virtualised list. Its rows come from the row builder handed to
+/// `gpui::run_with_rows` — which is why a program that draws one starts with
+/// `run_with_rows` rather than `run`.
+pub fn list(id: String, count: i64, row_height: f64, style: String) -> El {
+    gpui::list(id, count, row_height, style).into()
 }
 
 /// A painted surface. Build its paths with `gpui::path_fill` /
@@ -225,9 +218,10 @@ pub fn set_menus(name: String, items: Vec<String>) {
     gpui::set_menus(name, items)
 }
 
-/// Open another window with its own view. See `gpui::open_window`.
-pub fn open_window(title: String, x: f64, y: f64, w: f64, h: f64, options: String, view: Fn()) {
-    gpui::open_window(title, x, y, w, h, options, view)
+/// Open another window. It is drawn by the same view `gpui::run` was given,
+/// told apart with `gpui::window_id`. See `gpui::open_window`.
+pub fn open_window(title: String, x: f64, y: f64, w: f64, h: f64, options: String) {
+    gpui::open_window(title, x, y, w, h, options)
 }
 
 /// Report pointer events for a whole element. See `El::on_mouse`.

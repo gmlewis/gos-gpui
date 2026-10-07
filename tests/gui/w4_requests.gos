@@ -27,29 +27,43 @@ fn count_of(id: String) -> i64 {
     n
 }
 
+/// The second window's view.
+///
+/// One view callback serves every window — the one `gpui::run` was given — and
+/// `window::allocate` gives the window `run` opened the first id, 1, so anything
+/// else is a window this program opened. The child used to have a callback of its
+/// own passed to `gpui::open_window`; that call returns before the window is
+/// drawn, and a callback handed to a binding function is valid only for that
+/// call, so on the compiled tiers the child's view answered an error.
+fn child_view() {
+    let cf = gpui::frame()
+    if cf == 1 {
+        // The same id the parent used, five seconds out. This
+        // window's own timer will not have fired by the end of the
+        // probe, so this window must hear nothing.
+        gpui::tick("beat", 5000)
+    }
+    let beats = count_of("beat")
+    if beats > 0 {
+        println(f"FAIL W4 the child window heard {beats} beat(s) from a timer it did not start")
+        gpui::quit()
+    }
+    gpui::animate()
+    let child = gpui::column("p=8 bg=#222222 size=full")
+    gpui::child(child, gpui::text(f"child frame {cf}", "color=#ffffff"))
+    gpui::root(child)
+}
+
 fn main() {
     let outcome = gpui::run("w4 - per-window requests", 320.0, 200.0, || {
+        if gpui::window_id() != 1 {
+            return child_view()
+        }
+
         let f = gpui::frame()
 
         if f == 1 {
-            gpui::open_window("w4 - child", 380.0, 80.0, 260.0, 160.0, "", || {
-                let cf = gpui::frame()
-                if cf == 1 {
-                    // The same id the parent used, five seconds out. This
-                    // window's own timer will not have fired by the end of the
-                    // probe, so this window must hear nothing.
-                    gpui::tick("beat", 5000)
-                }
-                let beats = count_of("beat")
-                if beats > 0 {
-                    println(f"FAIL W4 the child window heard {beats} beat(s) from a timer it did not start")
-                    gpui::quit()
-                }
-                gpui::animate()
-                let child = gpui::column("p=8 bg=#222222 size=full")
-                gpui::child(child, gpui::text(f"child frame {cf}", "color=#ffffff"))
-                gpui::root(child)
-            })
+            gpui::open_window("w4 - child", 380.0, 80.0, 260.0, 160.0, "")
         }
 
         if f == 1 {

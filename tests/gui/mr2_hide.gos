@@ -1,4 +1,5 @@
 // MR2 — the `App` accessor batch: hiding the application, refreshing its windows, and the keyboard layout.
+// linux: the witness is macOS's window server — this probe asks CoreGraphics which window its process owns — so the container has nothing to ask.
 //
 // **Two calls, and the window server as the witness.** `gpui::hide()` puts the whole application away —
 // every window of it — and nothing comes back to the binding. What *can* be asked is the window server:

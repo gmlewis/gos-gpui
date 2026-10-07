@@ -17,29 +17,43 @@
 use gpui
 use std::process
 
+/// The second window's view.
+///
+/// One view callback serves every window — the one `gpui::run` was given — and
+/// `window::allocate` gives the window `run` opened the first id, 1, so anything
+/// else is a window this program opened. The second window used to have a callback
+/// of its own passed to `gpui::open_window`; that call returns before the window is
+/// drawn, and a callback handed to a binding function is valid only for that call,
+/// so on the compiled tiers the second window's view answered an error.
+fn second_view() {
+    if gpui::frame() == 1 {
+        gpui::set_menus("w8.second", #["events:second"])
+    }
+    if gpui::frame() == 5 {
+        // This window asks what menu *it* was given. If the wiring is right, that is its own.
+        let mine = gpui::installed_menu()
+        if mine.len() > 0 {
+            gpui::set_text_in(1, "w8.menu.second", mine[0])
+        }
+    }
+    gpui::animate()
+    let child = gpui::column("p=8 gap=4 size=full bg=#222222")
+    gpui::child(child, gpui::text("the second window", "color=#ffffff"))
+    gpui::child(child, gpui::text(f"{gpui::frame()}", "color=#888888"))
+    gpui::root(child)
+}
+
 fn main() {
     let outcome = gpui::run("w8 - first", 460.0, 200.0, || {
+        if gpui::window_id() != 1 {
+            return second_view()
+        }
+
         let f = gpui::frame()
 
         if f == 1 {
             gpui::set_menus("w8.first", #["events:first"])
-            gpui::open_window("w8 - second", 480.0, 0.0, 380.0, 180.0, "", || {
-                if gpui::frame() == 1 {
-                    gpui::set_menus("w8.second", #["events:second"])
-                }
-                if gpui::frame() == 5 {
-                    // This window asks what menu *it* was given. If the wiring is right, that is its own.
-                    let mine = gpui::installed_menu()
-                    if mine.len() > 0 {
-                        gpui::set_text_in(1, "w8.menu.second", mine[0])
-                    }
-                }
-                gpui::animate()
-                let child = gpui::column("p=8 gap=4 size=full bg=#222222")
-                gpui::child(child, gpui::text("the second window", "color=#ffffff"))
-                gpui::child(child, gpui::text(f"{gpui::frame()}", "color=#888888"))
-                gpui::root(child)
-            })
+            gpui::open_window("w8 - second", 480.0, 0.0, 380.0, 180.0, "")
         }
 
         if f == 7 {

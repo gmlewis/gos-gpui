@@ -34,9 +34,15 @@
 //     *position* is computed. The track is `scroll_bounds("items", "h")` less
 //     the thumb, and the fraction is `-scroll_top / scroll_height` as upstream
 //     has it, so the thumb sits where upstream would put it.
-//   * `cx.processor` does not exist. The row builder that `ui::list(..)` takes
-//     is the same hook: it is handed a row index instead of a whole range, and
-//     is called only for the rows on screen.
+//   * `cx.processor` does not exist, and the row builder is not `ui::list`'s
+//     argument. It is the same hook — handed a row index instead of a whole
+//     range, and called only for the rows on screen — but it is given to
+//     `gpui::run_with_rows` instead, because `run` is the only binding call that
+//     does not return. A callback handed to a binding function is valid for
+//     exactly that call, so a builder given to `list` was already released when
+//     the list came to lay out. `gpui::run_with_rows` carries it for the life of
+//     the app. The builder takes the list id as well as the row, so one builder
+//     can serve every list a program draws.
 //   * The quote data is derived, not stored. Upstream fills a
 //     `Vec<Rc<Quote>>` once from `rand::rng()`. Here each value is drawn from a
 //     SplitMix64 stream seeded by the row and the field, so a row is identical
@@ -313,7 +319,12 @@ fn note_visible(row: i64) {
 
 /// One row of the ten thousand: its 24 cells, the row's alternating background,
 /// and the rule below it.
-fn table_row(row: i64) -> ui::El {
+///
+/// It is the program's row builder, handed to `gpui::run_with_rows` rather than
+/// to `ui::list`, and so it takes the asking list's id first — one builder
+/// serves every list a program draws. See `gpui::run_with_rows` for why the
+/// builder lives on `run`.
+fn table_row(_list: String, row: i64) -> ui::El {
     note_visible(row)
     let tint = change_colour(row)
     let background = if row % 2 == 0 { "#ffffff" } else { "#fafafa" }
@@ -381,7 +392,7 @@ fn scrollbar() -> ui::El {
 // ---- the frame --------------------------------------------------------
 
 fn main() {
-    let outcome = gpui::run("02 - data_table", 1280.0, 1000.0, || {
+    let outcome = gpui::run_with_rows("02 - data_table", 1280.0, 1000.0, "", table_row, || {
         // A drag of the scrollbar. `<id>.y` is the pointer's position inside the
         // strip, and the strip is the track, so the fraction is direct — and the
         // offset it asks for is the offset the list is set to.
@@ -420,7 +431,7 @@ fn main() {
                 .child(ui::row("w_full overflow=hidden borderb=1 bordercolor=#e0e0e0 color=#555555 bg=#f0f0f0 py=4 px=8 font=xs")
                     .children(header))
                 .child(ui::stack("size=full")
-                    .list("items", TOTAL_ITEMS, 22.0, "size=full", table_row)
+                    .list("items", TOTAL_ITEMS, 22.0, "size=full")
                     .child(scrollbar())))
             |> ui::root
     })

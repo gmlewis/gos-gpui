@@ -33,29 +33,43 @@ fn drain(own: String) -> (i64, i64) {
     (mine, foreign)
 }
 
+/// The second window's view.
+///
+/// One view callback serves every window — the one `gpui::run` was given — and
+/// `window::allocate` gives the window `run` opened the first id, 1, so anything
+/// else is a window this program opened. The child used to have a callback of its
+/// own passed to `gpui::open_window`; that call returns before the window is
+/// drawn, and a callback handed to a binding function is valid only for that
+/// call, so on the compiled tiers the child's view answered an error.
+fn child_view() {
+    let cf = gpui::frame()
+    let mine, foreign = drain("w3.child")
+    if foreign > 0 {
+        println(f"FAIL W3 the child window drained {foreign} event(s) raised by another window")
+        gpui::quit()
+    } else if mine == 0 && cf > 3 {
+        println(f"FAIL W3 the child window drained none of its own events, at frame {cf}")
+        gpui::quit()
+    }
+    gpui::emit("w3.child", "one")
+    gpui::emit("w3.child", "two")
+    gpui::emit("w3.child", "three")
+    gpui::animate()
+    let child = gpui::column("p=8 bg=#222222 size=full")
+    gpui::child(child, gpui::text("child", "color=#ffffff"))
+    gpui::root(child)
+}
+
 fn main() {
     let outcome = gpui::run("w3 - per-window events", 320.0, 200.0, || {
+        if gpui::window_id() != 1 {
+            return child_view()
+        }
+
         let f = gpui::frame()
 
         if f == 1 {
-            gpui::open_window("w3 - child", 380.0, 80.0, 260.0, 160.0, "", || {
-                let cf = gpui::frame()
-                let mine, foreign = drain("w3.child")
-                if foreign > 0 {
-                    println(f"FAIL W3 the child window drained {foreign} event(s) raised by another window")
-                    gpui::quit()
-                } else if mine == 0 && cf > 3 {
-                    println(f"FAIL W3 the child window drained none of its own events, at frame {cf}")
-                    gpui::quit()
-                }
-                gpui::emit("w3.child", "one")
-                gpui::emit("w3.child", "two")
-                gpui::emit("w3.child", "three")
-                gpui::animate()
-                let child = gpui::column("p=8 bg=#222222 size=full")
-                gpui::child(child, gpui::text("child", "color=#ffffff"))
-                gpui::root(child)
-            })
+            gpui::open_window("w3 - child", 380.0, 80.0, 260.0, 160.0, "")
         }
 
         let mine, foreign = drain("w3.main")

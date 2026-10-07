@@ -21,8 +21,15 @@
 use gpui
 use std::process
 
+/// The list's row builder — handed to `gpui::run_with_rows`, not to
+/// `gpui::list`; see `gpui::run_with_rows` for why. The list id comes first so
+/// one builder can serve every list a program draws.
+fn list_row(_list: String, i: i64) -> i64 {
+    gpui::text(f"row {i}", "p=2 color=#ffffff")
+}
+
 fn main() {
-    let outcome = gpui::run("sc7 - a live scrollbar", 320.0, 280.0, || {
+    let outcome = gpui::run_with_rows("sc7 - a live scrollbar", 320.0, 280.0, "", list_row, || {
         let f = gpui::frame()
 
         if f == 2 {
@@ -62,9 +69,7 @@ fn main() {
         }
 
         gpui::animate()
-        let list = gpui::list("items", 200, 20.0, "h=200 w=240", |i: i64| -> i64 {
-            gpui::text(f"row {i}", "p=2 color=#ffffff")
-        })
+        let list = gpui::list("items", 200, 20.0, "h=200 w=240")
         let root = gpui::column("p=8 bg=#111111 size=full")
         gpui::child(root, list)
         gpui::root(root)

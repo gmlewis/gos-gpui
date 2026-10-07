@@ -265,7 +265,7 @@ it is where the chaining lives.
 | `ui::text(content, style)` | |
 | `ui::button(id, label, style)` | |
 | `ui::checkbox(id, label, checked, style)` | |
-| `ui::input(key, placeholder, style)` | single line; the value lives in state under `key` |
+| `ui::input(key, placeholder, style)` | single line; the value lives in state under `key`. The same engine `ui::editor` is — a caret, a selection, the clipboard, undo, and a **marked range** for a composing word — with one line to work in, so Return submits instead of inserting a break, a pasted value with breaks in it arrives flattened, and `up`/`down` keep bubbling to your own keymap. `gpui::compose(key, text)` delivers a composition to it the way an input method does, and `gpui::composing(key)` reads the word back while it is still being composed. |
 | `ui::slider(key, min, max, style)` | the value lives in state under `key`, as a float |
 | `ui::progress(value, style)` | `0.0 ..= 1.0` |
 | `gpui::scrollbar(id, axis, style)` | a track with a thumb on it, for the scrolled element `id`: `"y"` or `"x"`, the track from the style's `bg=` and `w=`/`h=`, the thumb from its `thumb=` token. Pressing or dragging moves the thumb to the pointer and the offset with it; a track with nothing to scroll draws no thumb. `gpui::scrollbar_thumb(id, axis, track, min)` reads where the thumb is — as `"<start>,<length>"` — and `gpui::thumb_geometry(offset, max, track, min)` is the same arithmetic from four numbers, for a program drawing its own. |
@@ -344,7 +344,7 @@ you want both).
 |---|---|---|
 | `ui::button(id, …)` | `id` | — |
 | `ui::checkbox(id, …)` | `id` | `"on"` / `"off"` — the flag under `id` is already toggled |
-| `ui::input(key, …)` | `key` | `"submit"`, `"cancel"`, `"focus"` |
+| `ui::input(key, …)` | `key` | `"submit"`, `"cancel"`, `"focus"`, `"change"` (as it is edited) |
 | `ui::slider(key, …)` | `key` | the new value, as text like `"0.420"` |
 | `gpui::tick(id, …)` | `id` | — |
 | `gpui::delay(id, …)` | `id` | — (once, `ms` after it is asked for) |
@@ -716,6 +716,18 @@ gutter and its line numbers, the selection and the caret — with the tokens tha
 colour them read off the same style string the program writes
 (`gpui::editor_chrome(key, field)` answers what the widget **resolved**, so a
 program can match its own borders to the caret via `caret=theme:border`).
+
+`ui::input` is the same engine with one line to work in — a `single_line` flag on
+the same entity, not a second widget — so a field has the caret, the selection, the
+clipboard, the undo history and the marked range that a hand-rolled key loop could
+never have. That last one is the point of the row: an **input method** composes a
+word *inside* a text field, and a field that is not a text editor gives it nowhere
+to put it. `gpui::compose(key, text)` delivers a composition the way the platform
+does — through `EntityInputHandler::replace_and_mark_text_in_range`, the same method
+a real input method's delivery ends in — and `gpui::composing(key)` reads the word
+back while it is still provisional. What the difference costs is one line's worth of
+meaning: Return submits rather than inserting a break, a paste with breaks in it is
+flattened, and `up`/`down` keep bubbling to the program's own keymap.
 
 Two more readers answer what the *mouse* did, which text cannot:
 `gpui::editor_selection(key)` is the widget's selection as `"<start>,<end>"` in

@@ -145,6 +145,18 @@ thread_local! {
     /// its box is on screen. The bounds are one frame behind, because they are the previous paint's.
     static EDITOR_STATE: RefCell<HashMap<(i64, String), (usize, usize, f64, f64, f64, f64)>> =
         RefCell::new(HashMap::new());
+
+    /// The **composing** text each editor is holding, per `(window, key)`.
+    ///
+    /// The same reason as the three above, and one of its own: there is no `gpui::state_text` for a
+    /// marked range. A field's committed text is in the store, but the word an input method is
+    /// building is a range inside the field's own content, which only the entity knows — so the
+    /// entity leaves the substring here every frame and [`composing`] picks it up.
+    ///
+    /// A key with no entry is not composing. That is not the same as an empty *entry*: the entry is
+    /// removed rather than emptied, so a reader can tell "nothing is being composed" from "something
+    /// is being composed and it is empty", which is a state an input method really passes through.
+    static EDITOR_MARKED: RefCell<HashMap<(i64, String), String>> = RefCell::new(HashMap::new());
 }
 
 /// The text the editor on `key` in window `win` is holding, or `""` when that window has no editor
@@ -168,6 +180,57 @@ pub fn editor_text_in(win: i64, key: &str) -> String {
 /// The text this window's editor on `key` is holding.
 pub fn editor_text(key: &str) -> String {
     editor_text_in(window::current(), key)
+}
+
+/// The text the editor on `key` in window `win` is **composing**, or `""` when it is composing
+/// nothing.
+///
+/// A composing — *marked* — range is the word an input method has put in the field but not yet
+/// committed: the editor draws it underlined and replaces it whole when the composition ends. While
+/// it is there, the field's [`editor_text_in`] already contains it, because a field that showed
+/// nothing until a word was committed would be a field nobody can use; what this adds is the part
+/// that is not yet text the program should act on, which is exactly what a program searching,
+/// validating or sending the field's value wants to know.
+///
+/// `""` means this window's editor on that key is composing nothing — the same reading
+/// [`editor_text_in`] gives for a window drawing no such editor, and the reason the two are asked
+/// together rather than one being inferred from the other: the text can hold a half-typed word with
+/// nothing marked, and a marked range can be zero bytes wide, which is a composition that has
+/// swallowed what it replaced and not yet put anything in its place.
+pub fn composing_in(win: i64, key: &str) -> String {
+    EDITOR_MARKED.with(|all| {
+        all.borrow()
+            .get(&(win, key.to_string()))
+            .cloned()
+            .unwrap_or_default()
+    })
+}
+
+/// The text this window's editor on `key` is composing.
+pub fn composing(key: &str) -> String {
+    composing_in(window::current(), key)
+}
+
+/// Delivers `text` to the editor on `key` in window `win` as a composition — the call an input
+/// method's own delivery ends in.
+///
+/// This is the platform's path, not a shortcut around it: an input method hands gpui the composed
+/// word, gpui calls [`EntityInputHandler::replace_and_mark_text_in_range`] on the focused input
+/// handler, and this calls the same method on the named field's. So the field takes it the way it
+/// takes a real composition — the range is marked, the drawing underlines it, and the next insertion
+/// replaces it — and [`composing_in`] reads it back.
+///
+/// Does nothing when this window draws no editor on that key: there is no field to compose into, and
+/// composing into a field nobody can see would put text under a key that no widget holds.
+pub fn compose(win: i64, key: &str, text: &str, window: &mut Window, cx: &mut App) {
+    let editor = EDITORS.with(|editors| editors.borrow().get(&(win, key.to_string())).cloned());
+    let Some(editor) = editor else { return };
+    // `None` for the range, as the platform passes it when it is composing afresh: the handler
+    // falls back to the marked range it already has, and to the selection when it has none — so a
+    // second call extends the composition in place rather than starting a new one inside the old.
+    editor.update(cx, |editor, cx| {
+        editor.replace_and_mark_text_in_range(None, text, None, window, cx)
+    });
 }
 
 /// What the editor on `key` in window `win` is drawing its own chrome with, as `"<field>=<value>"`.
@@ -429,6 +492,15 @@ fn row_of(rows: &[(usize, usize)], offset: usize) -> (usize, usize) {
     (0, offset.saturating_sub(rows.first().map_or(0, |(start, _)| *start)))
 }
 
+/// `text` with every line break taken out — what a single-line field can hold.
+///
+/// Both spellings of a break go: `\n`, and the `\r` a pasted value from another platform may carry
+/// either alone or in front of it. Nothing else is touched — a tab is a character a one-line field
+/// can hold, and stripping it would be this function deciding what a field is for.
+fn flatten(text: &str) -> String {
+    text.replace(['\n', '\r'], "")
+}
+
 /// The two offsets in a `"<start>,<end>"` range, as [`crate::text::word_at`] and
 /// [`crate::text::line_bounds`] answer with.
 ///
@@ -452,10 +524,11 @@ pub fn editor_element(
     key: &str,
     placeholder: &str,
     spec: &str,
+    single_line: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (editor, created) = editor_for(win, key, placeholder, spec, cx);
+    let (editor, created) = editor_for(win, key, placeholder, spec, single_line, cx);
 
     // Upstream's `InputExample` focuses its text input the moment the window
     // opens (`window.focus(&view.text_input.focus_handle(cx))`). A binding
@@ -511,6 +584,18 @@ pub fn editor_element(
         all.borrow_mut().insert((win, key.to_string()), state);
     });
 
+    // The composing range, on the same beat. Removed rather than emptied when there is none, so a
+    // reader can tell a field that is composing nothing from one that is composing nothing *yet*.
+    let marked = editor.read(cx).marked_text();
+    EDITOR_MARKED.with(|all| {
+        let slot = (win, key.to_string());
+        if marked.is_empty() {
+            all.borrow_mut().remove(&slot);
+        } else {
+            all.borrow_mut().insert(slot, marked);
+        }
+    });
+
     editor.into_any_element()
 }
 
@@ -521,6 +606,7 @@ fn editor_for(
     key: &str,
     placeholder: &str,
     spec: &str,
+    single_line: bool,
     cx: &mut App,
 ) -> (Entity<TextEditor>, bool) {
     let existing = EDITORS.with(|editors| editors.borrow().get(&(win, key.to_string())).cloned());
@@ -530,6 +616,12 @@ fn editor_for(
         editor.update(cx, |editor, _cx| {
             editor.placeholder = placeholder;
             editor.chrome = chrome;
+            // Which widget is being drawn is a property of the call, not of the entity: an
+            // `input` and an `editor` on the same key in the same window are the same field with
+            // two spellings, and the last one drawn decides. `gpui::input` may be called with a
+            // `gpui::editor` on the same key beside it, so this is read afresh rather than set
+            // once at creation.
+            editor.single_line = single_line;
             editor.adopt_program_text();
         });
         return (editor, false);
@@ -540,7 +632,7 @@ fn editor_for(
     let placeholder = SharedString::new(placeholder);
     let chrome = Chrome::read(spec);
     let registered = key.clone();
-    let editor = cx.new(move |cx| TextEditor::new(win, key, placeholder, chrome, content, cx));
+    let editor = cx.new(move |cx| TextEditor::new(win, key, placeholder, chrome, content, single_line, cx));
     EDITORS.with(|editors| {
         editors.borrow_mut().insert((win, registered), editor.clone())
     });
@@ -565,6 +657,16 @@ struct TextEditor {
     /// frame the element is drawn — so a program can change the caret's colour by changing the style
     /// string it passes, with no second call anywhere.
     chrome: Chrome,
+    /// Whether this field has exactly one line, which is what `ui::input` is and `ui::editor` is not.
+    ///
+    /// One engine, two widgets: the field a person types a name into and the one they type a program
+    /// into differ in three things and share everything else. A single-line field takes no break —
+    /// `enter` is its submit rather than a newline, a paste is flattened, and a vertical move has
+    /// nowhere to go, so `up`/`down` keep bubbling. The caret, the selection, the clipboard, the undo
+    /// history, the marked range and the input-handler registration are the same code either way,
+    /// which is the point: a field that is not a text editor is a field that cannot hold a composing
+    /// word, and before this flag existed `ui::input` was exactly that.
+    single_line: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -605,8 +707,18 @@ impl TextEditor {
         placeholder: SharedString,
         chrome: Chrome,
         content: String,
+        single_line: bool,
         cx: &mut Context<Self>,
     ) -> Self {
+        // A field with one line cannot hold a break, and the program may have seeded it with one —
+        // a value read from a file, a title, a line of something. Flattening it here rather than
+        // drawing two rows under a box sized for one is what makes the widget honest about what it
+        // can hold; `adopt_program_text` does the same for every later write.
+        let content = if single_line {
+            flatten(&content)
+        } else {
+            content
+        };
         // Upstream starts empty, so its caret starts at 0; a seeded editor
         // starts at the end of what it was seeded with.
         let caret = content.len();
@@ -617,6 +729,7 @@ impl TextEditor {
             content: content.into(),
             placeholder,
             chrome,
+            single_line,
             selected_range: caret..caret,
             selection_reversed: false,
             marked_range: None,
@@ -964,6 +1077,13 @@ impl TextEditor {
         let plain = !modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.platform;
 
         match keystroke.key.as_str() {
+            // A single-line field's two own keys, ahead of the editor's because they are the same
+            // key meaning something else. `enter` cannot put a break in a field with one line, so
+            // what it does instead is what a field is *for* — it submits; `escape` hands the field
+            // back. Both are the events `ui::input` has always raised, and they are raised here so
+            // that it raises them through the engine rather than beside it.
+            "enter" if self.single_line && (plain || modifiers.shift) => self.submit(),
+            "escape" if self.single_line && plain => self.cancel(),
             "backspace" if plain => self.backspace(window, cx),
             "delete" if plain => self.delete(window, cx),
             // A break, which is the one key a single-line editor could not honour and this one
@@ -982,16 +1102,26 @@ impl TextEditor {
                 let end = self.content.len();
                 self.move_to(end, cx)
             }
-            "up" if modifiers.shift && !command && !modifiers.alt => self.move_line(-1, true, cx),
-            "down" if modifiers.shift && !command && !modifiers.alt => self.move_line(1, true, cx),
-            "up" if plain => self.move_line(-1, false, cx),
-            "down" if plain => self.move_line(1, false, cx),
-            "pageup" if modifiers.shift && !command && !modifiers.alt => self.move_page(-1, true, cx),
-            "pagedown" if modifiers.shift && !command && !modifiers.alt => {
+            // A vertical move has nowhere to go in a field with one line, so these keep bubbling:
+            // a program that bound `up` in its own keymap still hears it from an input, and one
+            // that bound it while an editor was focused still does not — which is the difference
+            // between the two widgets, said the only way it can be said.
+            "up" if modifiers.shift && !command && !modifiers.alt && !self.single_line => {
+                self.move_line(-1, true, cx)
+            }
+            "down" if modifiers.shift && !command && !modifiers.alt && !self.single_line => {
+                self.move_line(1, true, cx)
+            }
+            "up" if plain && !self.single_line => self.move_line(-1, false, cx),
+            "down" if plain && !self.single_line => self.move_line(1, false, cx),
+            "pageup" if modifiers.shift && !command && !modifiers.alt && !self.single_line => {
+                self.move_page(-1, true, cx)
+            }
+            "pagedown" if modifiers.shift && !command && !modifiers.alt && !self.single_line => {
                 self.move_page(1, true, cx)
             }
-            "pageup" if plain => self.move_page(-1, false, cx),
-            "pagedown" if plain => self.move_page(1, false, cx),
+            "pageup" if plain && !self.single_line => self.move_page(-1, false, cx),
+            "pagedown" if plain && !self.single_line => self.move_page(1, false, cx),
             "a" if command => self.select_all(cx),
             "c" if command => self.copy(cx),
             "x" if command => self.cut(window, cx),
@@ -1100,6 +1230,54 @@ impl TextEditor {
         cx.notify();
     }
 
+    /// Raises `<key>|submit` — what Enter means to a field with one line.
+    ///
+    /// It goes through `store::push_event_with` on the field's own key and window, exactly as a
+    /// `change` does, so the event lands in the same queue a program already drains and the id is
+    /// the key the field was drawn under.
+    fn submit(&mut self) {
+        let (win, key) = (self.win, self.key.clone());
+        window::with(win, || store::push_event_with(&key, "submit"));
+    }
+
+    /// Raises `<key>|cancel` — what Escape means to a field with one line.
+    ///
+    /// The field keeps what it holds: cancelling is the program's to act on, and a widget that
+    /// emptied itself on Escape would be deciding what cancel means for every program that uses it.
+    fn cancel(&mut self) {
+        let (win, key) = (self.win, self.key.clone());
+        window::with(win, || store::push_event_with(&key, "cancel"));
+    }
+
+    /// The text inside the marked (composing) range, or `""` when nothing is marked.
+    ///
+    /// The substring rather than the range, because that is what a program asks for: the word an
+    /// input method is building. Clipped to char boundaries, since a platform that sent a range
+    /// ending inside a character would otherwise panic here.
+    fn marked_text(&self) -> String {
+        match self.marked_range.as_ref() {
+            Some(range) => {
+                let start = self.floor_boundary(range.start);
+                let end = self.floor_boundary(range.end);
+                self.content[start.min(end)..start.max(end)].to_string()
+            }
+            None => String::new(),
+        }
+    }
+
+    /// `text` as this field can hold it: a break is not a character a single-line field has.
+    ///
+    /// The one place the difference between the two widgets touches *what the program gets*, as
+    /// opposed to which keys mean what: a paste of three lines into an input arrives as one line,
+    /// and the program reads that one line back rather than a value the field never drew.
+    fn held(&self, text: &str) -> String {
+        if self.single_line {
+            flatten(text)
+        } else {
+            text.to_string()
+        }
+    }
+
     /// Takes on text the program wrote under `key`.
     ///
     /// The editor is the owner of its content while it is being edited, so this
@@ -1108,7 +1286,21 @@ impl TextEditor {
     /// (or `gpui::forget`) behind it.
     fn adopt_program_text(&mut self) {
         let (win, key) = (self.win, self.key.clone());
-        let stored = window::with(win, || store::get_text(&key, ""));
+        let mut stored = window::with(win, || store::get_text(&key, ""));
+        // A single-line field cannot hold a break, and the program may write one — a title, a value
+        // read from a file. The field flattens it and **writes the flattened text back**, rather
+        // than holding a value the store disagrees with: the two would then differ for ever, and
+        // this function would adopt the stored text on every frame, clearing the layout each time
+        // and never painting. Writing it back is also the honest reading of what happened — the
+        // field took the value and it is now this.
+        if self.single_line {
+            let held = flatten(&stored);
+            if held != stored {
+                stored = held;
+                let held = stored.clone();
+                window::with(win, || store::set_text(&key, &held));
+            }
+        }
         if stored == self.content.as_ref() {
             return;
         }
@@ -1210,14 +1402,16 @@ impl EntityInputHandler for TextEditor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let new_text = self.held(new_text);
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
+        let new_text = new_text.as_str();
         self.content =
-            (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
+            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
@@ -1232,14 +1426,16 @@ impl EntityInputHandler for TextEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let new_text = self.held(new_text);
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
+        let new_text = new_text.as_str();
         self.content =
-            (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
+            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
         if !new_text.is_empty() {
             self.marked_range = Some(range.start..range.start + new_text.len());

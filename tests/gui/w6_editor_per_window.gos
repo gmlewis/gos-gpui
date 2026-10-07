@@ -32,8 +32,42 @@
 use gpui
 use std::process
 
+/// The second window's view.
+///
+/// One view callback serves every window — the one `gpui::run` was given — and
+/// `window::allocate` gives the window `run` opened the first id, 1, so anything
+/// else is a window this program opened. The child used to have a callback of its
+/// own passed to `gpui::open_window`; that call returns before the window is
+/// drawn, and a callback handed to a binding function is valid only for that
+/// call, so on the compiled tiers the child's view answered an error.
+fn child_view() {
+    let cf = gpui::frame()
+    if cf >= 3 {
+        let theirs = gpui::editor_text("note")
+        if theirs == "" {
+            println("FAIL W6 the child window has no editor of its own on that key")
+            gpui::quit()
+        } else if theirs == "alpha" {
+            println("FAIL W6 the child window's editor is the first window's editor")
+            gpui::quit()
+        } else if gpui::text_lines(theirs) < 2 {
+            println("FAIL W6 the child window's editor holds one line, not the two it was given")
+            gpui::quit()
+        }
+    }
+    gpui::animate()
+    let field = gpui::editor("note", "type here", "p=4 minh=28")
+    let root = gpui::column("p=8 bg=#222222 size=full")
+    gpui::child(root, field)
+    gpui::root(root)
+}
+
 fn main() {
     let outcome = gpui::run("w6 - editor per window", 360.0, 220.0, || {
+        if gpui::window_id() != 1 {
+            return child_view()
+        }
+
         let f = gpui::frame()
 
         if f == 1 {
@@ -41,27 +75,7 @@ fn main() {
             // The child's editor is created in the child window, so it seeds from the child
             // window's store — one line here, two there.
             gpui::set_text_in(2, "note", "beta\nline")
-            gpui::open_window("w6 - child", 420.0, 80.0, 260.0, 160.0, "", || {
-                let cf = gpui::frame()
-                if cf >= 3 {
-                    let theirs = gpui::editor_text("note")
-                    if theirs == "" {
-                        println("FAIL W6 the child window has no editor of its own on that key")
-                        gpui::quit()
-                    } else if theirs == "alpha" {
-                        println("FAIL W6 the child window's editor is the first window's editor")
-                        gpui::quit()
-                    } else if gpui::text_lines(theirs) < 2 {
-                        println("FAIL W6 the child window's editor holds one line, not the two it was given")
-                        gpui::quit()
-                    }
-                }
-                gpui::animate()
-                let field = gpui::editor("note", "type here", "p=4 minh=28")
-                let root = gpui::column("p=8 bg=#222222 size=full")
-                gpui::child(root, field)
-                gpui::root(root)
-            })
+            gpui::open_window("w6 - child", 420.0, 80.0, 260.0, 160.0, "")
         }
 
         if f >= 3 {

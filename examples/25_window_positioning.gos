@@ -41,6 +41,16 @@
 //   * `gpui::run` always opens one window of its own, and upstream's app opens
 //     none — it only opens the positioned ones. That host window is the one
 //     whose callback does the opening, and it lists the connected displays.
+//   * A positioned window is not given a view of its own. `gpui::run`'s view
+//     draws every window, and this port tells them apart with `gpui::window_id`
+//     — the host window is 1 and the positioned ones are 2, 3, … in the order
+//     they were opened. Each one reads the description written for it just
+//     before it was opened, under the id it was about to get, so the label and
+//     colour are waiting on its first frame. `open_window` used to take the
+//     window's own view callback; a callback handed to a binding function is
+//     valid only for the call that received it, and `open_window` returns before
+//     the window is drawn, so on the compiled tiers every positioned window's
+//     view answered an error.
 //   * Upstream's labels interpolate `DisplayId`'s `Debug`, which is
 //     `DisplayId(1)`. `gpui::display_field(i, "id")` is that number, so the labels are
 //     reproduced with the `DisplayId(…)` wrapper spelled out by hand.
@@ -64,29 +74,46 @@ const MARGIN: f64 = 150.0
 /// Upstream's `build_window_options`, minus `display_id` — see the deviations.
 const OPTIONS: &str = "kind=popup focus=false movable=false titlebar=none background=transparent"
 
+/// A positioned window's view.
+///
+/// It is the one view `gpui::run` was given, and it is running for a window that
+/// is not the host — the host is window 1 and this is one of the nine. What it
+/// draws comes from the description `positioned` wrote for it, under this
+/// window's own id, before the window existed.
+fn positioned_view() {
+    let label = gpui::state_text("positioned.label", "")
+    let colour = gpui::state_text("positioned.colour", "")
+    let x = gpui::state_float("positioned.x", 0.0)
+    let y = gpui::state_float("positioned.y", 0.0)
+    let here_x = gpui::window_field("x")
+    let here_y = gpui::window_field("y")
+    let here_w = gpui::window_field("w")
+    let here_h = gpui::window_field("h")
+    ui::panel(f"flex col size=full items=center bg={colour} color=#ffffff")
+        .text(label, "")
+        .child(ui::panel("flex col font=sm items=center size=full")
+            .text(f"origin: {x}px, {y}px size: {WINDOW_W}px, {WINDOW_H}px", "")
+            .text(f"cx.bounds() origin: {here_x}px, {here_y}px size {here_w}px, {here_h}px", ""))
+        |> ui::root
+}
+
 /// One positioned window: `label` names it, `colour` is upstream's background,
 /// and `x`/`y` are the requested screen coordinates in pixels.
 ///
-/// This is `gpui::open_window`, not `ui::open_window`: the `ui` wrapper
-/// declares its view as `Fn() -> El`, while a window's view names its root by
-/// calling `ui::root` (the binding's `Root::render` discards the callback's
-/// return value and reads the root the callback named). `gpui::open_window`
-/// takes the same callback `gpui::run` does, so the `… |> ui::root` ending
-/// works here.
+/// Its description is written into the window's *own* state before it is opened,
+/// under the id it is about to be given, so the description is there for its
+/// first frame to read. `window::allocate` hands out ids in the order windows are
+/// opened and the host took 1, so the n-th window opened here is id `n + 1`.
 fn positioned(label: String, colour: String, x: f64, y: f64) {
     let title = f"25 - {label}"
-    gpui::open_window(title, x, y, WINDOW_W, WINDOW_H, *OPTIONS, || {
-        let here_x = gpui::window_field("x")
-        let here_y = gpui::window_field("y")
-        let here_w = gpui::window_field("w")
-        let here_h = gpui::window_field("h")
-        ui::panel(f"flex col size=full items=center bg={colour} color=#ffffff")
-            .text(label, "")
-            .child(ui::panel("flex col font=sm items=center size=full")
-                .text(f"origin: {x}px, {y}px size: {WINDOW_W}px, {WINDOW_H}px", "")
-                .text(f"cx.bounds() origin: {here_x}px, {here_y}px size {here_w}px, {here_h}px", ""))
-            |> ui::root
-    })
+    let n = gpui::state_int("positioned.count", 0) + 1
+    gpui::set_int("positioned.count", n)
+    let child = n + 1
+    gpui::set_text_in(child, "positioned.label", label)
+    gpui::set_text_in(child, "positioned.colour", colour)
+    gpui::set_float_in(child, "positioned.x", x)
+    gpui::set_float_in(child, "positioned.y", y)
+    gpui::open_window(title, x, y, WINDOW_W, WINDOW_H, *OPTIONS)
 }
 
 /// Upstream's nine windows for one display, in the order it opens them.
@@ -126,6 +153,12 @@ fn display_line(index: i64) -> ui::El {
 
 fn main() {
     let outcome = gpui::run("25 - window_positioning", 560.0, 420.0, || {
+        // Every window runs this view; the host is 1 and the positioned ones are
+        // the rest, told apart by what `positioned` wrote for them.
+        if gpui::window_id() != 1 {
+            return positioned_view()
+        }
+
         // Upstream opens every window from `Application::run`'s closure, once.
         // A Gossamer view callback runs once per frame, so this is guarded.
         if !gpui::state_bool("opened", false) {

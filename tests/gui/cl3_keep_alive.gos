@@ -5,10 +5,19 @@
 // The application normally ends when its last window closes, which is what every
 // example here relies on. This probe turns that off, closes its only window, and
 // requires the app to still be running afterwards — running well enough to open a
-// window from a callback that has no window to work with.
+// window while it has none.
 //
 // That is the whole shape of a dock menu or an `activate`: the program is alive
 // with nothing on screen, and something the platform calls brings a window back.
+//
+// **The revival is declarative, because there is no code to run.** With no window
+// there is no frame, so the program cannot be handed a callback at the moment this
+// is about. It says beforehand which window to open — `gpui::revive_window` — and
+// the binding opens it, raising the event `gpui::window_closed_event()` names in
+// the new window's queue so the program learns on its first frame that it happened.
+// It used to be `on_window_closed(handler)`, a callback run with no window in
+// existence — released the moment the binding fn that took it returned, so on the
+// compiled tiers it failed, and the shape was wrong besides.
 //
 // Pass means the revived window renders, which it can only do if the process
 // outlived the window it closed. If the app had quit, nothing would print a verdict
@@ -18,29 +27,47 @@
 use gpui
 use std::process
 
+/// The window the binding opened, after the last one closed.
+///
+/// One view callback serves every window — the one `gpui::run` was given — and
+/// `window::allocate` gives the window `run` opened the first id, 1, so this is
+/// the other id.
+fn revived_view() {
+    let f = gpui::frame()
+
+    if f == 1 {
+        for event in gpui::take_events() {
+            if gpui::event_id(event) == gpui::window_closed_event() {
+                println("CL3 the revived window was told, in its first frame, that the last one had closed")
+            }
+        }
+    }
+
+    if f == 2 {
+        println("OK CL3 the app outlived its last window, and a window opened while it had none")
+        gpui::quit()
+    }
+
+    gpui::animate()
+    let root = gpui::column("p=8 bg=#224422 size=full")
+    gpui::child(root, gpui::text("revived", "color=#ffffff"))
+    gpui::root(root)
+}
+
 fn main() {
     let outcome = gpui::run("cl3 - survive the last window", 320.0, 220.0, || {
+        if gpui::window_id() != 1 {
+            return revived_view()
+        }
+
         let f = gpui::frame()
 
         if f == 1 {
             gpui::keep_alive(true)
-            gpui::on_window_closed(|| {
-                // With no window there is no frame, so this runs in window 0's
-                // namespace — and only once, or a second close would open another.
-                if !gpui::state_bool("cl3.revived", false) {
-                    gpui::set_bool("cl3.revived", true)
-                    gpui::open_window("cl3 - revived", 420.0, 90.0, 260.0, 160.0, "", || {
-                        if gpui::frame() == 2 {
-                            println("OK CL3 the app outlived its last window, and a window opened while it had none")
-                            gpui::quit()
-                        }
-                        gpui::animate()
-                        let root = gpui::column("p=8 bg=#224422 size=full")
-                        gpui::child(root, gpui::text("revived", "color=#ffffff"))
-                        gpui::root(root)
-                    })
-                }
-            })
+            // Say what to open when the last window closes. It is asked for once:
+            // the revived window does not ask again, so closing *it* ends the app,
+            // as closing any last window does.
+            gpui::revive_window("cl3 - revived", 420.0, 90.0, 260.0, 160.0, "")
         }
 
         if f == 3 {

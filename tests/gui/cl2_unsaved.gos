@@ -10,7 +10,7 @@
 //
 //   DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl2_unsaved.gos 60
 //
-// **One window, one click.** The program installs a should-close guard, marks itself dirty and asks to
+// **One window, one click.** The program arms a should-close guard, marks itself dirty and asks to
 // close *itself*, so the flow starts on its own and the only thing a person does is answer the sheet:
 // click **Discard**.
 //
@@ -23,6 +23,12 @@
 //   3. the guard queues a prompt, and the platform raises it;
 //   4. the person answers, and the answer reaches the program as an event;
 //   5. the program drops the dirty mark and asks again — and *this* time the window really goes.
+//
+// The guard is state and an event, not a callback: `gpui::guard_close(true)` arms it, a refused close
+// arrives as the event `gpui::close_requested()` names, and the program answers on the frame it reads
+// that event. `on_window_should_close(decide)` could not work — a callback handed to a binding function
+// is valid only for that call, and the guard is consulted long after it returned, so on the compiled
+// tiers it answered an error and every close went through.
 //
 // Pass means all five, in that order, in the transcript. Clicking Cancel or Save is not a failure of
 // the check but a different answer: the guard keeps the window up and asks again, which is what an
@@ -37,29 +43,10 @@ fn main() {
 
         if f == 1 {
             gpui::set_bool("dirty", true)
-            gpui::on_window_should_close(|| -> bool {
-                if !gpui::state_bool("dirty", true) {
-                    // The verdict is printed *here*, while the window is still alive. Printed after
-                    // `gpui::run` returns it is lost: stdout is block-buffered when it is a pipe, and
-                    // the process goes away with the last window before anything flushes it. Measured
-                    // on the first run of this probe, whose two closing lines never appeared.
-                    println("CL2 step 5: the guard allowed the close — nothing is unsaved now")
-                    println("OK CL2 the close was refused while unsaved, the question was raised and answered, and the guard has released the window")
-                    return true
-                }
-                if !gpui::state_bool("asking", false) {
-                    gpui::set_bool("asking", true)
-                    let id = gpui::prompt(
-                        "CL2 — unsaved changes",
-                        "Save, Discard or Cancel?",
-                        "Save;Discard;Cancel",
-                    )
-                    gpui::set_int("prompt", id)
-                    println(f"CL2 step 3: the guard queued a prompt, id {id} — please click Discard")
-                }
-                println("CL2 step 2: the guard refused the close, so the window stays")
-                false
-            })
+            // Arm it once. From here every close request — the platform's or the
+            // program's own — is refused and raised as `close.requested`, and only
+            // `gpui::allow_close()` lets one through.
+            gpui::guard_close(true)
         }
 
         // The close is asked for by the program, so nobody has to find the window's close button.
@@ -70,7 +57,31 @@ fn main() {
 
         for event in gpui::take_events() {
             let id, payload = gpui::event_parts(event)
-            if id == "prompt.shown" {
+            if id == gpui::close_requested() {
+                // The guard refused a close. Whether it goes through is the
+                // program's answer, and this frame is where it gives one.
+                if !gpui::state_bool("dirty", true) {
+                    // The verdict is printed *here*, while the window is still alive. Printed after
+                    // `gpui::run` returns it is lost: stdout is block-buffered when it is a pipe, and
+                    // the process goes away with the last window before anything flushes it. Measured
+                    // on the first run of this probe, whose two closing lines never appeared.
+                    println("CL2 step 5: the guard allowed the close — nothing is unsaved now")
+                    println("OK CL2 the close was refused while unsaved, the question was raised and answered, and the guard has released the window")
+                    gpui::allow_close()
+                } else {
+                    if !gpui::state_bool("asking", false) {
+                        gpui::set_bool("asking", true)
+                        let sheet = gpui::prompt(
+                            "CL2 — unsaved changes",
+                            "Save, Discard or Cancel?",
+                            "Save;Discard;Cancel",
+                        )
+                        gpui::set_int("prompt", sheet)
+                        println(f"CL2 step 3: the guard queued a prompt, id {sheet} — please click Discard")
+                    }
+                    println("CL2 step 2: the guard refused the close, so the window stays")
+                }
+            } else if id == "prompt.shown" {
                 println("CL2 a sheet came up: {}", event)
             } else if id == "prompt" {
                 let asked = f"{gpui::state_int("prompt", 0)}"
@@ -89,6 +100,9 @@ fn main() {
                 if label == "Discard" {
                     println("CL2 Discard: dropping the dirty mark and asking to close again")
                     gpui::set_bool("dirty", false)
+                    // Asked again rather than allowed outright: the next refusal
+                    // arrives as a fresh `close.requested`, and the frame that reads
+                    // *that* one takes step 5. Both halves of the guard are used.
                     gpui::close_window()
                 } else if gpui::state_int("retries", 0) < 1 {
                     // Save and Cancel both leave this probe's window up: it has nothing to save to, and

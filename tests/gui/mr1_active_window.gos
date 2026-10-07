@@ -16,18 +16,32 @@
 use gpui
 use std::process
 
+/// The second window's view.
+///
+/// One view callback serves every window — the one `gpui::run` was given — and
+/// `window::allocate` gives the window `run` opened the first id, 1, so anything
+/// else is a window this program opened. This used to be a callback of its own
+/// passed to `gpui::open_window`; that call returns before the window is drawn,
+/// and a callback handed to a binding function is valid only for that call, so on
+/// the compiled tiers this window's view answered an error.
+fn second_view() {
+    gpui::animate()
+    let child = gpui::column("p=8 gap=4 size=full bg=#222222")
+    gpui::child(child, gpui::text("the second window", "color=#ffffff"))
+    gpui::child(child, gpui::text(f"{gpui::frame()}", "color=#888888"))
+    gpui::root(child)
+}
+
 fn main() {
     let outcome = gpui::run("MR1 — the active window", 560.0, 200.0, || {
+        if gpui::window_id() != 1 {
+            return second_view()
+        }
+
         let f = gpui::frame()
 
         if f == 1 {
-            gpui::open_window("MR1 — a second window", 580.0, 0.0, 400.0, 170.0, "", || {
-                gpui::animate()
-                let child = gpui::column("p=8 gap=4 size=full bg=#222222")
-                gpui::child(child, gpui::text("the second window", "color=#ffffff"))
-                gpui::child(child, gpui::text(f"{gpui::frame()}", "color=#888888"))
-                gpui::root(child)
-            })
+            gpui::open_window("MR1 — a second window", 580.0, 0.0, 400.0, 170.0, "")
         }
 
         // **Asked repeatedly, because the first answer depends on who is frontmost.** A platform names no

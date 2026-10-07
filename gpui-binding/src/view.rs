@@ -20,7 +20,7 @@ use gpui::{
     Svg, Window,
 };
 
-use gossamer_binding::{NativeDispatch, RetainedCallback, Value};
+use gossamer_binding::{NativeDispatch, PersistentCallback, Value};
 
 use crate::editor;
 use crate::list;
@@ -54,32 +54,27 @@ pub fn stash_dispatch(d: &mut dyn NativeDispatch) {
     DISPATCH.with(|cell| cell.set(Some(erased)));
 }
 
+thread_local! {
+    /// The row builder `gpui::run_with_rows` was given, if the program used it.
+    /// Like the view, it is valid for the whole app because `run` does not
+    /// return while any frame is drawn.
+    static ROW_BUILDER: RefCell<Option<PersistentCallback>> = const { RefCell::new(None) };
+}
+
 pub fn clear_dispatch() {
     DISPATCH.with(|cell| cell.set(None));
 }
 
-/// Releases every retained callback the frame machinery is still holding.
+/// Forgets everything the frame machinery holds for this process.
 ///
-/// Called once the run loop is done, and it has to happen *there* rather than at
-/// thread exit. The arena can hold a `uniform_list`'s retained row builder, and
-/// the pending-window queue holds whole view callbacks; both are
-/// `RetainedCallback`s, whose `Drop` calls back into the runtime to release the
-/// registration. A thread-local dropped at thread exit runs that after the
-/// runtime's own thread-locals are already gone, and the runtime panics at the
-/// FFI entry:
-///
-/// ```text
-/// thread '<unnamed>' panicked: cannot access a Thread Local Storage value
-/// during or after destruction: AccessError
-///   ... _gos_rt_binding_callback_release
-/// ```
-///
-/// Releasing them here, while the app is still standing, is the fix. It is why
-/// a compiled build of any program containing a `gpui::list` used to end in a
-/// panic on stderr, which `scripts/tiers.sh` is what caught. See the round log.
+/// Nothing here owns a registration in the runtime: the view callback is a
+/// `PersistentCallback`, which at HEAD frees nothing when it is dropped, so the
+/// thread-exit panic this function used to exist to avoid cannot happen any
+/// more. It is kept because it is the one place that says what per-frame state
+/// is, and it still runs on the way out (see `app::release_retained`).
 pub fn release_retained() {
-    SHOULD_CLOSE.with(|h| h.borrow_mut().clear());
-    SHOULD_CLOSE_PLATFORM.with(|h| h.borrow_mut().clear());
+    GUARD.with(|h| h.borrow_mut().clear());
+    ROW_BUILDER.with(|r| *r.borrow_mut() = None);
     TEXT.with(|t| t.borrow_mut().clear());
     FONTS.with(|f| *f.borrow_mut() = None);
     ARENAS.with(|a| a.borrow_mut().clear());
@@ -88,9 +83,34 @@ pub fn release_retained() {
     FOCUS.with(|f| f.borrow_mut().clear());
 }
 
-/// Calls back into a Gossamer closure — the view callback, or a list's row
-/// builder — and answers what it answered.
-pub fn invoke(view: &RetainedCallback, args: Vec<Value>) -> Result<Value, String> {
+/// Records the program's row builder, from `gpui::run_with_rows`.
+///
+/// It is given to `run` rather than to `gpui::list` because `run` is the only
+/// binding call that does not return: a callback handed to a binding function is
+/// valid for exactly that call, and a compiled caller releases the registration
+/// the moment the call returns.
+pub fn set_row_builder(rows: PersistentCallback) {
+    ROW_BUILDER.with(|r| *r.borrow_mut() = Some(rows));
+}
+
+/// The program's row builder, if it started with `gpui::run_with_rows`.
+fn row_builder() -> Option<PersistentCallback> {
+    ROW_BUILDER.with(|r| r.borrow().clone())
+}
+
+/// Calls back into the Gossamer view callback and answers what it answered.
+///
+/// This is the *only* callback this binding invokes across a call boundary, and
+/// it is the one that survives: `gpui::run` does not return until the app exits
+/// (`Application::run` blocks in the platform's run loop), so the caller's
+/// `gos_rt_binding_callback_release` — the release a compiled caller emits
+/// immediately after a binding fn returns — is never reached while any frame is
+/// drawn. Every other callback shape this binding used to take (a row builder, a
+/// window's view, a close guard, a window-closed handler) was released the moment
+/// its binding fn returned and therefore failed on the compiled tiers; each of
+/// those is now expressed as state and events instead, which is why `cb_fn`
+/// appears exactly twice in `lib.rs`, on `run` and `run_with`.
+pub fn invoke(view: &PersistentCallback, args: Vec<Value>) -> Result<Value, String> {
     let Some(raw) = DISPATCH.with(|cell| cell.get()) else {
         return Err("a Gossamer callback was asked to run outside gpui::run".into());
     };
@@ -118,11 +138,15 @@ pub enum Kind {
     Icon(String),
     Divider,
     Spacer(f64),
-    /// A `uniform_list`: `build` is called once per *visible* row and answers
-    /// that row's element handle.
-    /// The row builder. A retained callback: a list is built during
-    /// layout, after `gpui::list` has returned.
-    Virtual { count: usize, build: RetainedCallback, row_height: f64 },
+    /// A `uniform_list`: a virtualised list of `count` rows of `row_height`
+    /// each. Its rows are built by the program's row builder — the callback
+    /// handed to `gpui::run_with_rows` — once per row on screen, during layout.
+    ///
+    /// The builder is not stored here, and that is the point: it is reachable
+    /// for the whole app because `run` does not return, while a builder given to
+    /// `gpui::list` was released as soon as `list` returned and failed on the
+    /// compiled tiers.
+    Virtual { count: usize, row_height: f64 },
     /// A `canvas` painted by one of the routines below.
     Canvas { painter: String, phase: f64 },
     /// A scrollbar for a scrolled element: a track, drawn as the element's own background, with a
@@ -780,87 +804,70 @@ pub fn text_line_height(spec: &str) -> f64 {
     (f32::from(system.ascent(id, size)) + f32::from(system.descent(id, size))) as f64
 }
 
+/// The event a refused close raises in the window it was refused for.
+pub const CLOSE_REQUESTED: &str = "close.requested";
+
 thread_local! {
-    /// Each window's should-close handler, if it has one.
-    static SHOULD_CLOSE: RefCell<HashMap<i64, RetainedCallback>> = RefCell::new(HashMap::new());
-    /// The windows whose handler has already been given to the platform. gpui's
-    /// `on_window_should_close` replaces whatever was registered before it, so
-    /// installing once per handler is enough and installing every frame would
-    /// churn.
-    static SHOULD_CLOSE_PLATFORM: RefCell<std::collections::HashSet<i64>> =
-        RefCell::new(std::collections::HashSet::new());
+    /// Each window's close guard, if it has one.
+    ///
+    /// This is *state*, not a callback, and that is the whole point: the guard
+    /// used to be a Gossamer closure stored by `gpui::on_window_should_close`,
+    /// which a compiled caller releases the moment that binding fn returns, so
+    /// on the compiled tiers the guard answered an error and mapped to "yes,
+    /// close" — silently useless, and the exact case CL1 exists to catch. The
+    /// platform's own should-close closure is a *native* one, installed by this
+    /// binding, and it reads this state; the program is asked through the event
+    /// queue instead of through a callback, which works on every tier.
+    static GUARD: RefCell<HashMap<i64, Guard>> = RefCell::new(HashMap::new());
 }
 
-/// Installs `handler` for the window this call is in.
-pub fn set_should_close(handler: RetainedCallback) {
+/// One window's close guard.
+#[derive(Clone, Copy, Default)]
+struct Guard {
+    /// The program asked to be consulted before this window closes.
+    armed: bool,
+    /// The program answered `gpui::allow_close()`: the close may go ahead.
+    allow: bool,
+}
+
+/// Arms — or with `on = false` disarms — the close guard for this window.
+///
+/// Disarming forgets an `allow_close()` as well, so a program that re-arms a
+/// guard for later does not inherit the old answer.
+pub fn set_guard(on: bool) {
     let win = window::current();
-    SHOULD_CLOSE.with(|h| {
-        h.borrow_mut().insert(win, handler);
+    GUARD.with(|g| {
+        let mut g = g.borrow_mut();
+        let entry = g.entry(win).or_default();
+        entry.armed = on;
+        entry.allow = false;
     });
-    SHOULD_CLOSE_PLATFORM.with(|h| {
-        h.borrow_mut().remove(&win);
+}
+
+/// The program let this window close: clears the refusal the guard raised.
+pub fn allow_close() {
+    let win = window::current();
+    GUARD.with(|g| {
+        if let Some(entry) = g.borrow_mut().get_mut(&win) {
+            entry.allow = true;
+        }
     });
 }
 
-/// The handler for `win` if the platform has not been given it yet, marking it
-/// as given.
-pub fn take_should_close_for_platform(win: i64) -> Option<RetainedCallback> {
-    let fresh = SHOULD_CLOSE_PLATFORM.with(|h| h.borrow_mut().insert(win));
-    if !fresh {
-        return None;
-    }
-    SHOULD_CLOSE.with(|h| h.borrow().get(&win).cloned())
-}
-
-thread_local! {
-    /// The program's last-window-closed handler, if it installed one.
-    static WINDOW_CLOSED: RefCell<Option<RetainedCallback>> = const { RefCell::new(None) };
-}
-
-/// Installs the handler that runs when the last window has closed.
-pub fn set_window_closed(handler: RetainedCallback) {
-    WINDOW_CLOSED.with(|h| *h.borrow_mut() = Some(handler));
-}
-
-/// Runs the program's last-window-closed handler, answering whether there was
-/// one.
+/// Whether `win` may close, raising `close.requested` in it when it may not.
 ///
-/// It runs in **window 0's namespace**, because there are no windows: whatever
-/// state it reads and writes is the state a program has when it has no window,
-/// which is the same namespace `gos test` runs in.
-pub fn window_closed() -> bool {
-    let handler = WINDOW_CLOSED.with(|h| h.borrow().clone());
-    let Some(handler) = handler else {
-        return false;
-    };
-    window::with(0, || {
-        let _ = invoke(&handler, vec![]);
-    });
-    true
-}
-
-/// Asks an already-taken handler, for the platform's own close request.
-pub fn ask_should_close(win: i64, handler: &RetainedCallback) -> bool {
-    match window::with(win, || invoke(handler, vec![])) {
-        Ok(Value::Bool(allow)) => allow,
-        _ => true,
-    }
-}
-
-/// Whether `win` may close: its handler's answer, or yes when it has none.
-///
-/// A handler that fails answers yes, which is what gpui does with its own
-/// (`unwrap_or(true)`) — a broken guard must not trap a window forever.
+/// Answers `true` for a window with no guard, an armed-but-allowed guard, and a
+/// disarmed one — so an unguarded program never sees an event. It answers
+/// `false` exactly when the program asked to be consulted and has not yet
+/// answered, and raises the event on the way: the event is the question, and the
+/// window stays open until the program answers with `gpui::allow_close()`.
 pub fn may_close(win: i64) -> bool {
-    let handler = SHOULD_CLOSE.with(|h| h.borrow().get(&win).cloned());
-    let Some(handler) = handler else {
+    let guard = GUARD.with(|g| g.borrow().get(&win).copied().unwrap_or_default());
+    if !guard.armed || guard.allow {
         return true;
-    };
-    match window::with(win, || invoke(&handler, vec![])) {
-        Ok(Value::Bool(allow)) => allow,
-        Ok(_) => true,
-        Err(_) => true,
     }
+    store::push_event_in(win, CLOSE_REQUESTED);
+    false
 }
 
 /// The style tokens in `spec` this crate does not understand.
@@ -1338,6 +1345,11 @@ fn link(arena: &mut Arena, parent: i64, child: i64) {
 
 /// The arena's current length, so a list's row builder can hand its elements
 /// back once the row has been turned into a real GPUI element.
+///
+/// A row builder runs *during layout*, after the frame that described the list
+/// has been built, and it appends to that same arena. Its elements are needed
+/// only until the row is a real GPUI element, so the arena is handed back
+/// straight afterwards rather than growing with every row of every scroll.
 pub fn mark() -> usize {
     arena(|a| a.els.len())
 }
@@ -1430,8 +1442,8 @@ fn snapshot(handle: i64) -> Option<El> {
                 Kind::Icon(s) => Kind::Icon(s.clone()),
                 Kind::Divider => Kind::Divider,
                 Kind::Spacer(s) => Kind::Spacer(*s),
-                Kind::Virtual { count, build, row_height } => {
-                    Kind::Virtual { count: *count, build: build.clone(), row_height: *row_height }
+                Kind::Virtual { count, row_height } => {
+                    Kind::Virtual { count: *count, row_height: *row_height }
                 }
                 Kind::Canvas { painter, phase } => {
                     Kind::Canvas { painter: painter.clone(), phase: *phase }
@@ -1930,62 +1942,29 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
         }
 
         Kind::Input { placeholder } => {
-            let handle = focus_for(win, &el.id, cx);
-            let focused = handle.is_focused(window);
+            // A single-line field is the editor's engine with a flag, not a second widget. What that
+            // buys is everything a hand-rolled key loop never had: the caret, the selection and the
+            // clipboard, the undo history, and — the reason the row exists — a **marked range**, so
+            // an input method has somewhere to put the word it is composing. The keys this field
+            // answers to are the engine's own, in `editor::TextEditor::on_key_down`: `enter` submits
+            // and `escape` cancels, and a vertical move goes on bubbling.
             let key = el.id.clone();
-            let key_for_click = key.clone();
-            let handle_for_click = handle.clone();
-            let value = store::get_text(&el.id, "");
-            let empty = value.is_empty();
-            let shown = if empty { placeholder.clone() } else { value.clone() };
-            let shown_colour = if empty { "#6c7086" } else { "inherit" };
-
-            let field = style::apply(
-                div().flex().flex_row().items_center().gap(px(1.0)).min_h(px(28.0)).cursor_text(),
+            let field = editor::editor_element(win, &el.id, placeholder, &el.style, true, window, cx);
+            let base = style::apply(
+                div().flex().flex_row().items_center().min_h(px(28.0)).cursor_text(),
                 &el.style,
             );
-            field
-                .id(ElementId::Name(el.id.clone().into()))
-                .track_focus(&handle)
-                .child(if shown_colour == "inherit" {
-                    div().child(shown)
-                } else {
-                    div().text_color(style::colour(shown_colour)).child(shown)
+            base.id(ElementId::Name(el.id.clone().into()))
+                // `<key>|focus`, on the way down rather than on a click that completed: this is the
+                // event the widget has always raised, and a program that swaps a row of buttons for
+                // a search field when it fires wants it when the field is entered, not when the
+                // button came back up. The field's own `on_mouse_down` does not stop propagation, so
+                // the caret is placed by the engine and this runs after it.
+                .on_mouse_down(MouseButton::Left, move |_event, _window, _cx| {
+                    let key = key.clone();
+                    window::with(win, || store::push_event_with(&key, "focus"));
                 })
-                .child(
-                    div()
-                        .w(px(1.5))
-                        .h(px(16.0))
-                        .bg(style::colour(if focused { "#f5e0dc" } else { "#00000000" })),
-                )
-                .on_click(move |_event, window, _cx| {
-                    window.focus(&handle_for_click);
-                    window::with(win, || store::push_event_with(&key_for_click, "focus"));
-                })
-                .on_key_down(move |event: &KeyDownEvent, _window, cx| {
-                    window::with(win, || {
-                        let mut text = store::get_text(&key, "");
-                        match event.keystroke.key.as_str() {
-                            "backspace" => {
-                                text.pop();
-                                store::set_text(&key, &text);
-                            }
-                            "enter" => store::push_event_with(&key, "submit"),
-                            "escape" => store::push_event_with(&key, "cancel"),
-                            _ => {
-                                if let Some(ch) = &event.keystroke.key_char {
-                                    if !event.keystroke.modifiers.control
-                                        && !event.keystroke.modifiers.platform
-                                    {
-                                        text.push_str(ch);
-                                        store::set_text(&key, &text);
-                                    }
-                                }
-                            }
-                        }
-                    });
-                    cx.notify(entity);
-                })
+                .child(field)
                 .into_any_element()
         }
 
@@ -2122,13 +2101,19 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             style::apply(div().h(px(*size as f32)).w_full(), &el.style).into_any_element()
         }
 
-        Kind::Virtual { count, build, row_height } => {
+        Kind::Virtual { count, row_height } => {
             let count = *count;
             let row_height = *row_height;
-            let build = build.clone();
             // The list's own id, so the rows it builds can be recorded against
-            // it while the closure has nothing else to reach for.
+            // it while the closure has nothing else to reach for, and so the row
+            // builder — one per program — knows which list is asking.
             let list_id = el.id.clone();
+            // The builder was handed to `gpui::run_with_rows`, and is invoked
+            // here, during layout. That is exactly what a *stored* callback
+            // cannot be: `gpui::list` returns before the list lays out, so a
+            // builder given to it was released by its caller long before this
+            // point, and on the compiled tiers every row answered an error.
+            let rows_builder = row_builder();
             let list = uniform_list(ElementId::Name(el.id.clone().into()), count, {
                 move |range, window, cx| {
                     // `range` is the rows gpui is laying out — the rows on
@@ -2146,27 +2131,45 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         // turned into a real GPUI element, so the arena is
                         // handed back straight afterwards.
                         let mark = window::with(win, mark);
-                        let row = match window::with(win, || {
-                            invoke(&build, vec![Value::Int(index as i64)])
-                        }) {
-                            Ok(Value::Int(handle)) if handle > 0 => {
-                                window::with(win, || snapshot(handle))
-                            }
-                            Ok(_) => {
+                        let row = match rows_builder.as_ref() {
+                            None => {
                                 window::with(win, || {
-                                    note_error(format!(
-                                        "the row builder for row {index} answered no element"
-                                    ))
+                                    note_error(
+                                        "this program draws a list but was started with gpui::run, \
+                                         which carries no row builder; start it with \
+                                         gpui::run_with_rows instead".to_string(),
+                                    )
                                 });
                                 None
                             }
-                            Err(e) => {
-                                window::with(win, || {
-                                    note_error(format!(
-                                        "the row builder for row {index} failed: {e}"
-                                    ))
-                                });
-                                None
+                            Some(build) => {
+                                // The id first, then the index: one builder
+                                // serves every list a program draws.
+                                let args = vec![
+                                    Value::String(list_id.clone().into()),
+                                    Value::Int(index as i64),
+                                ];
+                                match window::with(win, || invoke(build, args)) {
+                                    Ok(Value::Int(handle)) if handle > 0 => {
+                                        window::with(win, || snapshot(handle))
+                                    }
+                                    Ok(_) => {
+                                        window::with(win, || {
+                                            note_error(format!(
+                                                "the row builder for row {index} answered no element"
+                                            ))
+                                        });
+                                        None
+                                    }
+                                    Err(e) => {
+                                        window::with(win, || {
+                                            note_error(format!(
+                                                "the row builder for row {index} failed: {e}"
+                                            ))
+                                        });
+                                        None
+                                    }
+                                }
                             }
                         };
                         // The render has to run as this window too: `render`
@@ -2177,7 +2180,8 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         // window it was described in is no longer current —
                         // and without this the arena lookup misses and every
                         // container's children are dropped, leaving rows that
-                        // paint their background and nothing else.
+                        // paint their background and nothing else. That is the
+                        // fault that drew 02_data_table's rows as 42 tinted bars.
                         let element = match row {
                             Some(row) => window::with(win, || render(&row, window, cx, entity)),
                             None => div().into_any_element(),
@@ -2363,7 +2367,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             // The style string goes both ways: it is applied to the box the editor sits in, as it
             // always was, and it is handed to the widget for the chrome tokens that colour what the
             // widget paints itself — the caret, the selection, and the line-number gutter.
-            let field = editor::editor_element(win, key, placeholder, &el.style, window, cx);
+            let field = editor::editor_element(win, key, placeholder, &el.style, false, window, cx);
             style::apply(div(), &el.style).child(field).into_any_element()
         }
 

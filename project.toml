@@ -1,7 +1,7 @@
 [project]
 id = "example.com/learn-gpui"
 version = "0.1.0"
-gossamer-version = "^v0.66.0"
+gossamer-version = "^v0.68.0"
 
 [dependencies]
 
