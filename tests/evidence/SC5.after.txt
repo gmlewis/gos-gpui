@@ -3,7 +3,7 @@ SC6 — read the visible row range.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/sc5_list_scroll_to.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/sc5_list_scroll_to.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -34,7 +34,7 @@ What makes it pass:
     `false` both for a list nothing has drawn and for a strategy that is not
     `top`, `center` or `bottom`.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent.
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent.
 
 One thing the tier harness caught while producing this transcript, and it is not
 this row's: the debug build of any program containing a `gpui::list` **panicked at

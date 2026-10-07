@@ -2,7 +2,7 @@ BG3 — reporting progress from background work.
 
 AFTER THE WORK. Every tier, byte-identical in everything but the frozen number:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/bg3_progress.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/bg3_progress.gos
     === check ===
     check: ok (1 items typed)
 

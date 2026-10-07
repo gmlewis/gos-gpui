@@ -701,12 +701,27 @@ implement them. The bodies are upstream's `TextInput` reproduced (its
 `EntityInputHandler` impl, the `ElementInputHandler` wiring in the canvas paint,
 the shaped-line prepaint with its selection and cursor quads, the mouse
 selection, the UTF-8/UTF-16 arithmetic), and Gossamer reaches them as
-`ui::editor(key, placeholder, style)` and reads the text back with
-`gpui::state_text(key, "")`.
+`ui::editor(key, placeholder, style)`. The text is read back two ways:
+`gpui::state_text(key, "")` is what the **program** last wrote under the key, and
+`gpui::editor_text(key)` is what the **widget** is holding — they agree a frame
+after any write or keystroke in the editor's own window, and they part company
+where a program wants to know whether the window draws an editor at all.
 
 Its header documents the deviations: the application keymap is the binding's, so
-the editor matches keystrokes itself rather than through thirteen bound actions,
-and the widget paints no chrome of its own.
+the editor matches keystrokes itself rather than through thirteen bound actions;
+**the editor is multi-line** — each line is shaped on its own, the element is as
+tall as its lines, and enter, up, down, page up, page down and ⌘-left/⌘-right are
+handled on top of upstream's keys; and the widget paints **its own chrome** — the
+gutter and its line numbers, the selection and the caret — with the tokens that
+colour them read off the same style string the program writes
+(`gpui::editor_chrome(key, field)` answers what the widget **resolved**, so a
+program can match its own borders to the caret via `caret=theme:border`).
+
+Two more readers answer what the *mouse* did, which text cannot:
+`gpui::editor_selection(key)` is the widget's selection as `"<start>,<end>"` in
+bytes — an empty selection is `"<n>,<n>"`, a caret and not a lack of one — and
+`gpui::editor_bounds(key, field)` is the box the editor was last drawn in, in the
+window's own coordinates, so a program can aim something at its own widget.
 
 ### Keeping up with gpui
 

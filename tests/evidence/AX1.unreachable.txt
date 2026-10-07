@@ -27,7 +27,7 @@ program that tries to implement a trait it does not itself declare:
     error: check failed with 1 diagnostic(s)
 
 (That probe was removed immediately; a file that does not compile does not belong in
-`tests/gui/`, where `scripts/probes` sweeps every `*.gos`.)
+`tests/gui/`, where `scripts/probes.sh` sweeps every `*.gos`.)
 
 An `impl` block is a *declaration in the program's own source*, and the ABI has no shape
 for one: a binding item is a monomorphic, module-level free function with `Copy` values

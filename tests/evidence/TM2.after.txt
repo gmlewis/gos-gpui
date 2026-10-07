@@ -2,7 +2,7 @@ TM2 — select a font family, a rem size and a line height.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/tm2_font_family.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/tm2_font_family.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -31,7 +31,7 @@ What makes it pass:
   * `gpui-binding/src/app.rs` and `store.rs` — `Request::SetRemSize`, applied to
     the window after the frame that asks for it.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent. That
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent. That
 matters here because `font=` is one of the most-used tokens in the example set:
 every `font=xs` and `font=2xl` in the 27 ports now goes through `apply_font`
 instead of the old seven-arm match, and the strict rule would have caught any of

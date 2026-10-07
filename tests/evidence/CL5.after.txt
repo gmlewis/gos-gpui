@@ -2,7 +2,7 @@ CL5 — the open-file picker (`prompt_for_paths`).
 
 AFTER THE WORK. **One window, one pick, and the shim carrying a real path.**
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl5_open_files.gos 150
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl5_open_files.gos 150
     CL5 asked for files — the platform's panel should be up
     CL5 chose 1 path(s), and the shim holds them as strings: #["/Users/glenn/TODO.md.go-reticulum.bak-20260916"]
     OK CL5 the open-file picker's paths reached the program as a list of strings

@@ -1,0 +1,123 @@
+DW1 — Editor widget: multi-line, per-line layout, caret up/down/home/end, page moves.
+
+AFTER THE WORK. Two halves, because the row has two: what the widget *does*
+(a window, and now checkable without a person at the keyboard) and what it
+*draws* (pixels).
+
+## 1. The caret and the lines — `tests/gui/dw1_editor_lines.gos`
+
+    DSH_ALLOW_WINDOWS=1 TIER_TIMEOUT=60 ./scripts/tiers.sh tests/gui/dw1_editor_lines.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
+each of the other four exits 0 with no stderr):
+
+    OK DW1 sixteen keystrokes moved through three lines by the model's own arithmetic
+
+**What makes it checkable is `gpui::send_key`.** It hands the window a keystroke
+as if it had been typed, through the window's ordinary dispatch, so the focused
+editor handles it exactly as it would a real key — and nothing else in a probe
+can type. The caret's own position is not readable by a program, so every claim is
+made to leave a mark: a character typed *after* a move lands wherever the caret
+went, and the editor publishes the text, which the program reads back with
+`gpui::state_text`.
+
+The document is `"abcdef\ngh\nijklmn"` — three lines of very different lengths, so
+a vertical move that clamped short and then crept along would land somewhere else
+and the text would say so. The sixteen keystrokes, in order:
+
+    up  up  X  home  Y  end  Z  down  W  pagedown  Q  pageup  R  enter  end  T
+
+and the document expected after each. The claims they check, one per group:
+
+  * **the column is remembered, not recomputed.** `up` from the six-byte third
+    line clamps onto the two-byte `"gh"`; `up` again must come back to column six.
+    The `X` that follows lands at the end of `"abcdef"`. Without the memory it
+    lands two bytes in — see the break below.
+  * **`home`/`end` are line-relative**, not document-relative (they were the
+    document's ends before this row): `home` from line 1 goes to that line's
+    first byte, `end` to its last, both with the caret on a line that is not the
+    first or last.
+  * **`pagedown`/`pageup` move by a page.** A page is the lines the element last
+    had room for, less one, and the element is exactly as tall as its lines —
+    three here — so the step is two, and the last two keys prove it: a pageup
+    from the last line lands on the *first*, which a one-line step would not.
+  * **`enter` breaks the line**, and the editor holds it: the document grows a
+    fourth line and the `end`/`T` after it act on the new line, at its own end.
+
+The editor publishes each change, so `"<key>|change"` fires and the text read back
+is the widget's. The initial red for this row is unchanged and is in the register:
+seven unresolved symbols in `tests/dw_text_model_test.gos`, because the arithmetic
+underneath did not exist yet. It exists and is checked now — this file is the
+widget half that calls it.
+
+**Sensitivity, shown rather than assumed.** The column memory was broken by
+hand —
+
+    - let column = self.desired_column.unwrap_or_else(|| self.column());
+    + let column = self.column();
+
+— and the probe failed on the third keystroke:
+
+    FAIL DW1 after key 2 (X) the document is "abXcdef\ngh\nijklmn", not "abcdefX\ngh\nijklmn"
+
+restored immediately, and the five-tier run above is against the restored tree.
+The probe also earned its keep the other way round: its first run failed on key 10
+because *this file's own* expected text was one byte out (`ijkQlmn` written as
+`ijklQmn`), the widget being right and the transcription wrong — a wrong
+expectation that a passing check would have hidden.
+
+**One thing found while writing it, and fixed.** The goal column was dropped by
+`move_to`/`select_to` but *not* by an insertion, so `down`, type, `down` aimed
+from the old column rather than from where the caret now was — against the
+widget's own stated rule ("anything that is not a vertical move drops the column
+it was aiming for"). `changed()` and `adopt_program_text` now drop it, which is
+every content change there is: a typed character, a paste, a cut, a backspace, an
+undo. The probe's expected texts are written to the fixed rule.
+
+## 2. Per-line layout — `DW1.after.png`, measured
+
+The window below was held open by a temporary harness (since deleted) and captured
+with `screencapture -x -o -l <window number>` — **the window's own pixels**, found
+by asking `CGWindowListCopyWindowInfo` for the windows of the running process's own
+pid, so the desktop and anything stacked over it are left out. The document is five
+lines of very different lengths:
+
+    fn main() {
+        let x = 41;
+        println!("x");
+    }
+    // four lines, and this one is much longer than the rest
+
+Scanning the capture for glyph pixels against the editor's own background
+(`#313244`), with the window's titlebar excluded:
+
+    line 1: y  56.. 72  height 17  widest run  81
+    line 2: y  85..101  height 17  widest run  75   pitch 29
+    line 3: y 114..130  height 17  widest run  97   pitch 29
+    line 4: y 143..159  height 17  widest run   3   pitch 29
+    line 5: y 172..188  height 17  widest run 422   pitch 29
+
+Five bands, every one 17 px tall and 29 px apart — the five lines of the document,
+one per row, at a fixed pitch. The fourth is three pixels wide because it holds
+one `}`. The fifth runs 422 px across a 520 px window: **the long line is on its
+own row, neither wrapped nor overlapped**, which is the claim "per-line layout"
+makes. The box is as tall as its lines (line 5 ends at y 188 in a 332 px window
+that also carries the titlebar and 10 px of padding).
+
+## What is not claimed
+
+  * **The mouse.** Selection by dragging, double-click-for-word and
+    triple-click-for-line are `DW4`, and the click still cannot be synthesized
+    while `DispatchEventResult` is `pub(crate)`. What the widget does with a
+    point it *is* given is written (`index_for_mouse_position` divides by the line
+    height and asks that line), and nothing here has moved a mouse.
+  * **IME.** `DW3`, and it needs a person typing: composition arrives from the
+    platform's `setMarkedText:`, not from a key event, so `gpui::send_key` does
+    not reach it. The marked range is clipped per line in `prepaint` and is
+    unobserved.
+  * **Wrapping.** A line longer than the box runs past it rather than wrapping;
+    the row's wrap clause is `DW5`'s to decide.
+  * **A caret seen blinking.** The capture is one frame of a blinking caret and
+    does not show it. The caret is drawn per line (`prepaint` builds its quad on
+    the line it is in) and has been seen to move only through the text it leaves
+    behind.

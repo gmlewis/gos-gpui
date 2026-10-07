@@ -1,12 +1,12 @@
 MR7 — documentation and dead-code consistency.
-Headless tier: `scripts/docs` (this row is about prose, so its check is a
+Headless tier: `scripts/docs.sh` (this row is about prose, so its check is a
 script; nothing of it can be drawn or asserted from a `.gos` program).
 
 BEFORE THE WORK. Command, against a pristine copy of this project at HEAD
 (`git archive HEAD` into /tmp/gpui-before):
 
-    cp scripts/docs /tmp/gpui-before/scripts/docs
-    ./scripts/docs /tmp/gpui-before
+    cp scripts/docs.sh /tmp/gpui-before/scripts/docs.sh
+    ./scripts/docs.sh /tmp/gpui-before
 
 Output (exit 1):
 

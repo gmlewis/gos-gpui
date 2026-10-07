@@ -11,7 +11,7 @@
 // it says when this application is not frontmost — so keep this window in front while it runs, or the FAIL
 // line will say exactly that rather than pretending something else went wrong.
 //
-// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mr1_active_window.gos 45`.
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/mr1_active_window.gos 45`.
 
 use gpui
 use std::process

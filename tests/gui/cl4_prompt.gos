@@ -11,8 +11,8 @@
 // clicked. Nobody clicks within the probe's patience: it says how far it got and quits rather than
 // leaving a sheet up.
 //
-// Run it with `DSH_ALLOW_WINDOWS=1 ./scripts/tiers tests/gui/cl4_prompt.gos` or
-// `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl4_prompt.gos 45`.
+// Run it with `DSH_ALLOW_WINDOWS=1 ./scripts/tiers.sh tests/gui/cl4_prompt.gos` or
+// `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl4_prompt.gos 45`.
 
 use gpui
 use std::process

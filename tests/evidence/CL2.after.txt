@@ -2,7 +2,7 @@ CL2 — an unsaved-changes prompt on close, end to end.
 
 AFTER THE WORK. **Verified by a person, and in both directions**, which the run gave for free.
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl2_unsaved.gos 150 &
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl2_unsaved.gos 150 &
     CL2 step 2: the guard refused the close, so the window stays
     CL2 a sheet came up: prompt.shown|5
     CL2 step 4: the answer reached the program as prompt|5|0      (Save — see the correction below)

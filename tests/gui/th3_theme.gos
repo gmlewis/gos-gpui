@@ -9,7 +9,7 @@
 // `gpui::default_color`, `gpui::default_color_for`).
 //
 // What was not true is the row's third clause. `gpui::set_theme` recorded a name that
-// **nothing consulted** — its own doc said so, and `scripts/docs` guarded the claim —
+// **nothing consulted** — its own doc said so, and `scripts/docs.sh` guarded the claim —
 // so a program could name a theme and get the platform's colours anyway.
 //
 // Pass means the name is consulted. The probe asks for the palette the machine is

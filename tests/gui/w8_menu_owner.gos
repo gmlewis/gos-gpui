@@ -12,7 +12,7 @@
 // The *action* half of the row — that clicking an item delivers it to the window whose menu it was — is not
 // exercised here: a menu click cannot be synthesized. What this does show is the half a program can see.
 //
-// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/w8_menu_owner.gos 45`.
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/w8_menu_owner.gos 45`.
 
 use gpui
 use std::process

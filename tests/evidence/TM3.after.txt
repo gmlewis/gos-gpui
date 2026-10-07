@@ -35,7 +35,7 @@ screen is a pixel question, and this machine cannot capture pixels — see "Pixe
 verification is unavailable on this machine". A test of the parse is therefore as
 strong as a screenshot would be for everything except the paint itself.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent. That
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent. That
 matters because `text_styled` is used by `examples/20_text_layout.gos`, whose
 highlights are `"0-1 weight=800"` and `"2-3 italic"`: if the new vocabulary had
 been narrower than the old, that example would have grown an unknown-token banner

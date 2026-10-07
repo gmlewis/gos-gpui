@@ -9,7 +9,7 @@ The headless half:
 
 The window half, on every tier, byte-identical:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/mn1_submenu.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/mn1_submenu.gos
     === check ===
     check: ok (1 items typed)
 

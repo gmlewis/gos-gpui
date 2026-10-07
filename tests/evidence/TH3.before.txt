@@ -13,7 +13,7 @@ value for one, and `gpui::default_color_for(appearance, name)` the other palette
 third clause is the whole of the remaining work.
 
 **The third clause, measured.** `set_theme` recorded a name and **nothing consulted it**;
-its own doc said so, and `scripts/docs` claim 6 guarded that admission:
+its own doc said so, and `scripts/docs.sh` claim 6 guarded that admission:
 
     /// Nothing consults it. It has no effect on any colour — `gpui::default_color`
     /// answers the platform's own colours, chosen from the window's appearance —

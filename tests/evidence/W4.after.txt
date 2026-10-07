@@ -3,7 +3,7 @@ window's.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=40 ./scripts/tiers tests/gui/w4_requests.gos
+    TIER_TIMEOUT=40 ./scripts/tiers.sh tests/gui/w4_requests.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (2 items typed)`;
 each of the other four exits 0 with no stderr):

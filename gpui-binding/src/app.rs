@@ -1029,7 +1029,7 @@ fn process_requests(
                 // Nothing can *provoke* this from inside the process — gpui has no
                 // public appearance setter, and registering the observer does not
                 // replay the current value — so `tests/gui/th2_appearance_change.gos`
-                // is run under `scripts/appearance-toggle`, which changes the system
+                // is run under `scripts/appearance-toggle.sh`, which changes the system
                 // appearance and puts it back.
                 static OBSERVED_APPEARANCE: LazyLock<Mutex<HashSet<(i64, String)>>> =
                     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -1202,7 +1202,7 @@ fn process_requests(
 
             Request::Reveal { path } => {
                 // Three calls with no answer: the platform does the thing, and the binding has nothing to
-                // read back. `scripts/docs` and the register both say so rather than implying otherwise.
+                // read back. `scripts/docs.sh` and the register both say so rather than implying otherwise.
                 cx.reveal_path(std::path::Path::new(&path));
             }
 

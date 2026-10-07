@@ -6,7 +6,7 @@
 // The chosen path comes back as **text** under `"cl6.path"`, and the event `"cl6"` carries `"saved"`,
 // `"cancelled"` or `"failed"`.
 //
-// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl6_save_file.gos 120`.
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl6_save_file.gos 120`.
 
 use gpui
 use std::process

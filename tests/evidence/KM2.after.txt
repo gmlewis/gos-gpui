@@ -9,7 +9,7 @@ Headless — `env -u GOSSAMER_IN_RUNNER gos test tests`:
 
 The GUI probe, on every tier, byte-identical:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/km2_key_contexts.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/km2_key_contexts.gos
     === check ===
     check: ok (2 items typed)
 

@@ -2,7 +2,7 @@ SC7 — a custom scrollbar whose thumb drags the real offset.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/sc7_scrollbar.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/sc7_scrollbar.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -37,8 +37,8 @@ What makes it pass:
     still reaches the list. The example's header records both that and the
     deviation that remains.
 
-Regression: `./scripts/regress` after the example change — 27 examples, silent.
-`examples/02_data_table.gos` itself, run under `scripts/run-once`: exit 124 with
+Regression: `./scripts/regress.sh` after the example change — 27 examples, silent.
+`examples/02_data_table.gos` itself, run under `scripts/run-once.sh`: exit 124 with
 **no output**, which for an interactive example that never quits is the pass
 condition.
 

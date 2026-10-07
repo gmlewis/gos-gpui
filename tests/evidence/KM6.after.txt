@@ -2,7 +2,7 @@ KM6 — Shift-Tab, key-up and modifier fidelity.
 
 AFTER THE WORK. Every tier, byte-identical:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/km6_modifiers.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/km6_modifiers.gos
     === check ===
     check: ok (2 items typed)
 

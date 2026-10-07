@@ -34,13 +34,13 @@
 //   * GPUI ends a drag on the next mouse-up wherever it lands; the binding
 //     only reports `up` on an element that has a listener. A transparent
 //     800x600 `on_mouse` overlay sits at the bottom of the window to hear a
-//     release over empty space. It is pixel-sized because `on_mouse` wraps its
-//     element in a bare div whose height is its content's — a `size=full`
-//     child has no definite height to resolve against, the same limit
-//     13_painting records for its canvas. The content column is positioned
-//     `absolute` so that overlay is the stack's only in-flow child, and a
-//     release outside the overlay after a window resize is the one release
-//     still not seen.
+//     release over empty space, and 800x600 is the region it covers rather
+//     than a size the binding forces on it: the element `on_mouse` is handed
+//     *is* the box that listens (`Kind::Mouse` folds the element into the
+//     wrapper that carries the handler), so any size a style can name would
+//     do, `size=full` included. The content column is positioned `absolute`
+//     so that overlay is the stack's only in-flow child, and a release outside
+//     the overlay after a window resize is the one release still not seen.
 //   * The ghost follows the pointer only because the frame asks for another
 //     frame (`gpui::animate()`) for as long as a drag is in flight. Without it
 //     the ghost would freeze the moment the pointer left the square, since the

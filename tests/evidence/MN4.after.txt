@@ -2,7 +2,7 @@ MN4 — set the window title at runtime, with a dirty marker.
 
 AFTER THE WORK. **Passed in a real window**, and it is the platform's own answer that is checked.
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mn4_title.gos 30
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/mn4_title.gos 30
     window-guard: windows ALLOWED (DSH_ALLOW_WINDOWS=1)
     MN4 the window opened with the platform's title "MN4 — before"
     MN4 asked for "MN4 — after (edited)" — the marker is the program's

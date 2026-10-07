@@ -12,7 +12,7 @@
 //
 // Pass means the revived window renders, which it can only do if the process
 // outlived the window it closed. If the app had quit, nothing would print a verdict
-// at all — which is what `scripts/probes` fails on ("exited 0 but printed no
+// at all — which is what `scripts/probes.sh` fails on ("exited 0 but printed no
 // verdict"), and what the break in `CL3.before.txt` produced.
 
 use gpui

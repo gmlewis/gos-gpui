@@ -9,7 +9,7 @@ The headless half:
 
 The window half, on every tier:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/bg1_background.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/bg1_background.gos
     === check ===
     check: ok (1 items typed)
 

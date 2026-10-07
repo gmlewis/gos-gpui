@@ -2,7 +2,7 @@ W8 — menus wired to the window that renders, not the first.
 
 AFTER THE WORK. **Two windows, no clicks, and the routing visible.**
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/w8_menu_owner.gos 45
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/w8_menu_owner.gos 45
     window-guard: windows ALLOWED (DSH_ALLOW_WINDOWS=1)
     W8 the first window reports "0:menu:w8.first:" and the second reports "0:menu:w8.second:"
     OK W8 each window was given its own menu, so the menu follows the window that renders

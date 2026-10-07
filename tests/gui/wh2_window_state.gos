@@ -16,7 +16,7 @@
 //
 // `toggle_fullscreen` is deliberately *not* exercised here, and the row says so:
 // a fullscreen window takes over the display for the length of the transition,
-// and this probe runs four times per tier and once per `scripts/probes` — a
+// and this probe runs four times per tier and once per `scripts/probes.sh` — a
 // check that switches the desktop's space every time it runs is a nuisance with
 // a pass condition. The capability is implemented and the row names the half it
 // does not check.

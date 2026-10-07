@@ -2,7 +2,7 @@ WH6 — read and observe window bounds (inner and outer), restored bounds.
 
 AFTER THE WORK. In this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh6_window_bounds.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/wh6_window_bounds.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`; each of
 the other four exits 0 with no stderr but the toolchain duplicate-symbol link warnings

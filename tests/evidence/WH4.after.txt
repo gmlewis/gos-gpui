@@ -2,7 +2,7 @@ WH4 — choose the display (`display=`), and fix `place=center`.
 
 AFTER THE WORK. In this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh4_display_place.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/wh4_display_place.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`; each
 of the other four exits 0 with no stderr but the toolchain duplicate-symbol link

@@ -284,10 +284,13 @@ fn main() {
             .child(quad(450.0, 50.0, 80.0, 80.0))
             .child(ui::paths(default_paths(), default_backgrounds(), "absolute left=0 top=0 size=full"))
             .child(ui::paths(stroke_handles, stroke_backgrounds, "absolute left=0 top=0 size=full"))
-            // Pixel-sized rather than `size=full`: `on_mouse` wraps this in a
-            // bare div, and a percentage against that wrapper's auto height has
-            // nothing definite to resolve against. At the window origin, the
-            // coordinates it reports are window coordinates either way.
+            // Upstream's listener is the `size_full` div that holds the
+            // canvas; this port keeps it at 900x520 so it does not lie over
+            // the toolbar above it — not because the binding needs a pixel
+            // size, which it no longer does: the element handed to `on_mouse`
+            // *is* the box that listens. At the window origin the coordinates
+            // it reports are window coordinates either way, being relative to
+            // an element that sits at 0,0.
             .child(ui::on_mouse(ui::rect("w=900 h=520"), "down up move", "canvas"))
             .child(ui::row("absolute left=16 top=16 right=16 gap=8 justify=between items=center")
                 .text("Mouse down any point and drag to draw lines (Hold on shift key to draw straight lines)", "")

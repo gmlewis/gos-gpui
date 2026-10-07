@@ -6,7 +6,7 @@ AFTER THE WORK. Headless, and the queue is the whole of what a check can reach.
     test: 299 passed, 0 failed, 1066 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
     across 65 file(s), 40 with no tests
 
-    $ ./scripts/tiers tests/dw6_prompts_test.gos check
+    $ ./scripts/tiers.sh tests/dw6_prompts_test.gos check
     === check ===
     check: ok (15 items typed)
 

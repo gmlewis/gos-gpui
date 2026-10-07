@@ -2,7 +2,7 @@ CL3 — survive with zero windows.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/cl3_keep_alive.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/cl3_keep_alive.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -36,7 +36,7 @@ alive with nothing to reopen — is exercised only by the break above, because
 nothing in this binding reaches program code without a window. That is named in the
 row's residual doubt, with BG4 as what would close it.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent. That
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent. That
 matters here more than almost anywhere: `keep_alive` is off by default precisely so
 that every example's "close the window, end the program" still holds, and the
 refactor of `open_pending` moved the main window's own opening path.

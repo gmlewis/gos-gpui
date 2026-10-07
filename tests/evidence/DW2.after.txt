@@ -6,7 +6,7 @@ AFTER THE WORK. Headless, and this row can be finished here because of where its
     test: 268 passed, 0 failed, 963 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
     across 63 file(s), 40 with no tests
 
-    $ ./scripts/tiers tests/dw2_history_test.gos check
+    $ ./scripts/tiers.sh tests/dw2_history_test.gos check
     === check ===
     check: ok (14 items typed)
 

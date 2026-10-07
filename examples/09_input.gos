@@ -18,8 +18,10 @@
 //   * upstream binds thirteen actions through the application keymap
 //     (`cx.bind_keys` / `on_action`); the binding owns the one keymap, so the
 //     editor matches keystrokes itself. Same keys, different plumbing;
-//   * upstream focuses the input at startup; here it takes focus when clicked
-//     or tabbed to;
+//   * upstream focuses the input at startup; here the editor takes focus the
+//     once, when it is created, since a binding function has no `Window` to
+//     focus it with afterwards — clicking, tabbing away and returning all
+//     behave normally from then on;
 //   * upstream's shell is `InputExample` — a header, this log and a Reset
 //     button. That shell is reproduced here, with the log fed by
 //     `gpui::observe_keystrokes`, which sees every keystroke whether or not the

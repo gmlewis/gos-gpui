@@ -3,7 +3,7 @@ TH1 — report the live OS appearance (light/dark).
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/tm4_appearance.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/tm4_appearance.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -38,4 +38,4 @@ is in a dark appearance — with `background is #ffffffff while a dark appearanc
 says it should be #222222ff`. Before this round, none of the eight colours had ever
 been compared against the appearance at all.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent.
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent.

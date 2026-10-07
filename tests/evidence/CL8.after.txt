@@ -2,7 +2,7 @@ CL8 — open a URL in the browser.
 
 AFTER THE WORK. **One window, one press, one browser tab.**
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl8_open_url.gos 110
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl8_open_url.gos 110
     CL8 asked the platform to open https://example.com/ — a browser tab should have appeared
     CL8 the person watching confirms a browser opened the URL
     OK CL8 the URL reached the platform, and the platform opened it

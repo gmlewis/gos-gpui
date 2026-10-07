@@ -53,12 +53,29 @@ pub fn tokens(spec: &str) -> Vec<(String, Option<String>)> {
 pub fn unknown_tokens(spec: &str) -> Vec<String> {
     tokens(spec)
         .into_iter()
-        .filter(|(k, v)| !is_known(k) || unknown_theme_value(v))
+        .filter(|(k, v)| !is_known(k) || unknown_theme_value(v) || unknown_number_value(k, v))
         .map(|(k, v)| match v {
             Some(v) => format!("{k}={v}"),
             None => k,
         })
         .collect()
+}
+
+/// Whether a token's value should have been a number and is not.
+///
+/// `gutter=32` is a width, and `gutter=wide` is a typo: the key is known, so the check above cannot
+/// see it, and a gutter that silently became zero is exactly the silent failure the report exists to
+/// prevent. Only the keys this module reads *as* numbers are checked — every other token's value is
+/// a colour, a word from a closed list, or free text that `one` is entitled to reject by name.
+fn unknown_number_value(key: &str, value: &Option<String>) -> bool {
+    if key != "gutter" {
+        return false;
+    }
+    match value.as_deref() {
+        Some(v) => !v.is_empty() && v.parse::<f32>().is_err(),
+        // A bare `gutter` is "on, at the default width" — a value is not required.
+        None => false,
+    }
 }
 
 /// Whether a token's value names a colour the table does not have.
@@ -133,6 +150,8 @@ fn is_known(key: &str) -> bool {
         | "ctx"
         // the scrollbar thumb's colour
         | "thumb"
+        // the editor's own chrome: what it paints that is not a box
+        | "caret" | "sel" | "gutter" | "gutterbg" | "gutterfg" | "softwrap"
     ) || is_theme_field(key.strip_prefix("theme.").unwrap_or(""))
 }
 
@@ -230,8 +249,20 @@ pub fn interaction(spec: &str) -> (Option<String>, Option<String>, Option<String
 /// one styled box with a bar drawn over it — so a scrollbar is a normal element with one extra
 /// token rather than an element with a vocabulary of its own.
 pub fn thumb_colour(spec: &str) -> Option<gpui::Hsla> {
-    for (key, value) in tokens(spec) {
-        if key == "thumb" {
+    token_colour(spec, "thumb")
+}
+
+/// The colour a named token carries, if `spec` sets one.
+///
+/// A second vocabulary beside `Styled`'s, for the few elements that paint something that is not a
+/// box and so cannot be reached by `bg=` or `color=`. [`thumb_colour`] is this with the key fixed to
+/// `"thumb"`; the editor reads its own `caret=`/`sel=`/`gutterbg=`/`gutterfg=` the same way. A token
+/// with no value, or with an empty one, is *not* a colour and answers `None`, so
+/// `ui::editor("doc", "", "gutter")` can carry the token that has no colour without looking like a
+/// mistyped one.
+pub fn token_colour(spec: &str, key: &str) -> Option<gpui::Hsla> {
+    for (name, value) in tokens(spec) {
+        if name == key {
             if let Some(value) = value {
                 let value = decode_quoted(&value);
                 if !value.is_empty() {
@@ -241,6 +272,33 @@ pub fn thumb_colour(spec: &str) -> Option<gpui::Hsla> {
         }
     }
     None
+}
+
+/// The number a named token carries, if `spec` sets one.
+///
+/// `gutter=32` is a width in pixels. A bare `gutter` has no number, which is how "on, at the default
+/// width" is written; a value that is not a number at all is reported to the person the same way a
+/// mistyped token is, since a size that silently became zero is the failure mode the token language
+/// exists to avoid.
+pub fn token_number(spec: &str, key: &str) -> Option<f32> {
+    for (name, value) in tokens(spec) {
+        if name == key {
+            if let Some(value) = value {
+                let value = decode_quoted(&value);
+                if !value.is_empty() {
+                    return value.parse::<f32>().ok();
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether `spec` carries a named bare token.
+///
+/// `softwrap` is a flag rather than a value: it asks for a behaviour, not a quantity.
+pub fn has_flag(spec: &str, key: &str) -> bool {
+    tokens(spec).iter().any(|(name, _)| name == key)
 }
 
 /// The `ctx=<name>` token in `spec`, if it carries one.
@@ -736,7 +794,6 @@ fn num(v: &str) -> f32 {
     v.parse::<f32>().unwrap_or(0.0)
 }
 
-/// `#rgb`, `#rrggbb`, `#rrggbbaa`, or one of GPUI's named colours.
 thread_local! {
     /// The colour table a `theme:<name>` value resolves against, one per window.
     ///
@@ -755,6 +812,12 @@ pub fn set_colour_table(win: i64, table: HashMap<String, Hsla>) {
     });
 }
 
+/// `#rgb`, `#rrggbb`, `#rrggbbaa`, or one of GPUI's named colours.
+///
+/// A `theme:<name>` value resolves against this window's table instead. Anything this does not
+/// recognise draws **black** rather than failing — which is why [`unknown_tokens`] exists and why
+/// every element that takes a style string is checked by it: a colour typo has to be visible as a
+/// complaint, because as a colour it is indistinguishable from a deliberate black.
 pub fn colour(v: &str) -> Hsla {
     if let Some(hex) = v.strip_prefix('#') {
         return match hex.len() {

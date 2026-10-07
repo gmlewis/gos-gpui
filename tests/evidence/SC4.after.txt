@@ -2,7 +2,7 @@ SC4 — scroll handles that survive a rebuild, a tab switch or a list recycle.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=40 ./scripts/tiers tests/gui/sc4_scroll_survives.gos
+    TIER_TIMEOUT=40 ./scripts/tiers.sh tests/gui/sc4_scroll_survives.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):

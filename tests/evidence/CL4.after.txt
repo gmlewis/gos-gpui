@@ -2,7 +2,7 @@ CL4 — a queued `window.prompt` with program-supplied buttons.
 
 AFTER THE WORK. **Verified by a person, twice**, which is the only instrument this row has.
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl4_prompt.gos 300 &   # sheet up while the user reads
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl4_prompt.gos 300 &   # sheet up while the user reads
     window-guard: windows ALLOWED (DSH_ALLOW_WINDOWS=1)
     CL4 queued two prompts in one frame: 1 and 2 — the first sheet should be up, the second waiting
     CL4 the head is "1|CL4 — one of two|Click Alpha, Beta or Cancel." with buttons #["Alpha", "Beta", "Cancel"]
@@ -53,7 +53,7 @@ Residual doubt.
 
   * **Tiers: `check` and `run` only.** The compiled tiers need four more runs, each of which asks a
     person for two clicks — eight clicks for a capability whose marshalling is two `i64`s. Named here
-    rather than papered over; the binding code is identical on both, and `scripts/tiers` would report a
+    rather than papered over; the binding code is identical on both, and `scripts/tiers.sh` would report a
     human-clicked probe as a failure if nobody were there to click.
   * **A program that answers a prompt whose sheet is up**, through `gpui::prompt_answer`, leaves that
     sheet on screen: gpui has no way to take a prompt back, so the sheet stays until somebody clicks

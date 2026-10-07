@@ -70,5 +70,5 @@ still called it:
     error[E0425]: cannot find function `names` in module `gpu`
     regress: 27 failure(s) across 27 example(s)
 
-`./scripts/tiers … check` found it immediately and the function was restored. The tree was buildable
+`./scripts/tiers.sh … check` found it immediately and the function was restored. The tree was buildable
 again within the same round, which is what the run's rule asks for.

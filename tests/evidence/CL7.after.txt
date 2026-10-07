@@ -2,7 +2,7 @@ CL7 — reveal in the file manager, and open with the platform's handler.
 
 AFTER THE WORK. **The platform's own windows, and a person to see them.**
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl7_reveal.gos 110
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl7_reveal.gos 110
     CL7 step 1: asked the file manager to reveal /tmp/gpui-cl7-reveal-me.txt — a Finder window should have appeared showing it
     CL7 step 2: asked the platform to open the file — the application that owns .txt should have opened it
     CL7 the person watching confirms the file manager showed the file

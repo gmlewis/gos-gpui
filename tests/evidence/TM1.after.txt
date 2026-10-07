@@ -2,7 +2,7 @@ TM1 — measure a text run (`advance`, `em_width`, `typographic_bounds`, `shape_
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/tm1_text_measure.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/tm1_text_measure.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -41,4 +41,4 @@ ancestor is inherited by everything measured inside it, and `fs=` overrides the
 size. A newline is flattened to a space first, because gpui's shaper panics on one —
 the same thing `editor.rs` does to everything that reaches it.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent.
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent.

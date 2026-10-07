@@ -12,7 +12,7 @@
 // A dirty marker is the program's to compose — `f"{name} — edited"` — and nothing in the binding needs
 // to know what "edited" means. That is the row's second half, and it is one string concatenation.
 //
-// Run it with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mn4_title.gos 30`. The window is up for
+// Run it with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/mn4_title.gos 30`. The window is up for
 // about a second; watch its titlebar change.
 
 use gpui

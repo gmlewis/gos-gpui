@@ -2,7 +2,7 @@ MR7 — documentation and dead-code consistency.
 
 AFTER THE WORK. Command, in this tree:
 
-    ./scripts/docs
+    ./scripts/docs.sh
 
 Output (exit 0):
 
@@ -14,7 +14,7 @@ Output (exit 0):
   ok     set_theme()'s doc says it is inert
 docs: 6/6 claims still accurate
 
-`scripts/docs` is the check rather than a `.gos` test because this row is about
+`scripts/docs.sh` is the check rather than a `.gos` test because this row is about
 prose: nothing in it can be drawn or asserted from a program, and a `#[test]`
 could only assert that a string exists. Each check names the claim it defends,
 so the next drift is a named failure rather than a paragraph nobody re-read.

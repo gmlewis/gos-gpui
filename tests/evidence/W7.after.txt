@@ -2,7 +2,7 @@ W7 — `frame()`, `~keys` and `~root` belong to a window, not to the process.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=25 ./scripts/tiers tests/gui/w7_frame_and_keys.gos
+    TIER_TIMEOUT=25 ./scripts/tiers.sh tests/gui/w7_frame_and_keys.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):

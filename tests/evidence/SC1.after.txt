@@ -2,7 +2,7 @@ SC1 — read the scroll offset of a scrolled container.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=40 ./scripts/tiers tests/gui/sc1_scroll_offset.gos
+    TIER_TIMEOUT=40 ./scripts/tiers.sh tests/gui/sc1_scroll_offset.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`
 and a screenful of `ld: warning: duplicate symbol` lines from the two builds —
@@ -36,7 +36,7 @@ What makes it pass:
     could be addressed, and a scrolled container could not; without it the
     handle would be keyed by an auto id no program can name.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent. That
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent. That
 matters more than usual here, because `track_scroll` changes how every scrolled
 element in the whole example set gets its offset, and the strict rule (any output
 at all is a failure) would have caught a banner or a panic.

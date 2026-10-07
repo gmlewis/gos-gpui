@@ -26,7 +26,11 @@ fn boundary(text: &str, offset: usize) -> usize {
 ///
 /// A text ending in a break has a last line that is empty and starts after it, which is what makes
 /// `"ab\n"` two lines rather than one.
-fn lines_of(text: &str) -> Vec<(usize, usize)> {
+///
+/// `pub(crate)` for [`crate::editor`], which shapes one of these per line: the widget needs the same
+/// answer to "where does a line begin" that a program gets, or the two would disagree about where a
+/// caret is and only one of them would be drawing it.
+pub(crate) fn lines_of(text: &str) -> Vec<(usize, usize)> {
     let mut lines = Vec::new();
     let mut start = 0;
     for (index, character) in text.char_indices() {
@@ -43,7 +47,7 @@ fn lines_of(text: &str) -> Vec<(usize, usize)> {
 ///
 /// The break itself belongs to the line it ends, so an offset on a `\n` answers the line that break
 /// closes rather than the one after it.
-fn index_of_line(text: &str, offset: usize) -> usize {
+pub(crate) fn index_of_line(text: &str, offset: usize) -> usize {
     let at = boundary(text, offset);
     let lines = lines_of(text);
     for (index, (start, end)) in lines.iter().enumerate() {

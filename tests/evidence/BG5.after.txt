@@ -2,7 +2,7 @@ BG5 — a one-shot delay, and cancelling it before it fires.
 
 AFTER THE WORK. Every tier, byte-identical:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/bg5_delay.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/bg5_delay.gos
     === check ===
     check: ok (1 items typed)
 

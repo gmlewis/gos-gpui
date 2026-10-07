@@ -5,7 +5,7 @@ itself was built and tested in round 50 (`gpui::prompt` and `prompt_answer`), so
 queues two prompts in one frame, prints what the queue holds, and then… nothing appears. No sheet, no
 answer, and the probe gives up on its own and says so:
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl4_prompt.gos 60
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl4_prompt.gos 60
     window-guard: windows ALLOWED (DSH_ALLOW_WINDOWS=1)
     CL4 queued two prompts in one frame: 1 and 2 — the first sheet should be up, the second waiting
     CL4 the head is "1|CL4 — one of two|Click Alpha, Beta or Cancel." with buttons #["Alpha", "Beta", "Cancel"]

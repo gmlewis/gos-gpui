@@ -6,11 +6,11 @@ AFTER THE WORK. Headless; the sampling needs a window and is named as unverified
     test: 311 passed, 0 failed, 1108 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
     across 66 file(s), 40 with no tests
 
-    $ ./scripts/tiers tests/ax6_gpu_test.gos check
+    $ ./scripts/tiers.sh tests/ax6_gpu_test.gos check
     === check ===
     check: ok (12 items typed)
 
-    $ ./scripts/regress
+    $ ./scripts/regress.sh
     regress: checked 27, NO RUNS — 27 windowed run(s) suppressed (headless mode)
     regress: this is a compile pass, not the silent-run pass
 

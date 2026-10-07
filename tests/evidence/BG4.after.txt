@@ -2,7 +2,7 @@ BG4 — a repeat timer that can be rescheduled and cancelled.
 
 AFTER THE WORK. Every tier, byte-identical:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/bg4_timer.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/bg4_timer.gos
     === check ===
     check: ok (1 items typed)
 

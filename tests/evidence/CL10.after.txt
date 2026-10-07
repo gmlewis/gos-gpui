@@ -6,7 +6,7 @@ AFTER THE WORK. Headless, and it is the only tier this row could have.
     test: 225 passed, 0 failed, 799 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
     across 60 file(s), 40 with no tests
 
-    $ ./scripts/tiers tests/cl10_settings_test.gos check
+    $ ./scripts/tiers.sh tests/cl10_settings_test.gos check
     === check ===
     check: ok (16 items typed)
 
@@ -15,7 +15,7 @@ binding, and two float equalities) were corrected rather than tolerated.
 
 **The regression suite, in headless mode**, which is now a compile pass and says so:
 
-    $ ./scripts/regress
+    $ ./scripts/regress.sh
     regress: 27 example(s), tier check ONLY — every run opens a window and is suppressed
     regress: checked 27, NO RUNS — 27 windowed run(s) suppressed (headless mode)
     regress: this is a compile pass, not the silent-run pass

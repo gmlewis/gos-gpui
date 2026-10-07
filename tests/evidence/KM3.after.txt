@@ -9,7 +9,7 @@ Headless — `env -u GOSSAMER_IN_RUNNER gos test tests`:
 
 The GUI probe, on every tier, byte-identical:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/km3_menu_accelerator.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/km3_menu_accelerator.gos
     === check ===
     check: ok (2 items typed)
 
@@ -67,4 +67,4 @@ code with a different constant. A `quits` entry takes no accelerator by construc
 (⌘Q is already bound to quitting), so an accelerator on the quit item is not
 expressible — upstream's own menu is `os_action`-shaped there. And the probe installs
 a real menu bar over the desktop for the length of its run, which is the same
-nuisance `scripts/probes` already documents.
+nuisance `scripts/probes.sh` already documents.

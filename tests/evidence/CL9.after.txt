@@ -2,7 +2,7 @@ CL9 — a program-facing clipboard, read/write, text and image.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/cl9_clipboard.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/cl9_clipboard.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -39,4 +39,4 @@ half round-trips:
     constructs one — that is the asset pipeline, which the register carries as
     **DW7**. The probe therefore does not pretend to test an image.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent.
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent.

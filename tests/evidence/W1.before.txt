@@ -39,7 +39,7 @@ touched).
    `gpui::animate()`, which every other path in the probe reaches, is below the
    failing call: no later frame is ever asked for, the window goes idle, and the
    `gpui::quit()` on some later frame never happens. A probe whose first call is
-   unbound therefore has no output at all, which is why `scripts/tiers` bounds
+   unbound therefore has no output at all, which is why `scripts/tiers.sh` bounds
    every run and reaps the runner afterwards — a probe that leaves a window open
    is not a check.
 

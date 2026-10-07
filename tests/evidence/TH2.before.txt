@@ -45,5 +45,5 @@ the observer registration; `Window::platform_window` is `pub(crate)`. The platfo
 delivers the change from the view's own `viewDidChangeEffectiveAppearance`
 (`platform/mac/window.rs:2328-2335`), which fires when the system appearance changes.
 So a program cannot provoke this, and neither can a probe; the machine's setting has to
-move, and the honest way to move it is `scripts/appearance-toggle`, which restores it
+move, and the honest way to move it is `scripts/appearance-toggle.sh`, which restores it
 whether the program passes, fails, or is killed.

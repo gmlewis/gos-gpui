@@ -11,7 +11,7 @@ round 59, so the check tier would have answered
     error[GX0002]: name `gpui::set_window_title` is not bound in this scope
 
 The attempt to re-derive it in round 69 **failed**, and not for an interesting reason: renaming the
-binding function and re-running `./scripts/tiers … check` still printed `check: ok (1 items typed)`,
+binding function and re-running `./scripts/tiers.sh … check` still printed `check: ok (1 items typed)`,
 because the binding's build is cached — the checker was validating the program against the *previous*
 build of the library, not the edited one. That is worth recording on its own: **a check tier can be
 answered by a stale binding**, which is the same family of trap as the stale build lock this ledger

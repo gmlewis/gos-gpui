@@ -1,0 +1,64 @@
+// DW5 — the editor's chrome tokens, as a parse.
+//
+// Headless: `gos test tests`. What the chrome tokens *resolve to* is a runtime question and
+// needs a window — `tests/gui/dw5_editor_chrome.gos` is that half. What they are *spelled*
+// like is a parse, and a parse is the part a program can be wrong about: a token the
+// language does not know would otherwise be a silently absent gutter, which is exactly the
+// failure `unknown_style_tokens` exists to make visible.
+//
+// Four of the six tokens are new with this row — `caret`, `sel`, `gutterbg`, `gutterfg` and
+// `softwrap`; `gutter` is new too. The red at HEAD for these is a wrong answer rather than
+// an unresolved name, because `unknown_style_tokens` has been there since TM5.
+
+use gpui
+
+#[test]
+fn the_chrome_tokens_are_known() {
+    let unknown = gpui::unknown_style_tokens("gutter softwrap caret=#ff0000ff sel=#00ff0080")
+    assert(
+        unknown.len() == 0,
+        f"the editor's chrome tokens are style tokens: {unknown.len()} were refused",
+    )
+    let unknown = gpui::unknown_style_tokens("gutterbg=#22000000 gutterfg=#ffcc00ff")
+    assert(
+        unknown.len() == 0,
+        f"the gutter's own colours are style tokens: {unknown.len()} were refused",
+    )
+}
+
+#[test]
+fn a_chrome_colour_is_not_a_chrome_number() {
+    // `gutter=48` is a width in pixels and a bare `gutter` is "on, at the default width".
+    // Both are fine; `gutter=wide` is a typo, and a typo that is *known* by key is the one
+    // the plain key check cannot see — so it has a check of its own.
+    assert(gpui::unknown_style_tokens("gutter=48").len() == 0, "a gutter width is a number")
+    assert(gpui::unknown_style_tokens("gutter").len() == 0, "a bare gutter is a gutter")
+    let refused = gpui::unknown_style_tokens("gutter=wide")
+    assert(
+        refused.len() == 1,
+        f"a gutter width that is not a number is refused, not silently zero: {refused}",
+    )
+}
+
+#[test]
+fn a_misspelt_chrome_token_is_refused() {
+    // The same rule every other token follows. `caretcolour` is close enough to `caret` to
+    // be typed by accident, and close enough to draw no complaint if the vocabulary were open.
+    let refused = gpui::unknown_style_tokens("caretcolour=#ff0000ff")
+    assert(
+        refused.len() == 1,
+        f"a misspelt chrome token is refused: {refused}",
+    )
+}
+
+#[test]
+fn the_chrome_tokens_are_style_tokens_on_any_element() {
+    // They are read off the same string `gpui::editor` is handed, and that string is applied
+    // to the editor's box as well — so they are part of the one vocabulary rather than a
+    // second one. `thumb` set the precedent: a token meaningful to one widget, known
+    // everywhere, so that a program can hand the same style string to two elements.
+    assert(
+        gpui::unknown_style_tokens("caret=#ff0000ff").len() == 0,
+        "caret= is not refused on a box, the way thumb= is not refused on a table",
+    )
+}

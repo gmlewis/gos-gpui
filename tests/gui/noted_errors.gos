@@ -11,7 +11,11 @@
 //
 // This is not a register row. It is the instrument the register's checks need.
 //
-// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/noted_errors.gos 20`.
+// noted: expected — this probe's whole subject is the channel, so the note it causes
+// is the result rather than a finding. It is the one probe `scripts/probes.sh` lets be
+// noisy in that way; every other probe is failed by a note, as by any other output.
+//
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/noted_errors.gos 20`.
 
 use gpui
 use std::process
@@ -30,6 +34,13 @@ fn main() {
         gpui::child(root, gpui::text("deliberately misspelled style below", ""))
         gpui::child(root, gpui::text("x", "notatoken=7"))
         gpui::root(root)
+
+        // gpui draws a frame when something asks it to, and a still window asks for nothing: without
+        // this the loop delivers two frames — the open and one after — and then goes quiet, and the
+        // verdict below is never reached. **Found by running the probe**: the first version of this file
+        // had no `animate()` and timed out at 20s having printed frame 1's line and nothing else, which
+        // reads like a broken channel rather than a probe that never asked for a third frame.
+        gpui::animate()
 
         if f >= 3 {
             let noted = gpui::noted_errors()

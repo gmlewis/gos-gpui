@@ -1087,6 +1087,94 @@ gossamer_binding::register_module!(
         view::push(Kind::Editor { key, placeholder }, style, String::new())
     }
 
+    /// What the editor on `key` in this window is holding, or `""` when this window draws none.
+    ///
+    /// [`gpui::state_text`] answers what the **program** last wrote under the key; this answers what
+    /// the **widget** is holding. In the editor's own window the two agree a frame after any write or
+    /// keystroke — the editor publishes what it has and adopts what the program sets — so the
+    /// disagreement this reports is the one worth asking about: *does this window have an editor on
+    /// that key at all?* A window that draws no editor answers `""`, however much text the program
+    /// has written under the key, because nothing there is drawing it.
+    ///
+    /// Two windows may each draw an editor on the same key and each holds its own text: that is
+    /// `W6`, and it is the only reading that can tell such a pair from one editor two windows share.
+    fn editor_text(key: String) -> String {
+        editor::editor_text(&key)
+    }
+
+    /// What the editor on `key` in another window is holding, or `""` when it draws none.
+    fn editor_text_in(win: i64, key: String) -> String {
+        editor::editor_text_in(win, &key)
+    }
+
+    /// What this window's editor on `key` is drawing its own chrome with, as `"<field>=<value>"`.
+    ///
+    /// The editor paints four things a box cannot be styled into: the caret, the selection
+    /// highlight, and the line-number gutter with its numbers. Each has a token of its own on the
+    /// same style string [`gpui::editor`] is handed — `caret=`, `sel=`, `gutter=`, `gutterbg=`,
+    /// `gutterfg=`, `softwrap` — and this reads back what the widget resolved, defaults and all.
+    ///
+    /// `field` is one of:
+    ///
+    /// * `"caret"` — the caret's colour, `"#rrggbbaa"`.
+    /// * `"sel"` — the selection highlight's colour.
+    /// * `"gutter"` — the gutter's width in pixels, `0` when there is none.
+    /// * `"gutterbg"` — the gutter's background colour, or `"none"` for "the box shows through".
+    /// * `"gutterfg"` — the line numbers' colour, or `"text"` for "the text colour, faded".
+    /// * `"wrap"` — `"soft"` when a long line wraps, `"off"` when it runs past the box.
+    ///
+    /// Anything else answers `""`, like [`gpui::window_field`]. A `theme:` value is **resolved**
+    /// against this window's colour table rather than echoed, so a program can match its own borders
+    /// to the caret without knowing which theme is in force. A window drawing no editor on that key
+    /// answers the defaults — the chrome an editor would have if it had no style at all — which is
+    /// the same reading [`gpui::editor_text`] gives for text: nothing is drawing it.
+    fn editor_chrome(key: String, field: String) -> String {
+        editor::editor_chrome(&key, &field)
+    }
+
+    /// What an editor in another window is drawing its own chrome with.
+    fn editor_chrome_in(win: i64, key: String, field: String) -> String {
+        editor::editor_chrome_in(win, &key, &field)
+    }
+
+    /// What the editor on `key` in this window has selected, as `"<start>,<end>"` in bytes.
+    ///
+    /// An empty selection is `"<n>,<n>"` — a caret sitting at byte `n` with nothing highlighted —
+    /// which is a reading, not a lack of one: something is selected at every moment and what is
+    /// selected is nothing. The two offsets are always in order, so a backwards drag reads the same
+    /// as a forwards one. `""` means this window draws no editor on that key, the same contract as
+    /// [`gpui::editor_text`].
+    ///
+    /// This is the reader that makes a **selection** checkable. Text alone cannot tell a click that
+    /// placed a caret from one that highlighted a word: both leave the same characters behind.
+    fn editor_selection(key: String) -> String {
+        editor::editor_selection(&key)
+    }
+
+    /// What the editor on `key` in another window has selected.
+    fn editor_selection_in(win: i64, key: String) -> String {
+        editor::editor_selection_in(win, &key)
+    }
+
+    /// Where the editor on `key` in this window was last drawn, in this window's own coordinates.
+    ///
+    /// `field` is `x`, `y`, `w` or `h`, in the space [`gpui::on_mouse`] reports positions in — the
+    /// window's content, not the screen, so the titlebar is not counted. Anything else answers
+    /// `0.0`, like [`gpui::window_field`].
+    ///
+    /// The rectangle is **one frame behind**, and only when the editor was drawn: it is recorded as
+    /// the element is built, before layout has run. That is the same lag the editor's own
+    /// hit-testing lives with, and a program that reads this to aim something at the editor should
+    /// read it from a frame in which the editor has already been drawn at the place it still is.
+    fn editor_bounds(key: String, field: String) -> f64 {
+        editor::editor_bounds(&key, &field)
+    }
+
+    /// Where an editor in another window was last drawn.
+    fn editor_bounds_in(win: i64, key: String, field: String) -> f64 {
+        editor::editor_bounds_in(win, &key, &field)
+    }
+
     /// Declare where this window's assets live.
     ///
     /// `gpui::image` and `gpui::icon` resolve the name they are given against this directory
@@ -1443,8 +1531,13 @@ gossamer_binding::register_module!(
 
     /// Whether the element with this id currently holds focus.
     ///
-    /// Only the elements this binding builds a handle for are ever reported: an
+    /// Only the elements this binding has a handle for are ever reported: an
     /// `input`, an `editor`, and the `~root` handle `gpui::on_keys` installs.
+    /// **The editor was named here long before it was true** — it owns a
+    /// `FocusHandle` of its own and the registry held none of its, so this
+    /// answered `false` for a focused editor and `gpui::focused` answered `""`;
+    /// round 83 records the editor's own handle under its key, which is the fix
+    /// the sentence always described.
     /// An element made focusable with the `focusable` token *used* to be invisible
     /// here — GPUI builds that handle internally and never hands it over — so this
     /// answered `false` for it even while it was focused. `MR5`'s change gives such an

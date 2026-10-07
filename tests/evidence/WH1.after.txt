@@ -2,7 +2,7 @@ WH1 — minimum window size.
 
 AFTER THE WORK. In this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh_window_options.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/wh_window_options.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`,
 and each of the other four exits 0 with no stderr but the toolchain duplicate-symbol

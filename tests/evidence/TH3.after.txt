@@ -5,7 +5,7 @@ AFTER THE WORK.
 
 The GUI probe, on every tier, byte-identical:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/th3_theme.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/th3_theme.gos
     === check ===
     check: ok (1 items typed)
 
@@ -65,7 +65,7 @@ What changed, all in `gpui-binding/src/`:
     window chrome is not repainted, the `~theme.bad` refusal, and that the next frame is
     the first that answers from it. `theme()` now reads that choice and defaults to
     `"system"` rather than the old `"dark"`.
-  * `scripts/docs` — claim 6 was the *opposite* claim and was rewritten in the same
+  * `scripts/docs.sh` — claim 6 was the *opposite* claim and was rewritten in the same
     round, as the rule requires: it used to assert the doc admitted the name was inert,
     and now asserts the doc names the palette and says the appearance is untouched. It
     passes (6/6).
@@ -84,7 +84,7 @@ value: the doc says so, but a probe cannot show a contract it is written to obey
 
 **A defect this round introduced into the harness, and fixed in the same round.** TH2's
 probe was added to `tests/gui/` in round 34, and it *cannot* pass under a plain suite
-because nothing in-process can provoke an appearance change. `./scripts/probes` therefore
+because nothing in-process can provoke an appearance change. `./scripts/probes.sh` therefore
 began reporting it as a failure:
 
     FAIL   th2_appearance_change: failed twice
@@ -96,9 +96,9 @@ passed alone immediately afterwards (`probes: 1/1 passed`), which is the suite d
 under its own load that this ledger already documents. The suite was given a way to know
 the difference: a probe whose acceptance needs something the suite cannot do declares it
 in its header with `// needs: <command>`, and is skipped with a line that names the
-command rather than counted as a failure. `scripts/probes` was changed to read it, the
+command rather than counted as a failure. `scripts/probes.sh` was changed to read it, the
 TH2 probe's header to carry it, and the skip verified both ways — `skip th2_appearance_change:
-needs scripts/appearance-toggle`, while `w3_events` still runs and passes. A suite that
+needs scripts/appearance-toggle.sh`, while `w3_events` still runs and passes. A suite that
 cries wolf is worse than one that does not run a probe, which is the lesson of the build
 lock and the locked screen arriving from a third direction.
 

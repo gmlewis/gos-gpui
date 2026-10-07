@@ -2,20 +2,32 @@ W6 — editor instances are per (window, key).
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=40 ./scripts/tiers tests/gui/w6_editor_per_window.gos
+    DSH_ALLOW_WINDOWS=1 TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/w6_editor_per_window.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
 
-    OK W6 two windows each held an editor on the same key, and neither adopted the other's text
+    OK W6 two windows each held an editor on the same key, and each holds its own text
+
+**Re-run in round 84, against a rewritten instrument.** The editor is multi-line
+now (`DW1`), so the old observation — a single-line editor normalising the child's
+`"beta\nline"` into `"beta line"` and storing it back — no longer happens and
+could not be made to. The probe now reads `gpui::editor_text`, the widget's own
+content, which is the only reading that tells a window's own editor from one two
+windows share; `W6.before.txt` has the argument for why the store read cannot do
+it, and the deliberate-break run that shows the new check is sensitive to the same
+mechanism. The old instrument's transcripts are kept there as history rather than
+deleted.
 
 What the probe does: two windows each draw `gpui::editor("note", ..)` — the same
-key — with "alpha" in one and "beta\nline" in the other. The child's text needs
-normalising, so on its second frame its editor writes "beta line" back. Each
-window then requires that it did **not** end up with the other's text, and that the
-child's was normalised — naming the two wrong outcomes rather than an exact string,
-because the editor takes focus and this probe runs on a live desktop, where a stray
-keystroke appends a character. See `W6.before.txt`.
+key — with `"alpha"` stored in the first window and `"beta\nline"` in the child.
+Each window then asks what its own editor is holding. The child requires that it
+is **not** nothing, **not** the first window's text, and **two lines** — the text
+it was given. The first window requires that it is **not** holding the child's
+text. The wrong outcomes are named exactly and one of them is a line count,
+because the editor takes focus when it is created and these probes run on a live
+desktop, where a stray keystroke appends a character; a stray character is not a
+failure of the binding.
 
 What makes it pass: `EDITORS` is keyed by `(window, key)`, and `TextEditor`
 carries the window it was created in and re-enters through `window::with(self.win,
@@ -24,7 +36,11 @@ new content, and `adopt_program_text()`, which takes on text the program wrote
 behind it. Without the second, a window would adopt another window's text; without
 the first, typing in one window would publish into another's state.
 
-A detail worth keeping, because it is what made this row checkable at all:
-Gossamer *does* support `"\n"` in a string literal. Nothing in `examples/` uses
-one, which is why the escaping question stayed open — the probe for it was
-`set_text_in(1, "esc", "a\nb")` followed by a length assertion, and it passes.
+Two details worth keeping. Gossamer *does* support `"\n"` in a string literal —
+nothing in `examples/` uses one, which is why the escaping question stayed open,
+and the probe for it was `set_text_in(1, "esc", "a\nb")` followed by a length
+assertion, which passes; this probe's child text is a second use of the same
+thing. And what the child's editor *holds* is now readable at all: round 84 added
+`gpui::editor_text` / `gpui::editor_text_in` for it, which is a capability a
+program can use in its own right — the widget's text, as opposed to the text the
+program last wrote.

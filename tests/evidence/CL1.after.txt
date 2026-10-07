@@ -2,7 +2,7 @@ CL1 — intercept and veto a window close (`on_window_should_close`).
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/cl1_should_close.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/cl1_should_close.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -31,7 +31,7 @@ What makes it pass:
     removing anything.
   * `gpui-binding/src/lib.rs` — `on_window_should_close(decide)`.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent. That
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent. That
 matters here more than for most rows: `close_window` and `close_window_in` are used
 by `examples/10_on_window_close_quit` and `examples/27_window`, and both now consult
 a handler. Neither installs one, so `may_close` answers `true` unchanged — which is

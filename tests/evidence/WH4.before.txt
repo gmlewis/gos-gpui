@@ -18,7 +18,7 @@ existed.
 
 Why the first attempts at this transcript were `exit 124` and silence, and why it was
 not the program: they were the **stale build lock** (see "The stale build lock"). The
-recipe above clears locks with this repo's `scripts/unlock-stale-build`, which does not
+recipe above clears locks with this repo's `scripts/unlock-stale-build.sh`, which does not
 exist in the `git archive HEAD` copy — that copy's `scripts/` holds only `update-api` —
 so the pristine tree's runs were polling a lock for five minutes and the `timeout` killed
 them before the probe painted a single frame. With the lock cleared by the `find`/`rm`

@@ -2,7 +2,7 @@ BG2 — cancelling background work that is already in flight.
 
 AFTER THE WORK. Every tier, byte-identical:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/bg2_cancel.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/bg2_cancel.gos
     === check ===
     check: ok (1 items typed)
 

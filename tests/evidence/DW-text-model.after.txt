@@ -6,7 +6,7 @@ AFTER THE WORK. Headless, and this is the whole of what headless can hold of the
     test: 326 passed, 0 failed, 1169 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
     across 67 file(s), 40 with no tests
 
-    $ ./scripts/tiers tests/dw_text_model_test.gos check
+    $ ./scripts/tiers.sh tests/dw_text_model_test.gos check
     === check ===
     check: ok (15 items typed)
 

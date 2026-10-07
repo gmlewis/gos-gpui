@@ -1,0 +1,90 @@
+// DW1 — the editor holds lines, and the caret moves by them.
+//
+// Tier: every tier.
+//
+// The row is "multi-line, per-line layout, caret up/down/home/end, page moves".
+// The arithmetic behind the caret is `text.rs`, checked on its own in
+// `tests/dw_text_model_test.gos`; the widget half needs a window, and this is it.
+//
+// What makes it checkable is `gpui::send_key`, which delivers a keystroke to the
+// window as if it had been typed and goes through the ordinary dispatch, so the
+// focused editor handles it exactly as it would a real key. Nothing else in a
+// probe can type. The caret itself is not readable, so every claim is made to
+// leave a mark: a character typed *after* a move lands wherever the caret went,
+// and the editor publishes the text, which the program reads back.
+//
+// The document is "abcdef\ngh\nijklmn" — three lines of very different lengths,
+// so a vertical move that clamped short and then crept along would land
+// somewhere else, and the text would say so. The first two moves are the pair
+// that proves the column is *remembered* rather than recomputed: up from the
+// six-byte third line clamps to the end of "gh" (a two-byte line), and up again
+// must come back to column six — the "X" below lands at the end of "abcdef",
+// not two bytes into it.
+//
+// Pass means every one of the sixteen keystrokes left the document exactly where
+// the model says it should.
+
+use gpui
+use std::process
+
+fn main() {
+    let keys = [
+        "up", "up", "X", "home", "Y", "end", "Z", "down", "W",
+        "pagedown", "Q", "pageup", "R", "enter", "end", "T",
+    ]
+    // wants[i] is the document after keys[i]; "" means the key changed no text
+    // (a move), so only the ones after it are checked.
+    let wants = [
+        "", "",
+        "abcdefX\ngh\nijklmn", "",
+        "YabcdefX\ngh\nijklmn", "",
+        "YabcdefXZ\ngh\nijklmn", "",
+        "YabcdefXZ\nghW\nijklmn", "",
+        "YabcdefXZ\nghW\nijkQlmn", "",
+        "YabcRdefXZ\nghW\nijkQlmn",
+        "YabcR\ndefXZ\nghW\nijkQlmn", "",
+        "YabcR\ndefXZT\nghW\nijkQlmn",
+    ]
+
+    let outcome = gpui::run("dw1 - editor lines", 380.0, 240.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            gpui::set_text("doc", "abcdef\ngh\nijklmn")
+        }
+
+        // keys[j] is sent on frame j + 2, so the window has built the editor and
+        // focused it first; the effect is read on frame i + 3, because
+        // `gpui::send_key` delivers after the frame that asked for it.
+        let i = f - 3
+        if i >= 0 && i < 16 {
+            let want = wants[i]
+            if want != "" {
+                let got = gpui::state_text("doc", "")
+                if got != want {
+                    println(f"FAIL DW1 after key {i} ({keys[i]}) the document is \"{got}\", not \"{want}\"")
+                    gpui::quit()
+                }
+            }
+        }
+        let j = f - 2
+        if j >= 0 && j < 16 {
+            gpui::send_key(keys[j])
+        }
+
+        if f >= 21 {
+            println("OK DW1 sixteen keystrokes moved through three lines by the model's own arithmetic")
+            gpui::quit()
+        }
+        gpui::animate()
+
+        let root = gpui::column("p=8 size=full bg=#111111")
+        gpui::child(root, gpui::editor("doc", "type here", ""))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL DW1 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

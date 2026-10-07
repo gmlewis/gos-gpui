@@ -5,7 +5,7 @@ AFTER THE WORK — **complete, and the five-tier run is in.** The screen was loc
 a later session found the screen awake and ran the missing tier, unchanged code and unchanged
 probe:
 
-    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/km5_observed_keys.gos
+    $ TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/km5_observed_keys.gos
     === check ===
     check: ok (1 items typed)
 
@@ -50,7 +50,7 @@ What is new:
     record the ids per window.
   * `gpui-binding/src/app.rs` — `Request::ObserveKeys` records the id instead of installing
     `cx.observe_keystrokes`; `Request::SendKey` parses and defers the dispatch.
-  * `scripts/docs` — claim 5 rewritten in the same round, as the rule requires. It used to
+  * `scripts/docs.sh` — claim 5 rewritten in the same round, as the rule requires. It used to
     assert that the doc *admits* which keys never arrive; it now asserts that the doc
     promises the keys an element handled and names the capture phase that makes it true.
 

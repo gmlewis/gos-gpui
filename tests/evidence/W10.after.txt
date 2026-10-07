@@ -2,7 +2,7 @@ W10 — `close_window()` addressed to a named window.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=25 ./scripts/tiers tests/gui/w10_close_named_window.gos
+    TIER_TIMEOUT=25 ./scripts/tiers.sh tests/gui/w10_close_named_window.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (2 items typed)`;
 each of the other four exits 0 with no stderr):

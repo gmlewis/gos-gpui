@@ -4,7 +4,7 @@ AFTER THE WORK.
 
 The probe is one that **cannot be run plainly**: it waits for the system appearance to
 change, and nothing in-process can cause that. It is run under
-`scripts/appearance-toggle`, which flips the machine's appearance part-way through and
+`scripts/appearance-toggle.sh`, which flips the machine's appearance part-way through and
 puts it back under a `trap` on EXIT/INT/TERM.
 
 **The `check` tier**, which compiles the binding the way the toolchain does:
@@ -14,7 +14,7 @@ puts it back under a `trap` on EXIT/INT/TERM.
 
 **The interpreter tier:**
 
-    $ ./scripts/appearance-toggle gos run --main-thread tests/gui/th2_appearance_change.gos
+    $ ./scripts/appearance-toggle.sh gos run --main-thread tests/gui/th2_appearance_change.gos
     appearance: flipping from 'Dark' for the program to observe
     OK TH2 the appearance changed from "dark" to "light" while the program ran, and the
     observer reported it
@@ -29,7 +29,7 @@ wrong):
 
     $ CC="$PWD/tools/cc-gpui.sh" gos build --release tests/gui/th2_appearance_change.gos
     build: 7553720B native executable at target/release/learn-gpui
-    $ ./scripts/appearance-toggle timeout -k 5 35 ./target/release/learn-gpui
+    $ ./scripts/appearance-toggle.sh timeout -k 5 35 ./target/release/learn-gpui
     appearance: flipping from 'Dark' for the program to observe
     OK TH2 the appearance changed from "dark" to "light" while the program ran, and the
     observer reported it
@@ -55,7 +55,7 @@ What changed, all in `gpui-binding/src/`:
     appearance-to-word mapping rather than a second copy of it.
   * `lib.rs` — `gpui::observe_appearance(id)` beside `gpui::appearance`, documented as
     the running half of it.
-  * `scripts/appearance-toggle` — new. Reads `AppleInterfaceStyle` **and**
+  * `scripts/appearance-toggle.sh` — new. Reads `AppleInterfaceStyle` **and**
     `AppleInterfaceStyleSwitchesAutomatically` (the "Auto" switch is a different
     setting and survives a `dark mode` write), runs the command, flips, and restores
     both under a `trap`, then verifies both by reading them back and exits 3 if either
@@ -68,7 +68,7 @@ toggle, because each is another change to the machine's own appearance setting; 
 check is a callback registration whose only tier-sensitive part is whether the callback
 survives the binding call, and the compiled tier exercises that. `run --no-jit` is the
 interpreter ABI a second time. If a future round wants them, the command is one line:
-`./scripts/appearance-toggle gos run --main-thread --no-jit tests/gui/th2_appearance_change.gos`.
+`./scripts/appearance-toggle.sh gos run --main-thread --no-jit tests/gui/th2_appearance_change.gos`.
 
 Residual doubt, and it is more than usual for this row.
 

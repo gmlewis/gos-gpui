@@ -84,10 +84,12 @@
 //   * `on_mouse`'s `move` kind fires only while a button is held — the binding
 //     requires `event.dragging()` (gpui-binding/src/view.rs:905-913) — so the
 //     hover readout comes from `mouse_position()`, not from `on_mouse`.
-//   * `on_mouse` renders its element inside a wrapper that carries no style of
-//     its own (`Kind::Mouse`, gpui-binding/src/view.rs:863-915), so a wrapped
-//     `size=full` box has no definite height to resolve against; the port
-//     attaches `on_mouse` only to the green box, whose 200x100 size is fixed.
+//   * `on_mouse` is attached to an element and that element becomes the box
+//     that listens (`Kind::Mouse`, gpui-binding/src/view.rs): its style and its
+//     children are the wrapper's, so it keeps whatever size and position the
+//     style gives it, `size=full` included. This port still attaches it only to
+//     the green box, whose 200x100 size is fixed, because the drag it emulates
+//     is upstream's hit test on that box and not on the panel around it.
 //   * `id("window-backdrop")` and `id("hello")` — element ids belong to the
 //     binding.
 //   * Upstream's `&&` in `resize_edge` is written out as nested `if`s; the

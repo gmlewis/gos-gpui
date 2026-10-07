@@ -2,7 +2,7 @@ WH2 — maximized / fullscreen at open, `toggle_fullscreen`, `zoom_window`.
 
 AFTER THE WORK. In this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh2_window_state.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/wh2_window_state.gos
 
 Output, identical on all five tiers:
 

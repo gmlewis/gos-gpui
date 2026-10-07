@@ -2,7 +2,7 @@ W3 — the event queue is scoped per window.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=25 ./scripts/tiers tests/gui/w3_events.gos
+    TIER_TIMEOUT=25 ./scripts/tiers.sh tests/gui/w3_events.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (2 items typed)`;
 each of the other four exits 0 with no stderr):

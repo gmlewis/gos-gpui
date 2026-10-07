@@ -1,5 +1,15 @@
 // CL2 — an unsaved-changes prompt on close, end to end.
 //
+// needs: a person at the keyboard to answer the sheet (click Discard when it appears)
+//
+// Tier: every tier, **but only with a person watching**. Nothing in the process can answer the
+// sheet, so a plain run waits, times out and reports the failure that *is* this probe's shape
+// (the bulk fast pass: `FAIL cl2_unsaved: failed twice`, its transcript stopping after
+// `prompt.shown|1`). `scripts/probes.sh` skips this one by name rather than counting it as a red it
+// did not earn, exactly as it skips TH2. Run it by hand and answer the sheet:
+//
+//   DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl2_unsaved.gos 60
+//
 // **One window, one click.** The program installs a should-close guard, marks itself dirty and asks to
 // close *itself*, so the flow starts on its own and the only thing a person does is answer the sheet:
 // click **Discard**.

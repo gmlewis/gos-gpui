@@ -1,0 +1,118 @@
+// DW5 — the editor's own chrome: the gutter and its line numbers, the wrap
+// toggle, and the caret and selection colours.
+//
+// Tier: every tier.
+//
+// The row is what the widget paints that a box cannot be styled into. Four
+// editors, each with a different style string, and every claim is a read-back
+// through `gpui::editor_chrome`, which answers what the *widget* resolved —
+// defaults and all — rather than what the program wrote. A reader that echoed
+// the style string would pass a test of the style string and tell us nothing
+// about the widget, so the assertions that matter are the ones where the two
+// differ: the defaults an unstyled editor has, and a `theme:` value that must
+// come back resolved against this window's own colour table.
+//
+// The `softwrap` clause is a layout rather than a value, so its evidence is the
+// pixels in `DW5.after.png`; here it is checked only as the flag it is.
+//
+// Pass means every one of the four style strings resolved to the chrome the
+// widget's own defaults and token vocabulary say it should.
+
+use gpui
+use std::process
+
+// One claim: what the widget resolved for `field` on `key`, against what it
+// should be. Prints the failure and answers 1, or answers 0 in silence.
+fn check(key: String, field: String, want: String) -> i64 {
+    let got = gpui::editor_chrome(key, field)
+    if got != want {
+        println(f"FAIL DW5 {key} {field} reads \"{got}\", not \"{want}\"")
+        1
+    } else {
+        0
+    }
+}
+
+fn main() {
+    let outcome = gpui::run("dw5 - editor chrome", 560.0, 300.0, || {
+        let f = gpui::frame()
+
+        if f == 1 {
+            gpui::set_text("plain", "one\ntwo")
+            gpui::set_text("chrome", "one\ntwo\nthree")
+            gpui::set_text("bare", "one\ntwo")
+            gpui::set_text("themed", "one\ntwo")
+        }
+
+        // The elements are built on the frame after the text is set and the chrome is
+        // recorded when the element is built, so the first reading that can be trusted
+        // is the one after that.
+        if f >= 3 {
+            let mut failed = 0
+
+            // An editor with no chrome tokens at all answers the widget's defaults
+            // rather than empty strings. The gutter is off, so its width is zero and
+            // its numbers fall back to `text`; the caret and the selection are colours
+            // the widget always has, and they were not readable before this row.
+            failed = failed + check("plain", "gutter", "0")
+            failed = failed + check("plain", "gutterbg", "none")
+            failed = failed + check("plain", "gutterfg", "text")
+            failed = failed + check("plain", "wrap", "off")
+            failed = failed + check("plain", "caret", "#0000ffff")
+            failed = failed + check("plain", "sel", "#3311ff30")
+
+            // Every token, resolved: the width is a number, the rest are colours in the
+            // same `#rrggbbaa` form `gpui::default_color` answers in.
+            failed = failed + check("chrome", "gutter", "48")
+            failed = failed + check("chrome", "gutterbg", "#22000000")
+            failed = failed + check("chrome", "gutterfg", "#ffcc00ff")
+            failed = failed + check("chrome", "caret", "#ff0000ff")
+            failed = failed + check("chrome", "sel", "#00ff0080")
+            failed = failed + check("chrome", "wrap", "soft")
+
+            // A bare `gutter` is "on, at the default width": the flag carries meaning
+            // with no value at all, and the width it means is the constant the widget
+            // documents.
+            failed = failed + check("bare", "gutter", "34")
+            failed = failed + check("bare", "wrap", "off")
+
+            // A `theme:` value is **resolved**, not echoed. This is the assertion a
+            // string-echoing reader would fail: the caret below must come back as this
+            // window's border colour, a value the program never wrote.
+            let border = gpui::default_color("border")
+            let caret = gpui::editor_chrome("themed", "caret")
+            if caret != border {
+                println(f"FAIL DW5 caret=theme:border reads \"{caret}\", not this window's border \"{border}\"")
+                failed = failed + 1
+            }
+
+            // The two ways of asking about nothing. A key no editor is drawn on answers
+            // the defaults — the same reading `gpui::editor_text` gives for text, where
+            // "nothing is drawing it" is not a failure — and a field that is not one of
+            // the six answers empty, like `gpui::window_field`.
+            failed = failed + check("nosuchkey", "caret", "#0000ffff")
+            failed = failed + check("plain", "nosuchfield", "")
+
+            if failed == 0 {
+                println("OK DW5 four style strings resolved to the chrome the widget's defaults and tokens say — including a theme: colour answered resolved, not echoed")
+            }
+            gpui::quit()
+        }
+        gpui::animate()
+
+        let root = gpui::column("p=10 gap=8 size=full bg=#111111")
+        gpui::child(root, gpui::editor("plain", "type here", ""))
+        gpui::child(
+            root,
+            gpui::editor("chrome", "type here", "gutter=48 gutterbg=#22000000 gutterfg=#ffcc00ff caret=#ff0000ff sel=#00ff0080 softwrap"),
+        )
+        gpui::child(root, gpui::editor("bare", "type here", "gutter"))
+        gpui::child(root, gpui::editor("themed", "type here", "caret=theme:border"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL DW5 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

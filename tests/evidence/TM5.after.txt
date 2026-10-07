@@ -2,7 +2,7 @@ TM5 — text layout tokens: wrapping, clamping, tab stops, per-line spacing.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/tm5_text_layout.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/tm5_text_layout.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):
@@ -33,5 +33,5 @@ What makes it pass:
 tab-stop API — the evidence is in `TM5.before.txt` and in `## Unreachable`. The
 row is `tested` for the three parts that exist and says so for the fourth.
 
-Regression: `./scripts/regress` after the change — 27 examples, silent. That
+Regression: `./scripts/regress.sh` after the change — 27 examples, silent. That
 matters because `lh=` is used across the example set and `lhpx` shares its arm.

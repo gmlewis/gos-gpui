@@ -6,7 +6,7 @@
 //
 // **Running this opens a browser tab by design.** It is run only when its owner asks for it.
 //
-// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl8_open_url.gos 90`.
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl8_open_url.gos 90`.
 
 use gpui
 use std::process

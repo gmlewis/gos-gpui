@@ -9,7 +9,7 @@
 //
 // A file is left at `/tmp/gpui-cl5-pick-me.txt` to make the picking easy, but anything will do.
 //
-// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl5_open_files.gos 120`.
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl5_open_files.gos 120`.
 
 use gpui
 use std::process

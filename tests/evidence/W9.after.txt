@@ -3,7 +3,7 @@ W9 — a second (and third) concurrent top-level window, without re-entering
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=25 ./scripts/tiers tests/gui/w9_three_windows.gos
+    TIER_TIMEOUT=25 ./scripts/tiers.sh tests/gui/w9_three_windows.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):

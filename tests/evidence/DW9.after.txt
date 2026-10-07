@@ -6,7 +6,7 @@ AFTER THE WORK. Headless, and this row is one that headless mode can finish.
     test: 254 passed, 0 failed, 905 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
     across 62 file(s), 40 with no tests
 
-    $ ./scripts/tiers tests/dw9_observable_test.gos check
+    $ ./scripts/tiers.sh tests/dw9_observable_test.gos check
     === check ===
     check: ok (16 items typed)
 

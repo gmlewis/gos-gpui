@@ -6,7 +6,7 @@ AFTER THE WORK. Headless for the arithmetic; the element is read, not seen.
     test: 284 passed, 0 failed, 1005 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
     across 64 file(s), 40 with no tests
 
-    $ ./scripts/tiers tests/dw8_scrollbar_test.gos check
+    $ ./scripts/tiers.sh tests/dw8_scrollbar_test.gos check
     === check ===
     check: ok (16 items typed)
 

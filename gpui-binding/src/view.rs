@@ -76,7 +76,7 @@ pub fn clear_dispatch() {
 ///
 /// Releasing them here, while the app is still standing, is the fix. It is why
 /// a compiled build of any program containing a `gpui::list` used to end in a
-/// panic on stderr, which `scripts/tiers` is what caught. See the round log.
+/// panic on stderr, which `scripts/tiers.sh` is what caught. See the round log.
 pub fn release_retained() {
     SHOULD_CLOSE.with(|h| h.borrow_mut().clear());
     SHOULD_CLOSE_PLATFORM.with(|h| h.borrow_mut().clear());
@@ -1739,6 +1739,18 @@ fn focus_for(win: i64, id: &str, cx: &mut App) -> FocusHandle {
     })
 }
 
+/// Records a handle the caller already owns under `(win, id)`, so [`is_focused`] and [`focused`] can
+/// see it and a [`crate::store::Request::Focus`] naming `id` can reach it.
+///
+/// [`focus_for`] *builds* a handle for the elements that have none of their own; this is for the one
+/// element that does — the editor owns an entity with its own `cx.focus_handle()`, and registering a
+/// second, unrelated handle for it would report focus that the widget never has.
+pub(crate) fn register_focus(win: i64, id: &str, handle: FocusHandle) {
+    FOCUS.with(|f| {
+        f.borrow_mut().insert((win, id.to_string()), handle);
+    });
+}
+
 pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> AnyElement {
     // Every callback built below outlives this frame. Each one re-enters
     // through `window::with(win, ..)` so that the state, events and requests it
@@ -1749,7 +1761,24 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let children: Vec<AnyElement> = el
                 .children
                 .iter()
-                .filter_map(|h| snapshot(*h as i64))
+                .filter_map(|h| {
+                    let child = snapshot(*h as i64);
+                    if child.is_none() {
+                        // A parent named an element that is not in this window's
+                        // arena, so it will not be drawn and nothing else will say
+                        // so: the parent still paints its own background, and an
+                        // empty box is silent. This is the exact shape of the fault
+                        // that drew 02_data_table's rows as 42 tinted bars for days
+                        // — `arena()` keys on `window::current()`, and the list
+                        // rendered its rows outside the frame's window, so every
+                        // child handle missed. Naming it here is what makes that
+                        // class of fault visible to the suites.
+                        note_error(format!(
+                            "child handle {h} names no element in this window"
+                        ));
+                    }
+                    child
+                })
                 .map(|child| render(&child, window, cx, entity))
                 .collect();
             let base = style::apply(div(), &el.style);
@@ -2215,15 +2244,36 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             // it renders itself and the handler goes on a wrapper around it.
             // No program chains a child after `.on_mouse` on one of those, so
             // that wrapper has never had to be the receiver's box.
+            //
+            // A div can report only its *children's* bounds, so the box the
+            // pointer is measured against has to be one of them. The folded
+            // wrapper therefore opens with the same child the slider opens
+            // with: an out-of-flow, unpainted, full-size strip that *is* the
+            // element's box. `report_pointer` subtracts its origin, and without
+            // it the first child here would be the first thing *inside* the
+            // element — 02's scrollbar thumb — so `thumb.y` would arrive
+            // relative to the thumb rather than to the strip it slides on, and
+            // an element with no children at all (13's canvas, 26's drag box)
+            // would report window coordinates. It moves nothing, paints
+            // nothing, and takes no click: a div with no listener inserts no
+            // hitbox.
             let receiver = snapshot(*child as i64);
             let folds = matches!(receiver.as_ref().map(|c| &c.kind), Some(Kind::Plain));
             let bounds_key = id.clone();
             let mut wrapper = match receiver {
                 Some(receiver) if folds => {
-                    let mut children: Vec<AnyElement> = Vec::new();
+                    let mut children: Vec<AnyElement> = vec![div()
+                        .absolute()
+                        .left(px(0.0))
+                        .top(px(0.0))
+                        .size_full()
+                        .into_any_element()];
                     for handle in receiver.children.iter().chain(el.children.iter()) {
-                        if let Some(child) = snapshot(*handle as i64) {
-                            children.push(render(&child, window, cx, entity));
+                        match snapshot(*handle as i64) {
+                            Some(child) => children.push(render(&child, window, cx, entity)),
+                            None => note_error(format!(
+                                "child handle {handle} names no element in this window"
+                            )),
                         }
                     }
                     let base = style::apply(div(), &receiver.style)
@@ -2310,7 +2360,10 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
         }
 
         Kind::Editor { key, placeholder } => {
-            let field = editor::editor_element(win, key, placeholder, window, cx);
+            // The style string goes both ways: it is applied to the box the editor sits in, as it
+            // always was, and it is handed to the widget for the chrome tokens that colour what the
+            // widget paints itself — the caret, the selection, and the line-number gutter.
+            let field = editor::editor_element(win, key, placeholder, &el.style, window, cx);
             style::apply(div(), &el.style).child(field).into_any_element()
         }
 

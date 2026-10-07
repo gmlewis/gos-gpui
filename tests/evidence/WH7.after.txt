@@ -16,7 +16,7 @@ The behavioural red is headless, and it is a diagnostic rather than a timeout:
 And the probe the other rows share, on all five tiers (`check` prints `check: ok
 (1 items typed)`; each of the other four exits 0):
 
-    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh_window_options.gos
+    TIER_TIMEOUT=45 ./scripts/tiers.sh tests/gui/wh_window_options.gos
     OK WH1 WH3 WH5 WH7 WH8 the window answers for its minimum size, app id, kind and tab group; the scale factor is 1; the vocabulary knows its own keys and refuses minsize=420, kind=dialog and nosuch=1
 
 The loud half, which is the half the row asks for and which no other check here can

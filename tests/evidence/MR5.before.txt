@@ -10,7 +10,7 @@ because it reads back the handles *this* crate keeps. The fix tracks a handle of
 With that fix reverted, the probe's decisive step fails:
 
     $ # view.rs: "focusable" => el.focusable()   (MR5's fix reverted)
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mr5_focus.gos 45
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/mr5_focus.gos 45
     MR5 after 7 focus_next: "" holds focus
     MR5 after 8 focus_next: "" holds focus
     MR5 after gpui::focus("mr5.a"): gpui::focused() says ""

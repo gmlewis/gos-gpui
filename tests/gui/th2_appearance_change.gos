@@ -1,8 +1,8 @@
 // TH2 — observe appearance changes while running.
 //
-// needs: scripts/appearance-toggle
+// needs: scripts/appearance-toggle.sh
 //
-// Tier: every tier, **run under `scripts/appearance-toggle`**. This probe cannot be
+// Tier: every tier, **run under `scripts/appearance-toggle.sh`**. This probe cannot be
 // run plainly: it waits for the operating system to change the appearance, and
 // nothing inside the process can cause that — gpui has no public appearance setter,
 // and registering an observer does not replay the current value
@@ -41,7 +41,7 @@ fn main() {
             gpui::set_text("th2.first", gpui::appearance())
         }
 
-        // About ten seconds: enough for `scripts/appearance-toggle` to flip the
+        // About ten seconds: enough for `scripts/appearance-toggle.sh` to flip the
         // system appearance and for the platform to deliver the notification.
         if f >= 600 {
             let first = gpui::state_text("th2.first", "")

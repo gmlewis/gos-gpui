@@ -30,7 +30,7 @@ THE WINDOW HALF. The headless test above proves the store is keyed by window; it
 cannot prove that the *current* window is resolved correctly while frames are
 running. That is `tests/gui/w2_window_state.gos`:
 
-    TIER_TIMEOUT=25 ./scripts/tiers tests/gui/w2_window_state.gos
+    TIER_TIMEOUT=25 ./scripts/tiers.sh tests/gui/w2_window_state.gos
 
 Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`;
 each of the other four exits 0 with no stderr):

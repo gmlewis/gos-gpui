@@ -2,7 +2,7 @@ W1 — identify the window being rendered, and read it from a view callback.
 
 AFTER THE WORK. Command, in this tree:
 
-    TIER_TIMEOUT=25 ./scripts/tiers tests/gui/w1_window_id.gos
+    TIER_TIMEOUT=25 ./scripts/tiers.sh tests/gui/w1_window_id.gos
 
 Every tier, transcribed:
 

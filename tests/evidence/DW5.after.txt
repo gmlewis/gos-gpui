@@ -1,0 +1,188 @@
+DW5 — Editor chrome: gutter and line numbers, wrap toggle, selection and caret colors.
+
+AFTER THE WORK. Three clauses, three instruments: a reader for what the widget
+*resolved*, a headless test for how the tokens are spelled, and pixels for what
+it *drew*.
+
+## 1. What the widget resolved — `tests/gui/dw5_editor_chrome.gos`
+
+    DSH_ALLOW_WINDOWS=1 TIER_TIMEOUT=90 ./scripts/tiers.sh tests/gui/dw5_editor_chrome.gos
+
+Green on all five tiers (`check` prints `check: ok (2 items typed)`; each of the
+other four exits 0 with no stderr):
+
+    OK DW5 four style strings resolved to the chrome the widget's defaults and tokens say
+       — including a theme: colour answered resolved, not echoed
+
+The reader is **`gpui::editor_chrome(key, field)`**, and it answers what the
+*widget* holds — the chrome it will paint with — not what the program wrote. A
+reader that echoed the style string would pass a test of the style string and say
+nothing about the widget, so the assertions that carry the row are the ones where
+the two differ. Four editors, one style string each:
+
+| key | style string |
+|---|---|
+| `plain` | *(none)* |
+| `chrome` | `gutter=48 gutterbg=#22000000 gutterfg=#ffcc00ff caret=#ff0000ff sel=#00ff0080 softwrap` |
+| `bare` | `gutter` |
+| `themed` | `caret=theme:border` |
+
+and what each resolved to:
+
+  * **The defaults an unstyled editor has.** `gutter` `0`, `gutterbg` `none`,
+    `gutterfg` `text`, `wrap` `off`, `caret` `#0000ffff`, `sel` `#3311ff30`. The
+    caret and the selection are colours the widget *always* has — they were not
+    readable before this row, and these are the two GPUI chose.
+  * **Every token, resolved.** `48`, `#22000000`, `#ffcc00ff`, `#ff0000ff`,
+    `#00ff0080`, `soft`.
+  * **A bare `gutter`** is "on, at the default width": `34`, the constant the
+    widget documents. The flag carries meaning with no value at all.
+  * **A `theme:` value is resolved, not echoed.** `caret=theme:border` comes back
+    equal to `gpui::default_color("border")` — a value the program never wrote,
+    read out of this window's own colour table, so a program can match its own
+    borders to the caret without knowing which theme is in force.
+  * **The two ways of asking about nothing.** A key no editor is drawn on answers
+    the defaults (`#0000ffff`), the same reading `gpui::editor_text` gives for
+    text — "nothing is drawing it" is not a failure — and a field that is not one
+    of the six answers empty, like `gpui::window_field`.
+
+**Sensitivity, shown rather than assumed.** `Chrome::read` was cut down to ignore
+the token's number —
+
+    - chrome.gutter = px(style::token_number(spec, "gutter").unwrap_or(DEFAULT_GUTTER_WIDTH));
+    + chrome.gutter = px(DEFAULT_GUTTER_WIDTH);   // DELIBERATE BREAK
+
+— and the probe failed on the width:
+
+    FAIL DW5 chrome gutter reads "34", not "48"
+
+restored immediately, and the five-tier run above is against the restored tree.
+
+## 2. How the tokens are spelled — `tests/dw5_editor_chrome_test.gos`
+
+Headless, `gos test tests`, four tests. `unknown_style_tokens` has been there
+since TM5, so the red for these is a wrong answer rather than an unresolved name.
+
+  * the six tokens are known — `gutter`, `softwrap`, `caret=`, `sel=`,
+    `gutterbg=`, `gutterfg=`;
+  * `gutter=48` and a bare `gutter` are both fine and **`gutter=wide` is refused**.
+    That one is not the plain key check's business: `gutter` *is* a known key, so a
+    value that is not a number is invisible to it, and a gutter that silently
+    became zero is exactly the failure the report exists to prevent. It has a
+    check of its own (`style::unknown_number_value`).
+  * a misspelt chrome token — `caretcolour=` — is refused, like any other;
+  * the tokens are part of the **one** style vocabulary rather than a second one,
+    so `caret=` is not refused on a box. `thumb` set the precedent: a token that is
+    meaningful to one widget, known everywhere, so a program can hand one style
+    string to two elements.
+
+`gos test tests`: **347 passed, 0 failed**, up from round 84's 335 — these four
+tests and their twelve assertions.
+
+## 3. What it drew — three captures, measured
+
+Each is the window's own pixels (`screencapture -x -o -l <window number>`, found
+by asking `CGWindowListCopyWindowInfo` for the windows of the running process's own
+pid), held open by a temporary harness since deleted. The window is 460×340 plus a
+32 px titlebar; the column's padding is `p=10`, so the text origin is x 10.
+
+### The gutter and the line numbers — `DW5.after.png`, `DW5.nowrap.png`
+
+One document, one style string, and the only difference between the two captures
+is the word `softwrap`:
+
+    one
+    two
+    three
+    // the fourth line is deliberately much longer than the box it is drawn in
+
+    gutter gutterbg=#202020ff gutterfg=#ffcc00ff caret=#ff0000ff [softwrap]
+
+| | `softwrap` off | `softwrap` on |
+|---|---|---|
+| gutter band | x 10..43, **width 34** | x 10..43, **width 34** |
+| band height | y 42..145, **104** | y 42..171, **130** |
+| text rows | **4** | **5** |
+| the long line | one row, x 45..**457** | two rows: x 45..420 and x 45..163 |
+| numbers drawn | **4** | **4** |
+| number glyphs | x 29..36, right-aligned, `#cb9a26` | same |
+
+Read off that:
+
+  * **The gutter is a band of the width asked for.** 34 px, the default, at the
+    element's left edge; its background is `gutterbg`'s `#202020ff` (rendered
+    `#1d1d1d` — the capture is colour-managed, so every value below is the
+    rendered one) against the box's `#121212`.
+  * **Four numbers, right-aligned, 7 px in from the band's right edge**, and — the
+    part that matters — **four of them in both captures, though the second has five
+    rows**. A number stands against the *line* it numbers, so a wrapped
+    continuation row has none: the numbering is the logical lines, not the drawn
+    rows.
+  * **The line height is 26 px** and the rows are laid out at a 26 px pitch in both
+    (measured: 52, 78, 102, 127, 153).
+  * **The wrap toggle.** Off: four rows, band 104 = 4 × 26, and the long line runs
+    x 45..457 — *past the box's right edge at 450*, to the window's edge. On: five
+    rows, band 130 = 5 × 26, and the long line is cut at a word boundary into
+    376 px and then `box it is drawn in`. Same document, same box, one token.
+
+### The selection and the caret — `DW5.selection.png`
+
+A 420×200 window, the document `one\ntwo\nthree`, and the style string
+`caret=#ff0000ff sel=#00ff00ff`. The selection is made the only way a probe can
+make one — **`gpui::send_key`**, `home` then `shift-right` twice — and the capture
+shows exactly what the tokens asked for:
+
+| | pixels | colour |
+|---|---|---|
+| the selection | x 10..24, y 94..119 — **15 × 26** | `#00ff3a` |
+| the caret | x 25..26, y 94..119 — **2 × 26** | `#ff0009` |
+
+Both on the third row, the selection over `th` with the caret at its right edge —
+`sel` as a block under the glyphs and `caret` as a 2 px bar at the offset, not one
+substituted for the other.
+
+**A keystroke lesson, since it will come up again.** `gpui::send_key` takes gpui's
+own grammar — `"shift-right"`, hyphen — and the first attempt here used `"shift+down"`,
+which typed the literal characters `shift+downshift+right` into the document. And the
+caret **starts at the end of the document**, so a run of plain `right` keys against
+`one\ntwo\nthree` moves nothing at all and reads exactly like a broken shift. Both
+were settled by a throwaway program that typed one character after the selection and
+read the text back: `["home","right","right","shift-right","X"]` over `abcdefgh` gives
+`abXdefgh`, which is the selection having been *replaced* — the only reading that
+cannot be confused with a plain move.
+
+## Two defects the captures found, and the fix
+
+Neither was visible from the code or from the reader, which is why the row's
+evidence is pixels. Both were in `rows_for_line`, the one function `request_layout`
+and `prepaint` share so the box the element asks for and the rows it draws cannot
+disagree.
+
+  1. **Every line after the first wrapped against the wrong origin.** The shaped
+     line `measured` is indexed from the line's *own* first character, and the
+     loop fed it document offsets: right for the first line (whose start is zero)
+     and wrong for every line after it. Measured, not reasoned — the capture showed
+     `one` broken into `on` and `e` in a 406 px box.
+  2. **A line that fitted was cut in two anyway.** The word break was applied to
+     every row, including the row that held the rest of the line: with `softwrap`
+     on, a 376 px line against a 406 px text area came out as 361 px and `in`. The
+     break is for the row that could not hold everything, not for every row.
+
+Both are in the fix column of the register row.
+
+## What is not claimed
+
+  * **The mouse.** Drag-select, double-click-for-word and triple-click-for-line
+    are `DW4`, and the click still cannot be synthesized while `DispatchEventResult`
+    is `pub(crate)`.
+  * **IME.** `DW3`, and it needs a person typing: composition arrives from
+    `setMarkedText:`, not from a key event.
+  * **The gutter's own arithmetic as a *program-facing* number.** The gutter width
+    is readable as a token (`gutter`), and the numbers are the logical lines — but a
+    program cannot ask which row an offset was *drawn* on, and nothing here says the
+    caret's column arithmetic is row-aware. It is not: with wrapping on, `down` is
+    still a move by *line*, so the caret does not step through a wrapped line's
+    second row. That is a deliberate line and it is written down rather than
+    measured.
+  * **The caret seen blinking.** One capture catches it on and another off; the red
+    bar above is the on half, and the caret's blink is `DW1`'s and unchanged.

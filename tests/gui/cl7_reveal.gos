@@ -12,7 +12,7 @@
 // **Running this puts windows on the screen by design** — a Finder window, then whichever application owns
 // `.txt`. It is run only when its owner asks for it.
 //
-// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/cl7_reveal.gos 90`.
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/cl7_reveal.gos 90`.
 
 use gpui
 use std::process

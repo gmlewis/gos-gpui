@@ -4,7 +4,7 @@
 // is the point of the row — and which is also why it is the one check in this register
 // that still runs while the screen is locked.
 //
-// Prints its verdict and exits 0. `scripts/tiers` cannot drive it (it refuses while the
+// Prints its verdict and exits 0. `scripts/tiers.sh` cannot drive it (it refuses while the
 // screen is locked, and it is built for GUI programs anyway); the three tiers are run by
 // hand and recorded in `tests/evidence/BG7.after.txt`.
 

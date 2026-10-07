@@ -2,7 +2,7 @@ MR5 — focus: a `focusable`-only element must be visible to `is_focused`, and t
 
 AFTER THE WORK. Two questions, two answers, and the row is one of them.
 
-    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once tests/gui/mr5_focus.gos 45
+    $ DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/mr5_focus.gos 45
     MR5 step 1: neither button is focused before the tab order moves
     MR5 after 1 focus_next: "" holds focus
     ... eight presses, every one "" ...
