@@ -1,0 +1,59 @@
+BG3 — reporting progress from background work.
+
+BEFORE THE WORK.
+
+Three reds, the row's own clause reached through a plausible intermediate, and one break per
+claim.
+
+**1. The probe against HEAD's binding.**
+
+`gpui::task_progress` does not exist at HEAD, and an unbound binding function's failure mode is
+not a diagnostic:
+
+    $ timeout -k 5 40 gos run --main-thread tests/gui/bg3_progress.gos
+    exit 124, no output
+
+What was absent: `gpui::task` reports twice, at the start and at the end — nothing at all while
+the work runs. A program with a progress bar had nothing to put in it, so the bar jumped from
+empty to full, which for a job that takes ten seconds is the difference between "working" and
+"hung".
+
+**2. The behavioural red.** The probe's first run *passed*, which is a finding in itself and is
+recorded here rather than tidied away:
+
+    OK BG3 the work reported its progress 5 times without ever going backwards, ended at 1 with
+    its result beside it, and the cancelled work stopped reporting at 0
+
+The last clause — that cancelling stops the reporting — was **vacuous**. The cancelled task was
+cancelled 50ms in, one fiftieth of a second before its first report was due, so it had reported
+nothing, and "it stopped at 0" was true of a job that had never started reporting. The cancel
+was moved to 200ms, so the cancelled work has reported several times before it is cancelled, and
+a fourth assertion was added so that this can never pass vacuously again:
+
+    } else if gone_a <= 0.0 {
+        println("FAIL BG3 the cancelled work had reported no progress at all before it was
+        cancelled, so the freeze below would prove nothing")
+
+That is a check on the check, and it exists because the first version of this probe proved
+nothing while reporting `OK`.
+
+**3. Three breaks, one per assertion.** Each was applied alone:
+
+  * **progress never reported** — the reporting step made ten seconds rather than fifty
+    milliseconds:
+
+        FAIL BG3 the work reported its progress 0 time(s) while it ran, so there was nothing to
+        watch
+
+  * **progress that goes backwards** — the fraction inverted:
+
+        FAIL BG3 the progress of running work went backwards
+
+  * **a reporter that does not notice being retired** — the generation check removed:
+
+        FAIL BG3 cancelled work went on reporting progress: 0.5176747233333333 then
+        0.8632733333333333
+
+The third is the row's second half and the reason this is not just "a number that goes up": a
+cancelled job that went on reporting would be drawing a bar for something that is never going
+to happen.

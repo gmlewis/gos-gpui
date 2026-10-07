@@ -1,0 +1,119 @@
+// DW2 — undo/redo with coalescing.
+//
+// Headless: `gos test tests`. The row is the editor widget's undo, whose obstacle is that `cmd-z`
+// falls through the editor's key match (`editor.rs:414-433` — the handler knows `backspace`, the
+// arrows, `cmd-a/c/x/v`, `home`, `end` and nothing else).
+//
+// It can be checked without a window because of something the editor already does: **the store is
+// the document**. `changed()` writes the editor's content under its key and raises
+// `"<key>|change"`, and `adopt_program_text()` takes on whatever the program wrote there when it
+// differs. So a history over the *store's* text is a history over the document, and an undo is a
+// write the editor adopts on its next frame.
+//
+// It is also a capability for a program with no editor at all: `ui::input` keeps its value in the
+// store under `key`, so the same watch gives it undo.
+//
+// Pass means a run of typing is **one** step, a run of deleting is another, an edit that is not
+// contiguous with the last one starts a third, redo restores what undo took, and a new edit throws
+// the redo away — which is what every editor does and what coalescing is for.
+
+use gpui
+
+#[test]
+fn a_run_of_typing_is_one_step() {
+    gpui::set_text("dw2.a", "")
+    gpui::history_watch("dw2.a")
+
+    gpui::set_text("dw2.a", "a")
+    gpui::set_text("dw2.a", "ab")
+    gpui::set_text("dw2.a", "abc")
+    assert(gpui::history_depth("dw2.a") == 1, f"three keystrokes, one step: {gpui::history_depth("dw2.a")}")
+
+    assert(gpui::history_undo("dw2.a"), "there is a step to undo")
+    assert(
+        gpui::state_text("dw2.a", "") == "",
+        f"which takes the whole run back: {gpui::state_text("dw2.a", "")}",
+    )
+    assert(gpui::history_redo("dw2.a"), "and redo puts it back")
+    assert(gpui::state_text("dw2.a", "") == "abc", "all of it, not one keystroke")
+
+    let _ = gpui::history_unwatch("dw2.a")
+}
+
+#[test]
+fn a_run_of_deleting_is_another_step() {
+    gpui::set_text("dw2.b", "")
+    gpui::history_watch("dw2.b")
+    gpui::set_text("dw2.b", "a")
+    gpui::set_text("dw2.b", "ab")
+    gpui::set_text("dw2.b", "abc")
+    gpui::set_text("dw2.b", "ab")
+    gpui::set_text("dw2.b", "a")
+    assert(gpui::history_depth("dw2.b") == 2, f"typing, then deleting: {gpui::history_depth("dw2.b")}")
+
+    assert(gpui::history_undo("dw2.b"), "undo the deletions")
+    assert(gpui::state_text("dw2.b", "") == "abc", f"back to the whole word: {gpui::state_text("dw2.b", "")}")
+    assert(gpui::history_undo("dw2.b"), "undo the typing")
+    assert(gpui::state_text("dw2.b", "") == "", "and back to nothing")
+    assert(gpui::history_depth("dw2.b") == 0, f"both steps are undone: {gpui::history_depth("dw2.b")}")
+    assert(!gpui::history_can_undo("dw2.b"), "so there is nothing left to undo")
+
+    let _ = gpui::history_unwatch("dw2.b")
+}
+
+#[test]
+fn an_edit_that_breaks_the_run_starts_a_step() {
+    gpui::set_text("dw2.c", "")
+    gpui::history_watch("dw2.c")
+    gpui::set_text("dw2.c", "hello")
+    // Not contiguous with the text the last revision left: a different place entirely.
+    gpui::set_text("dw2.c", "HELLO")
+    assert(gpui::history_depth("dw2.c") == 2, f"an insertion, then a replacement: {gpui::history_depth("dw2.c")}")
+
+    gpui::history_undo("dw2.c")
+    assert(gpui::state_text("dw2.c", "") == "hello", "the replacement comes off on its own")
+    let _ = gpui::history_unwatch("dw2.c")
+}
+
+#[test]
+fn an_edit_after_an_undo_throws_the_redo_away() {
+    gpui::set_text("dw2.d", "")
+    gpui::history_watch("dw2.d")
+    gpui::set_text("dw2.d", "first")
+    assert(gpui::history_undo("dw2.d"), "undone")
+    assert(gpui::history_can_redo("dw2.d"), "so it can be redone")
+
+    gpui::set_text("dw2.d", "other")
+    assert(!gpui::history_can_redo("dw2.d"), "but a new edit means it cannot — there is no line to go forward to")
+
+    // And the branch that was abandoned is gone, not merely unreachable: undoing the new edit
+    // lands before it, not on it.
+    assert(gpui::history_undo("dw2.d"), "the new edit can be undone")
+    assert(
+        gpui::state_text("dw2.d", "") == "",
+        f"straight back to before it, not through the abandoned branch: {gpui::state_text("dw2.d", "")}",
+    )
+
+    let _ = gpui::history_unwatch("dw2.d")
+}
+
+#[test]
+fn an_unwatched_key_keeps_no_history() {
+    gpui::set_text("dw2.e", "")
+    gpui::set_text("dw2.e", "typed")
+    assert(gpui::history_depth("dw2.e") == 0, "nothing was watching")
+    assert(!gpui::history_undo("dw2.e"), "so there is nothing to undo")
+    assert(gpui::state_text("dw2.e", "") == "typed", "and the text is untouched")
+}
+
+#[test]
+fn unwatching_stops_recording() {
+    gpui::set_text("dw2.f", "")
+    gpui::history_watch("dw2.f")
+    gpui::set_text("dw2.f", "watched")
+    assert(gpui::history_depth("dw2.f") == 1, "one step while watching")
+    assert(gpui::history_unwatch("dw2.f"), "and now nothing is")
+    gpui::set_text("dw2.f", "watched more")
+    assert(gpui::history_depth("dw2.f") == 0, f"so nothing more is recorded: {gpui::history_depth("dw2.f")}")
+    assert(gpui::state_text("dw2.f", "") == "watched more", "the text is still written")
+}

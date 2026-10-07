@@ -1,0 +1,44 @@
+// WH7 — the window-option vocabulary, checked without a window.
+//
+// Headless: `gos test tests`. A window option is *parsed* long before it is
+// applied, and the parse is the part a program can be wrong about: it builds an
+// option string out of data and needs to know whether this binding will
+// understand it. So the parse is tested here, and the window it produces is
+// tested in `tests/gui/wh_window_options.gos`.
+//
+// Pass means every key the vocabulary has is known, a misspelt key and a key
+// whose value means nothing here are both named, and the order of the refusals
+// is the order of the tokens.
+
+use gpui
+
+#[test]
+fn every_window_option_key_is_known() {
+    let whole = gpui::unknown_window_tokens("minsize=420,240 appid=com.example tabbing=t start=maximized display=0 place=center background=blur titlebar=none show=false movable=false minimizable=false focus=false resizable=false float=true maximized=true fullscreen=true kind=popup")
+    assert(whole.len() == 0, f"the whole vocabulary should be known, but {whole.len()} tokens were refused")
+}
+
+#[test]
+fn a_misspelt_or_meaningless_option_is_refused() {
+    let bad = gpui::unknown_window_tokens("minsize=420 kind=dialog nosuch=1")
+    assert(bad.len() == 3, f"three of these four tokens are not this vocabulary's, but {bad.len()} were refused")
+    assert(bad[0] == "minsize=420", "a minimum size needs a width *and* a height")
+    assert(bad[1] == "kind=dialog", "there is no dialog kind — only normal, popup and floating")
+    assert(bad[2] == "nosuch=1", "a key nothing here has")
+}
+
+#[test]
+fn a_minimum_size_is_a_pair() {
+    assert(gpui::unknown_window_tokens("minsize=420").len() == 1, "half a size is not a size")
+    assert(gpui::unknown_window_tokens("minsize=420,240").len() == 0, "a pair is a size")
+    assert(gpui::unknown_window_tokens("minsize=wide,240").len() == 1, "a size is numbers")
+}
+
+#[test]
+fn the_option_names_are_not_style_tokens() {
+    // The two vocabularies are separate lists on purpose: a window option is
+    // not a styling token and vice versa. A style carrying `minsize=` is a
+    // typo, and saying so is the point of the style language's own reader.
+    assert(gpui::unknown_style_tokens("minsize=420,240").len() == 1, "minsize is not a style token")
+    assert(gpui::unknown_window_tokens("p=16").len() == 1, "p is not a window option")
+}

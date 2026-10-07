@@ -1,0 +1,78 @@
+TH5 — colour-scheme-aware style tokens: `theme:<name>` as a style value.
+
+AFTER THE WORK. Both halves, every tier.
+
+Headless — `env -u GOSSAMER_IN_RUNNER gos test tests`:
+
+    test: 158 passed, 0 failed, 567 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 47 file(s), 32 with no tests
+
+The GUI probe, on every tier, byte-identical:
+
+    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/th5_theme_tokens.gos
+    === check ===
+    check: ok (1 items typed)
+
+    === run (interpreter) (exit 0) ===
+    OK TH5 bg=theme:background agreed with the table (#222222ff), followed it to #ffffffff when the "light" theme was chosen, left #ff0000 alone, and refused a name the table does not have
+
+    === run --no-jit (exit 0) ===
+    OK TH5 bg=theme:background agreed with the table (#222222ff), followed it to #ffffffff when the "light" theme was chosen, left #ff0000 alone, and refused a name the table does not have
+
+    === build (debug) ===
+    build: 26771432B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+    === build -> ./target/debug/learn-gpui (exit 0) ===
+    OK TH5 bg=theme:background agreed with the table (#222222ff), followed it to #ffffffff when the "light" theme was chosen, left #ff0000 alone, and refused a name the table does not have
+
+    === build --release ===
+    build: 7570616B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+    === release -> ./target/release/learn-gpui (exit 0) ===
+    OK TH5 bg=theme:background agreed with the table (#222222ff), followed it to #ffffffff when the "light" theme was chosen, left #ff0000 alone, and refused a name the table does not have
+
+The duplicate-symbol `ld` warnings on both builds are the toolchain's and predate this
+run; every run transcript is silent but for `OK`.
+
+**The check is sensitive to the claim that matters** — that the token *follows the
+scheme*, which the historical transcript cannot show, because at HEAD there was no
+scheme for it to follow. The frame's colour table was made the platform's rather than
+the frame's (ignoring both the chosen theme and the per-window overrides), nothing else
+changed:
+
+    FAIL TH5 after choosing the "light" theme, bg=theme:background resolves to #222222ff
+    while the table says #ffffffff, so the token does not follow the scheme
+
+which is the second assertion, and the one that makes this a scheme-aware token rather
+than a convenience. Restored before the tier run above, and the `check` tier recompiles
+the binding, which is what proves the restore took.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `style.rs` — `theme:<name>` as a colour value, resolved against a per-window table
+    this module is *handed* rather than one it goes and reads (`THEMED` +
+    `set_colour_table`), so the language stays where it is and the window stays where it
+    is. `is_theme_name` is the vocabulary — the eight fields — and `unknown_tokens` now
+    reports a `theme:` value whose name is not one of them, which is the one thing the
+    language could not see before: it had only ever checked *keys*.
+  * `view.rs` — `colour_fields`, one list of the eight platform colours with two
+    renderings: `named_colors` (the hex strings `gpui::default_color` answers with) and
+    `colour_table` (the `Hsla` values the style language resolves against). One list, so
+    neither can gain a ninth without the other, and `gpui::colour_names` is the same
+    eight. `begin_frame` fills the table from the *frame's* colours — after TH3's theme
+    choice and TH4's overrides — so the token and the reader cannot disagree. `hex` is
+    now one function, and `resolve_colour` the reader over the same call the element path
+    makes.
+  * `lib.rs` — `gpui::resolve_colour(spec)`.
+  * `README.md` — the Paint section documents `theme:<name>` beside the literal forms.
+
+Residual doubt. **The element path is exercised but not seen.** The probe's root carries
+`bg=theme:background` and its label `color=theme:text`, so the same resolution runs on a
+drawn element and a mistake there would be an error card or an unknown-token banner — but
+what it *looks like* is a pixel question, and this machine cannot capture one (see "Pixel
+verification is unavailable on this machine"). That is TM2's element-path doubt, one row
+along. The table is per window and replaced every frame, so a token in a window whose
+frame has not started resolves black; that is unreachable from a program, since the only
+way to name a token is from inside a frame, but it is the fallback and it is silent.
+`grad=theme:a,theme:b` goes through the same `colour()` and is not separately probed. And
+the vocabulary is a second list of the eight names, checked against `gpui::colour_names`
+by a headless case rather than derived from it — the platform offers no way to enumerate
+its fields from Rust, so the two are tied by a test rather than by construction.

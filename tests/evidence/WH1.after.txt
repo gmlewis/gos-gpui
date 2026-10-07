@@ -1,0 +1,22 @@
+WH1 — minimum window size.
+
+AFTER THE WORK. In this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh_window_options.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`,
+and each of the other four exits 0 with no stderr but the toolchain duplicate-symbol
+link warnings every build in this project prints):
+
+    OK WH1 WH3 WH5 WH7 WH8 the window answers for its minimum size, app id, kind and tab group; the scale factor is 1; the vocabulary knows its own keys and refuses minsize=420, kind=dialog and nosuch=1
+
+What is new: `gpui-binding/src/options.rs` (new) is one parse of the window-option
+vocabulary, shared by `run`, `run_with` and `open_window`; `app.rs` no longer has a
+parser of its own for either; and `lib.rs` adds the reader `gpui::window_option(name)`,
+which answers from the `WindowOptions` struct gpui was handed — `remember` is called
+with the struct `build` returned, not with the spec, so a field dropped between the
+parse and the literal is visible to this check.
+
+Neither reader can observe that the window manager *enforces* the minimum: nothing
+in gpui reads `NSWindow.contentMinSize` back, and a programmatic `resize_window` is
+not constrained by it. That half belongs in the row's `residual doubt`, not here.

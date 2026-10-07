@@ -1,0 +1,81 @@
+// TH5 — colour-scheme-aware style tokens: `theme:<name>` as a style value.
+//
+// Tier: every tier.
+//
+// The resolution half. TH3 let a program *choose* which palette the named table answers
+// from; this lets a style string *name* the table, so `bg=theme:background` draws with
+// whatever the current scheme says instead of a hex value the program read out of
+// `gpui::default_color` and pasted in.
+//
+// Pass means three things, and the second is the one that makes it a scheme-aware token
+// rather than a convenience: the value agrees with the table before any theme is chosen;
+// it follows the table when the theme changes, so the same style string draws light on a
+// dark desktop when asked to; and an ordinary literal is untouched by all of it. A fourth:
+// a name the table does not have is refused rather than drawn as black.
+//
+// The element path is exercised here — the root itself carries `bg=theme:background` —
+// but what it *looks like* is a pixel question, and this machine cannot capture one (see
+// "Pixel verification is unavailable on this machine"). What is checked is the resolution
+// the element path goes through, which is the same call.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("th5 - theme tokens", 380.0, 220.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            let now = gpui::appearance()
+            let other = if now == "dark" { "light" } else { "dark" }
+            gpui::set_text("th5.other", other)
+            // Before any theme is chosen: the token and the table must agree.
+            gpui::set_text("th5.token_before", gpui::resolve_colour("theme:background"))
+            gpui::set_text("th5.table_before", gpui::default_color("background"))
+            gpui::set_text("th5.literal", gpui::resolve_colour("#ff0000"))
+        }
+        if f == 4 {
+            gpui::set_theme(gpui::state_text("th5.other", "light"))
+        }
+
+        if f >= 10 {
+            let other = gpui::state_text("th5.other", "")
+            let token_before = gpui::state_text("th5.token_before", "")
+            let table_before = gpui::state_text("th5.table_before", "")
+            let literal = gpui::state_text("th5.literal", "")
+            let resolved = gpui::resolve_colour("theme:background")
+            let expected = gpui::default_color_for(other, "background")
+            let refused = gpui::unknown_style_tokens("bg=theme:nosuch")
+
+            // One exclusive chain ending in the verdict: `gpui::quit()` asks the
+            // app to stop, it does not abort the callback that called it.
+            if token_before != table_before {
+                println(f"FAIL TH5 before any theme was chosen, bg=theme:background resolved to {token_before} while the table says {table_before}")
+                gpui::quit()
+            } else if resolved != expected {
+                println(f"FAIL TH5 after choosing the \"{other}\" theme, bg=theme:background resolves to {resolved} while the table says {expected}, so the token does not follow the scheme")
+                gpui::quit()
+            } else if literal != "#ff0000ff" {
+                println(f"FAIL TH5 an ordinary literal changed under the theme: #ff0000 resolved to {literal}")
+                gpui::quit()
+            } else if refused.len() != 1 {
+                println(f"FAIL TH5 a name the table does not have was accepted: bg=theme:nosuch reported as {refused}")
+                gpui::quit()
+            } else {
+                println(f"OK TH5 bg=theme:background agreed with the table ({table_before}), followed it to {resolved} when the \"{other}\" theme was chosen, left #ff0000 alone, and refused a name the table does not have")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        // The element path, exercised for real: the same resolution, on a drawn element.
+        let root = gpui::column("p=8 size=full bg=theme:background")
+        gpui::child(root, gpui::text("th5", "color=theme:text"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL TH5 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

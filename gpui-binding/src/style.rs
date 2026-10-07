@@ -13,7 +13,12 @@
 //! than silent.
 
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use gpui::{hsla, px, relative, rgb, rgba, FontWeight, Hsla, StyleRefinement, Styled};
+
+use crate::window;
 
 /// Applies every token in `spec` to `el`, in order.
 pub fn apply<T: Styled>(mut el: T, spec: &str) -> T {
@@ -48,12 +53,40 @@ pub fn tokens(spec: &str) -> Vec<(String, Option<String>)> {
 pub fn unknown_tokens(spec: &str) -> Vec<String> {
     tokens(spec)
         .into_iter()
-        .filter(|(k, _)| !is_known(k))
+        .filter(|(k, v)| !is_known(k) || unknown_theme_value(v))
         .map(|(k, v)| match v {
             Some(v) => format!("{k}={v}"),
             None => k,
         })
         .collect()
+}
+
+/// Whether a token's value names a colour the table does not have.
+///
+/// `theme:<name>` is a *value*, so the key check above cannot see it. Without this,
+/// `bg=theme:nosuch` would draw black in silence — the one failure mode the token
+/// language exists to avoid, and the reason `unknown_tokens` reports at all.
+fn unknown_theme_value(value: &Option<String>) -> bool {
+    match value.as_deref().and_then(|v| v.strip_prefix("theme:")) {
+        Some(name) => !is_theme_name(name),
+        None => false,
+    }
+}
+
+/// The names a `theme:` value may carry: the eight fields of the platform's colour
+/// table, which is exactly what `gpui::colour_names` publishes.
+pub fn is_theme_name(name: &str) -> bool {
+    matches!(
+        name,
+        "text"
+            | "selected_text"
+            | "background"
+            | "disabled"
+            | "selected"
+            | "border"
+            | "separator"
+            | "container"
+    )
 }
 
 fn is_known(key: &str) -> bool {
@@ -95,8 +128,49 @@ fn is_known(key: &str) -> bool {
         | "w_full" | "wfull" | "h_full" | "hfull" | "size_full" | "sizefull"
         // interaction refinements (handled by `view`, listed here so they are
         // not reported as unknown)
-        | "hover" | "active"
+        | "hover" | "active" | "focus"
+        // the keymap context an element puts itself on the stack of
+        | "ctx"
+        // the scrollbar thumb's colour
+        | "thumb"
+    ) || is_theme_field(key.strip_prefix("theme.").unwrap_or(""))
+}
+
+/// The eight platform colours a `theme.<field>=` token may name.
+///
+/// They are exactly the fields of `gpui::colors::Colors` — `text`, `selected_text`,
+/// `background`, `disabled`, `selected`, `border`, `separator`, `container` — and the
+/// list is closed: `theme.accent=` is not a colour this platform has, and it is reported
+/// as an unknown token rather than quietly ignored.
+pub fn is_theme_field(field: &str) -> bool {
+    matches!(
+        field,
+        "text" | "selected_text" | "background" | "disabled" | "selected" | "border"
+            | "separator" | "container"
     )
+}
+
+/// The platform colours a style overrides, in the order they appear.
+///
+/// `theme.background=#222222` replaces one of `gpui::colors::Colors`' fields for the
+/// window that draws the element carrying it. Unlike `bg=`, which colours one element,
+/// this changes the colour the *platform* answers for that name — what
+/// [`crate::view::default_color`] reports and what a framework default is chosen from.
+///
+/// A token naming a field that does not exist is left to the unknown-token report rather
+/// than skipped here, so a misspelling is visible.
+pub fn theme_overrides(spec: &str) -> Vec<(String, Hsla)> {
+    let mut overrides = Vec::new();
+    for (key, value) in tokens(spec) {
+        let Some(field) = key.strip_prefix("theme.") else {
+            continue;
+        };
+        let (Some(value), true) = (value, is_theme_field(field)) else {
+            continue;
+        };
+        overrides.push((field.to_string(), colour(&value)));
+    }
+    overrides
 }
 
 /// The tokens a per-range highlight understands.
@@ -129,22 +203,74 @@ pub fn unknown_highlight_tokens(props: &str) -> Vec<String> {
         .collect()
 }
 
-/// The interaction tokens in `spec` (`hover=...`, `active=...`), if any.
-pub fn interaction(spec: &str) -> (Option<String>, Option<String>) {
+/// The interaction tokens in `spec` — `hover=...`, `active=...`, `focus=...`, in that
+/// order — if any.
+///
+/// A refinement is a *second* style string applied while an element is in that state, so
+/// its value is itself a style language, and it may be quoted (`hover="bg:#ff0000
+/// color=#ffffff"`) because otherwise the space would end the token.
+pub fn interaction(spec: &str) -> (Option<String>, Option<String>, Option<String>) {
     let mut hover = None;
     let mut active = None;
+    let mut focus = None;
     for (key, value) in tokens(spec) {
         match (key.as_str(), value) {
             ("hover", Some(v)) => hover = Some(decode_quoted(&v)),
             ("active", Some(v)) => active = Some(decode_quoted(&v)),
+            ("focus", Some(v)) => focus = Some(decode_quoted(&v)),
             _ => {}
         }
     }
-    (hover, active)
+    (hover, active, focus)
 }
 
-/// `Some("x")`, `Some("y")`, or `None`, for the `overflow=` token.
+/// The `thumb=<colour>` token in `spec`, if it carries one.
 ///
+/// The colour of a [`crate::view::Kind::Scrollbar`]'s thumb. The element's own `bg=` is its track —
+/// one styled box with a bar drawn over it — so a scrollbar is a normal element with one extra
+/// token rather than an element with a vocabulary of its own.
+pub fn thumb_colour(spec: &str) -> Option<gpui::Hsla> {
+    for (key, value) in tokens(spec) {
+        if key == "thumb" {
+            if let Some(value) = value {
+                let value = decode_quoted(&value);
+                if !value.is_empty() {
+                    return Some(colour(&value));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The `ctx=<name>` token in `spec`, if it carries one.
+///
+/// A key context is what makes a keymap binding focus-scoped: gpui evaluates a
+/// binding's context predicate against the context stack of the **focused** node,
+/// and this token is how an element puts itself on that stack —
+/// `gpui::panel("ctx=Editor")`. It is inert to `Styled`; `view` applies it with
+/// `key_context`, and, like `hover=`, it is what makes a plain box interactive
+/// enough to be in the dispatch tree at all.
+///
+/// The value is gpui's context-predicate grammar (`gpui-0.2.2/src/keymap/context.rs`),
+/// which is wider than a bare name: `"Editor"`, `"!Editor"`, `"A && B"`, `"A || B"`.
+/// Anything it cannot parse is logged by gpui and leaves the element contextless,
+/// which is why the value is passed through verbatim rather than validated here.
+pub fn key_context(spec: &str) -> Option<String> {
+    for (key, value) in tokens(spec) {
+        if key == "ctx" {
+            if let Some(value) = value {
+                let value = decode_quoted(&value);
+                if !value.is_empty() {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `Some("x")`, `Some("y")`, or `None`, for the `overflow=` token.///
 /// Scrolling is a `StatefulInteractiveElement` capability, so the element has
 /// to be given an id before `view` can turn it on.
 pub fn scroll_axis(spec: &str) -> Option<&'static str> {
@@ -611,6 +737,24 @@ fn num(v: &str) -> f32 {
 }
 
 /// `#rgb`, `#rrggbb`, `#rrggbbaa`, or one of GPUI's named colours.
+thread_local! {
+    /// The colour table a `theme:<name>` value resolves against, one per window.
+    ///
+    /// `view::begin_frame` fills it — and replaces it every frame — from the same
+    /// `Colors` that `gpui::default_color` answers from, so a token and the reader cannot
+    /// disagree. The language lives here and the window lives in `view`, which is why the
+    /// vocabulary is a table this module is handed rather than one it goes and reads.
+    static THEMED: RefCell<HashMap<i64, HashMap<String, Hsla>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Records the frame's colour table for `win`, replacing whatever the last frame left.
+pub fn set_colour_table(win: i64, table: HashMap<String, Hsla>) {
+    THEMED.with(|t| {
+        t.borrow_mut().insert(win, table);
+    });
+}
+
 pub fn colour(v: &str) -> Hsla {
     if let Some(hex) = v.strip_prefix('#') {
         return match hex.len() {
@@ -623,6 +767,18 @@ pub fn colour(v: &str) -> Hsla {
             8 => rgba(u32::from_str_radix(hex, 16).unwrap_or(0)).into(),
             _ => rgb(0x000000).into(),
         };
+    }
+    if let Some(name) = v.strip_prefix("theme:") {
+        // The frame's table: the platform's palette, the theme `set_theme` chose, and
+        // any `theme.<field>=` overrides. Filled once per frame by `view::begin_frame`;
+        // empty only where there is no window at all.
+        return THEMED.with(|t| {
+            t.borrow()
+                .get(&window::current())
+                .and_then(|table| table.get(name))
+                .copied()
+        })
+        .unwrap_or_else(|| rgb(0x000000).into());
     }
     match v {
         "white" => gpui::white(),

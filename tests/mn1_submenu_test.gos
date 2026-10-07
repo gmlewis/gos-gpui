@@ -1,0 +1,83 @@
+// MN1 — submenus: the entry grammar that declares one.
+//
+// Headless: `gos test tests`. `MenuItem::Submenu` exists upstream and simply is not exposed, so
+// the work is a grammar before it is a binding: `set_menus` takes a flat list of entry strings,
+// and a submenu needs a way to say which entries are inside it.
+//
+// The syntax is a **depth prefix**: an entry may begin with `>` characters, one per level. An
+// entry at depth 0 is an item of the menu itself; an entry at depth `d` belongs to the submenu
+// opened by the most recent entry at depth `d - 1`. A submenu is closed by the next entry that
+// is not deeper than it.
+//
+// Pass means the nesting reads back as declared, that the **slot numbering MN3 established is
+// untouched** — an `events` entry takes a slot whether it is at depth 0 or depth 2 — and that an
+// entry deeper than any submenu above it is dropped and reported rather than silently placed.
+//
+// The install path is the probe: `tests/gui/mn1_submenu.gos`.
+
+use gpui
+
+#[test]
+fn nesting_reads_back_as_declared() {
+    let tree = gpui::menu_tree(#[
+        "submenu:File",
+        ">events:Open:cmd-o",
+        ">submenu:Recent",
+        ">>events:Recent One",
+        ">separator",
+        "events:Quit",
+    ])
+    assert(tree.len() == 6, f"six entries, got {tree.len()}")
+    assert(tree[0] == "0:submenu:File", f"the submenu is an item of the menu: {tree[0]}")
+    assert(tree[1] == "1:events:Open", f"one level in: {tree[1]}")
+    assert(tree[2] == "1:submenu:Recent", f"a submenu inside a submenu is still one level in: {tree[2]}")
+    assert(tree[3] == "2:events:Recent One", f"two levels in: {tree[3]}")
+    // The label is part of the format whether or not there is one, so a separator ends in a
+    // colon: `<depth>:<kind>:<label>` splits the same way every time.
+    assert(tree[4] == "1:separator:", f"an entry shallower than the last one belongs to the outer submenu again: {tree[4]}")
+    assert(tree[5] == "0:events:Quit", f"and depth 0 closes everything — so this is the menu's own item: {tree[5]}")
+}
+
+#[test]
+fn the_slot_numbering_ignores_the_nesting() {
+    // The same rule as MN3: a slot is the entry's index among the events entries, and nesting
+    // is not an entry.
+    let slots = gpui::menu_slots(#[
+        "submenu:File",
+        ">events:Open",
+        ">submenu:Recent",
+        ">>events:Recent One",
+        ">separator",
+        "events:Quit",
+    ])
+    assert(slots == #["0:Open", "1:Recent One", "2:Quit"], f"events entries counted in document order, at any depth: {slots}")
+}
+
+#[test]
+fn an_accelerator_inside_a_submenu_reads_back() {
+    let declared = gpui::menu_accelerators(#[
+        "submenu:File",
+        ">events:Save:cmd-s",
+        ">>events:Deep:cmd-d",
+    ])
+    assert(declared == #["0:cmd-s"], f"depth 2 belongs to the submenu above it, so only Save is a real item: {declared}")
+}
+
+#[test]
+fn an_entry_with_no_submenu_above_it_is_reported() {
+    // Nothing opened a submenu at all, so an entry at depth 1 has nowhere to go.
+    let bad = gpui::menu_bad(#["events:a", ">events:b"])
+    assert(bad == #[">events:b"], f"reported rather than placed: {bad}")
+}
+
+#[test]
+fn two_levels_in_with_only_one_open_is_reported() {
+    let bad = gpui::menu_bad(#["submenu:File", ">>events:Too Deep"])
+    assert(bad.len() == 1, f"one entry had nowhere to go, got {bad.len()}")
+}
+
+#[test]
+fn a_well_formed_menu_reports_nothing() {
+    let bad = gpui::menu_bad(#["events:a", "submenu:File", ">events:b", "events:c"])
+    assert(bad.len() == 0, f"nothing here is misplaced: {bad}")
+}

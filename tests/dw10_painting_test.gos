@@ -1,0 +1,84 @@
+// DW10 — program-described prepaint/paint through `canvas`.
+//
+// Headless: `gos test tests`. The register's "today" column already says **yes** for this
+// row, and the obstacle column says why it is listed anyway: `ui::draw` and the path pool
+// are the *fixed-painter* case, and the general one — a program authoring its own
+// `Element` — is not exposed. The general case is AX1's wall, recorded `unreachable`
+// there; what is checked here is the half a program really has.
+//
+// A path pool handle and a canvas element are *data*: describing them needs no window and
+// no frame, which is what makes this row checkable on a machine whose screen is locked.
+// What needs a frame is the painting itself, and what needs pixels is looking at it — both
+// are in the row's residual doubt.
+//
+// Pass means a program can describe a path in the language's own terms (a fill or a stroke,
+// lines, curves, arcs, polygons, dashes, a transform, a close), build it, describe another
+// after a reset, and hand the results to a paint element — and that a style string for
+// either is checked by the same vocabulary as any other.
+
+use gpui
+
+#[test]
+fn a_path_is_described_built_and_rebuilt() {
+    let handle = gpui::path_fill()
+    gpui::path_move_to(handle, 0.0, 0.0)
+    gpui::path_line_to(handle, 40.0, 0.0)
+    gpui::path_line_to(handle, 40.0, 30.0)
+    gpui::path_curve_to(handle, 0.0, 30.0, 20.0, 45.0)
+    gpui::path_arc_to(handle, 8.0, 8.0, 0.0, false, true, 0.0, 0.0)
+    gpui::path_close(handle)
+    gpui::path_dash(handle, [4.0, 2.0])
+    gpui::path_transform(handle, 2.0, 2.0, 1.5)
+
+    let built = gpui::path_build(handle)
+    assert(built.is_ok(), "a described path builds")
+
+    // The doc says the handle keeps working and now names the built path, so a
+    // per-frame rebuild is "reset, describe again, build again" — which is what every
+    // painting example does.
+    let again = gpui::path_build(handle)
+    assert(again.is_ok(), "and building it again is allowed")
+}
+
+#[test]
+fn a_stroke_has_its_own_width_and_the_pool_resets() {
+    let stroke = gpui::path_stroke(3.0)
+    gpui::path_move_to(stroke, 0.0, 0.0)
+    gpui::path_line_to(stroke, 100.0, 100.0)
+    assert(gpui::path_build(stroke).is_ok(), "a stroked path builds")
+
+    let polygon = gpui::path_fill()
+    gpui::path_polygon(polygon, [0.0, 0.0, 10.0, 0.0, 5.0, 9.0], true)
+    assert(gpui::path_build(polygon).is_ok(), "a polygon describes a closed path in one call")
+
+    gpui::path_reset()
+    let fresh = gpui::path_fill()
+    assert(fresh >= 0, "the pool issues handles again after a reset")
+    gpui::path_move_to(fresh, 1.0, 1.0)
+    assert(gpui::path_build(fresh).is_ok(), "and a path described after the reset builds too")
+}
+
+#[test]
+fn a_paint_element_takes_paths_and_a_checked_style() {
+    let first = gpui::path_fill()
+    gpui::path_polygon(first, [0.0, 0.0, 20.0, 0.0, 10.0, 18.0], true)
+    let one = gpui::path_build(first).unwrap_or(-1)
+    assert(one >= 0, "the first path built")
+
+    let second = gpui::path_stroke(1.0)
+    gpui::path_move_to(second, 0.0, 0.0)
+    gpui::path_line_to(second, 20.0, 18.0)
+    let two = gpui::path_build(second).unwrap_or(-1)
+    assert(two >= 0, "the second path built")
+
+    let painted = gpui::paint_paths([one, two], ["#89b4fa", "#f38ba8"], "size=full")
+    assert(painted != 0, "a paint element is an element like any other")
+
+    let drawn = gpui::draw("bars", 0.0, "size=full bg=#111111")
+    assert(drawn != 0, "and so is one of the built-in painters")
+
+    // The paint style is the same vocabulary as every other style, so a typo in it is
+    // reported rather than painted as a mystery.
+    assert(gpui::unknown_style_tokens("size=full bg=#111111").len() == 0, "a paint style is a style")
+    assert(gpui::unknown_style_tokens("size=full bg=#111111 nosuch=1").len() == 1, "and is checked")
+}

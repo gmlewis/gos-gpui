@@ -1,0 +1,94 @@
+// BG1 — hand work to a background task, and read its result.
+//
+// Tier: every tier.
+//
+// The row's own words are "**arbitrary** work", and that word is the one that cannot be had:
+// the work a background task runs can never be the program's own code, because the thread
+// running it cannot call back into the Gossamer VM. The compiler says so, and
+// `## Unreachable` keeps the error.
+//
+// What *is* reachable is what the row actually needs a program to be able to do, and it is
+// worth checking rather than assuming: hand work off the UI thread, keep painting while it
+// runs, and read what it left behind. `app.rs`'s comment on that arm says "the UI thread is
+// free to keep painting while this runs" — this probe is the first thing that has ever
+// measured it, and it is the assertion that would catch the day the work moves onto the UI
+// thread.
+//
+// Pass means the result is empty until the work is done, non-empty once it is, that the
+// window painted a good number of frames in between, and that the work really took the
+// time it was asked for.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("bg1 - background work", 380.0, 220.0, || {
+        let f = gpui::frame()
+        let phase = gpui::state_int("bg1.phase", 0)
+
+        if f == 2 {
+            gpui::set_float("bg1.t_start", gpui::now())
+            gpui::set_int("bg1.frames_start", f)
+            gpui::task("work", 250)
+        }
+        if phase == 0 && gpui::now() >= 0.08 {
+            gpui::set_int("bg1.phase", 1)
+        }
+        if phase == 1 {
+            let mut arrived = false
+            for event in gpui::take_events() {
+                let id, _ = gpui::event_parts(event)
+                if id == "work" {
+                    arrived = true
+                }
+            }
+            if arrived {
+                // Frames painted between asking for the work and hearing about it — with the
+                // work on the UI thread there would be a handful, not a dozen.
+                gpui::set_int("bg1.frames_used", f - gpui::state_int("bg1.frames_start", 0))
+                gpui::set_float("bg1.elapsed", gpui::now() - gpui::state_float("bg1.t_start", 0.0))
+                gpui::set_text("bg1.result", gpui::task_result("work"))
+                gpui::set_int("bg1.phase", 2)
+            }
+        }
+
+        if phase == 2 {
+            let result = gpui::state_text("bg1.result", "")
+            let frames_used = gpui::state_int("bg1.frames_used", 0)
+            let elapsed = gpui::state_float("bg1.elapsed", 0.0)
+
+            // One exclusive chain ending in the verdict: `gpui::quit()` asks the
+            // app to stop, it does not abort the callback that called it. Every branch is
+            // a positive condition, because the linter is right that `if !flag` and
+            // `if flag == false` are both noise.
+            //
+            // The order is the order the claims are worth checking, and each has a break
+            // that reaches it and no other: `elapsed` catches work that does not take the
+            // time it was asked for, `frames_used` catches work that runs on the UI thread,
+            // and `result` catches work with nothing to read afterwards.
+            if elapsed < 0.15 {
+                println(f"FAIL BG1 the work reported back after {elapsed}s, sooner than the 250ms it was asked for")
+                gpui::quit()
+            } else if frames_used < 8 {
+                println(f"FAIL BG1 the window painted {frames_used} frames while 250ms of work ran, so the work was on the UI thread and blocked it")
+                gpui::quit()
+            } else if result == "" {
+                println("FAIL BG1 the work finished and left no result to read")
+                gpui::quit()
+            } else {
+                println(f"OK BG1 the work ran off the UI thread — {frames_used} frames were painted during the {elapsed}s it took — and left this to read: \"{result}\"")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 size=full bg=#111111")
+        gpui::child(root, gpui::text("bg1", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL BG1 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

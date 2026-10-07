@@ -1,0 +1,80 @@
+WH4 — choose the display (`display=`), and fix `place=center`.
+
+BEFORE THE WORK. Against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before, the probe copied in, the runner build
+lock cleared first):
+
+    cd /tmp/gpui-before
+    timeout -k 5 25 gos run --main-thread tests/gui/wh4_display_place.gos
+
+    FAIL WH4 the child opened with place=center at x=7, where the display's centre
+    puts a 300 wide window at 1130; it was given x=7
+
+**A behavioural red**, and the only one in this block — the failing assertion is the
+probe's first, and it calls nothing round 17 added. The other WH rows could only show
+an unresolved name and a timeout, because the reader *was* the capability; here the
+capability is a placement, and a placement is observable with functions that already
+existed.
+
+Why the first attempts at this transcript were `exit 124` and silence, and why it was
+not the program: they were the **stale build lock** (see "The stale build lock"). The
+recipe above clears locks with this repo's `scripts/unlock-stale-build`, which does not
+exist in the `git archive HEAD` copy — that copy's `scripts/` holds only `update-api` —
+so the pristine tree's runs were polling a lock for five minutes and the `timeout` killed
+them before the probe painted a single frame. With the lock cleared by the `find`/`rm`
+loop the same run prints its failure on the first try, and the pty is not needed:
+
+    $ for f in $(find ~/.cache/gossamer -name ".gos-build.lock"); do
+        pid=$(tr -d '[:space:]' < "$f"); ps -p "$pid" >/dev/null || rm -f "$f"; done
+    $ timeout -k 5 25 gos run --main-thread tests/gui/wh4_display_place.gos
+    FAIL WH4 the child opened with place=center at x=7, where the display's centre
+    puts a 300 wide window at 1130; it was given x=7
+    exit=0
+
+This file previously claimed the silence was stdout buffering. It was not: that was a
+guess written down before it was tested, and the same mistake has now been made three
+times in this run — a silent `exit 124` in this project is a lock until it is proven
+otherwise. The correction stands here rather than in a footnote.
+
+The bug, quoted from the `git archive HEAD` copy at
+`gpui-binding/src/app.rs:466-476`:
+
+    window_bounds: Some(if centered {
+        WindowBounds::Windowed(Bounds::new(
+            gpui::point(px(x as f32), px(y as f32)),
+            size(px(w as f32), px(h as f32)),
+        ))
+    } else {
+        WindowBounds::Windowed(Bounds::new(
+            gpui::point(px(x as f32), px(y as f32)),
+            size(px(w as f32), px(h as f32)),
+        ))
+    }),
+
+`centered` was set by `place=center` and then compared in an `if` whose two arms were
+the same expression, so the token did nothing at all for a window opened with
+`gpui::open_window`. `display=` did not exist: it was not a key of either parser, and
+no window was ever told which display to open on.
+
+The break that isolates this row's mechanism — `Place::Center` answering `false` in
+`options::build`, so the child is placed at the coordinates it was given:
+
+The break that isolates this row's mechanism — `Place::Center` answering `false` in
+`options::build`, so the child is placed at the coordinates it was given as before:
+
+    FAIL WH4 the child opened with place=center at x=7, where the display's centre puts a 300 wide window at 1130; it was given x=7
+
+One line, and the same line the pristine HEAD copy prints: the break puts the tree back
+where the row started. Restored immediately, and the restore re-checked by the `check`
+tier, which recompiles the binding.
+
+Two smaller things this row measured and did not need:
+
+  * a window given `y=9` and placed there reports `y=30`, so the binding's `y` and the
+    platform's frame origin differ by the height of a titlebar somewhere in the
+    macOS conversion. It does not affect this check — the centred case matched exactly
+    — but it is the difference between `window_field("y")` and "where I put it", and
+    anyone comparing the two should know;
+  * `gpui::quit()` does not abort the callback that called it. Written as separate
+    `if`s, this probe printed FAIL and then OK in the same frame. See
+    `WH4.after.txt`.

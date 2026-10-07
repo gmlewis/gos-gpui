@@ -1,0 +1,34 @@
+WH4 — choose the display (`display=`), and fix `place=center`.
+
+AFTER THE WORK. In this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh4_display_place.gos
+
+Output, identical on all five tiers (`check` prints `check: ok (1 items typed)`; each
+of the other four exits 0 with no stderr but the toolchain duplicate-symbol link
+warnings every build in this project prints):
+
+    OK WH4 a child opened at x=7,y=9 with display=0 place=center landed at x=1130,y=620 (centre 1130,620), and reports place=center display=5
+
+A *behavioural* check, and the only one in the WH block: the child is opened at x=7,
+y=9 with `display=0 place=center`, and it lands at the display's centre — 1130, 620 on
+this 2560x1440 display — rather than where it was told to go.
+
+What is new: `gpui-binding/src/options.rs` reads `display=<index>`, resolves it to a
+`DisplayId` through `cx.displays()`, and puts it in `WindowOptions::display_id`, which
+is also what makes `place=center` centre on the *chosen* display rather than on the
+primary one; and `place=center` now actually centres. `gpui::window_option("place")`
+and `("display")` answer what the window was opened with.
+
+The half that is *not* verified, and why: this machine has one display, so `display=0`
+and saying nothing at all put the window in the same place, and no assertion here can
+tell them apart. What the check does establish is that the token parses, reaches
+`WindowOptions::display_id`, and names a real display — the child reports `display=5`,
+which is the same id `gpui::display_field(0, "id")` reports. Whether a *second* display
+would be honoured is unverified and is in the row's residual doubt.
+
+A note on the probe's shape, because it cost a wrong transcript. `gpui::quit()` asks
+the app to stop; it does **not** abort the callback that called it. Written as separate
+`if` statements, this probe printed its FAIL line and then fell through and printed its
+OK line in the same frame. The chain here is exclusive — every branch ends in a verdict
+and the success line is the final `else` — and the failure below is one line.

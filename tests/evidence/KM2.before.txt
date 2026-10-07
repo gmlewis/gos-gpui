@@ -1,0 +1,59 @@
+KM2 — key contexts, so bindings are focus-scoped.
+
+BEFORE THE WORK.
+
+Two reds, both behavioural, plus the deliberate breaks that separate the two halves
+of the mechanism.
+
+**1. The GUI probe, against HEAD's binding.**
+
+    $ timeout -k 5 40 gos run --main-thread tests/gui/km2_key_contexts.gos
+    gpui: unknown style tokens: ctx=Editor
+    FAIL KM2 the stroke bound inside the editor's context did not fire, so the
+    context predicate was not matched
+    exit 0
+
+Two distinct absences in one transcript. The first line is the binding's own
+unknown-token report: **no token put a key context on an element**. The verdict line
+is the second: `gpui::bind_keys` had nowhere to write a context predicate, so
+`cmd-s=in_editor@Editor` bound the event name `in_editor@Editor`, which nothing
+fires. `gos check` on the same probe answers `check: ok (2 items typed)`, so the
+checker had nothing to say about either.
+
+**2. The headless half, and an honest note about when it was written.**
+
+The five cases in `tests/km2_key_contexts_test.gos` were written *after* the parse
+change, so they never ran red against HEAD. That red was reproduced deliberately
+instead — `keymap_plan` put back to its pre-KM2 body, where `@` is simply part of
+the event name and nothing else changed:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+        at a_trailing_at_is_not_a_context (tests/km2_key_contexts_test.gos:37:5)
+        at a_context_without_a_name_is_dropped (tests/km2_key_contexts_test.gos:43:5)
+    test: 131 passed, 2 failed, 482 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 41 file(s), 28 with no tests
+
+**Two of five, and that is the honest number.** The other three pass under the old
+parse because `"cmd-s=save@Editor"` read back as `"cmd-s:save@Editor"` either way —
+the separator only becomes load-bearing at the edges, which is exactly what the two
+failing cases test. Restored before the tier run.
+
+**3. The breaks that separate the two halves of the mechanism.**
+
+A context is enforced in two places, and a check that only ever saw one of them
+would not show the other is load-bearing. Both breaks were applied alone:
+
+  * **the element side** — `.key_context(..)` removed from `apply_interactions`,
+    so no element ever names a context:
+
+        FAIL KM2 the stroke bound inside the editor's context did not fire, so the
+        context predicate was not matched
+
+  * **the keymap side** — `None` passed to `KeyBinding::new` instead of the parsed
+    predicate, so every binding is contextless:
+
+        FAIL KM2 a stroke bound inside a context no element names fired as well
+        (in_editor, in_widget), so the context was ignored
+
+The second is the one that matters most: it is the failure mode a check written only
+as "the contextual binding fires" would have missed.

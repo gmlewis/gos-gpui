@@ -1,0 +1,21 @@
+WH5 — scale factor, for 2× raster choices.
+
+BEFORE THE WORK. Same probe, same pristine copy, same command as `WH1.before.txt`:
+
+    cd /tmp/gpui-before
+    timeout -k 5 25 gos run --main-thread tests/gui/wh_window_options.gos
+
+    exit 124, no output on stdout or stderr.
+
+The capability is `Window::scale_factor()` (`gpui-0.2.2/src/window.rs:1815`), a
+plain accessor on a `Window` — which is the whole obstacle, and it is the same one
+TM1 and CL9 each hit: a binding function has no `Window` to ask. Nothing in this
+crate captured the scale factor at any point, so a program had no way to choose a
+2× raster for its own images.
+
+The break that isolates this row's mechanism — `view::begin_frame` observing a scale
+factor of `0.0` instead of `window.scale_factor()`:
+
+    FAIL WH5 the window reports no scale factor at all
+
+Restored immediately; the five-tier transcript below is against the restored tree.

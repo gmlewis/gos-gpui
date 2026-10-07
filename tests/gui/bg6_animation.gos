@@ -1,0 +1,131 @@
+// BG6 — animation: pause, resume, stop, and a duration. The clock half.
+//
+// Tier: every tier.
+//
+// `gpui::animate()` asks for another frame and nothing more. There was no animation *clock*
+// in the binding at all: a program that wanted something to move over a known duration had
+// to read `gpui::now()` itself, subtract, divide and clamp, and its "pause" was a flag it
+// kept in its own state. The painters take a `phase` the program computes by hand
+// (`gpui::draw("bars", phase, …)`), which is the seam this fills.
+//
+// Pass means the clock does all of that and can be held: an animation started with a
+// duration runs from 0 towards 1 on its own, **pausing freezes it** — the phase read twice
+// while paused is the same number — resuming carries it on to the end, and stopping takes it
+// away, after which it is not running and its phase is 0.
+//
+// The whole probe runs in a little over a second, in windows of a few hundred milliseconds:
+// it needs the window to go on being painted for as long as it runs, which is the one thing
+// a probe cannot control here.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("bg6 - animation", 380.0, 220.0, || {
+        let f = gpui::frame()
+        let phase = gpui::state_int("bg6.phase", 0)
+
+        if f == 2 {
+            gpui::animation("grow", 300, "linear")
+        }
+        if f == 3 {
+            // A frame later: a request is applied during the frame that raised it, so the
+            // frame that asked for the animation is too early to hear about it.
+            gpui::set_text("bg6.state_start", gpui::animation_state("grow"))
+        }
+        if phase == 0 && gpui::now() >= 0.12 {
+            gpui::set_float("bg6.phase_mid", gpui::animation_phase("grow"))
+            gpui::animation_pause("grow")
+            gpui::set_int("bg6.phase", 1)
+        }
+        if phase == 1 && gpui::now() >= 0.25 {
+            gpui::set_float("bg6.paused_a", gpui::animation_phase("grow"))
+            gpui::set_text("bg6.state_paused", gpui::animation_state("grow"))
+            gpui::set_int("bg6.phase", 2)
+        }
+        if phase == 2 && gpui::now() >= 0.45 {
+            // A fifth of a second later, and still held: the same number.
+            gpui::set_float("bg6.paused_b", gpui::animation_phase("grow"))
+            gpui::animation_resume("grow")
+            gpui::set_int("bg6.phase", 3)
+        }
+        if phase == 3 && gpui::now() >= 0.55 {
+            // A tenth of a second after the resume. Carrying on, the animation has about
+            // four fifths of a second of running behind it; restarted, it would have a tenth.
+            gpui::set_float("bg6.phase_resumed", gpui::animation_phase("grow"))
+            gpui::set_int("bg6.phase", 4)
+        }
+        if phase == 4 && gpui::now() >= 0.9 {
+            gpui::set_float("bg6.phase_end", gpui::animation_phase("grow"))
+            gpui::set_text("bg6.state_end", gpui::animation_state("grow"))
+            gpui::animation_stop("grow")
+            gpui::set_int("bg6.phase", 5)
+        }
+        if phase == 5 && gpui::now() >= 1.05 {
+            gpui::set_text("bg6.state_stopped", gpui::animation_state("grow"))
+            gpui::set_float("bg6.phase_stopped", gpui::animation_phase("grow"))
+            gpui::set_int("bg6.phase", 6)
+        }
+
+        if phase == 6 && gpui::now() >= 1.15 {
+            let state_start = gpui::state_text("bg6.state_start", "")
+            let phase_mid = gpui::state_float("bg6.phase_mid", -1.0)
+            let state_paused = gpui::state_text("bg6.state_paused", "")
+            let paused_a = gpui::state_float("bg6.paused_a", -1.0)
+            let paused_b = gpui::state_float("bg6.paused_b", -2.0)
+            let phase_resumed = gpui::state_float("bg6.phase_resumed", -1.0)
+            let phase_end = gpui::state_float("bg6.phase_end", -1.0)
+            let state_end = gpui::state_text("bg6.state_end", "")
+            let state_stopped = gpui::state_text("bg6.state_stopped", "")
+            let phase_stopped = gpui::state_float("bg6.phase_stopped", -1.0)
+
+            // One exclusive chain ending in the verdict: `gpui::quit()` asks the
+            // app to stop, it does not abort the callback that called it. Every branch is
+            // a positive condition, because the linter is right that `if !flag` and
+            // `if flag == false` are both noise.
+            if state_start != "running" {
+                println(f"FAIL BG6 a 300ms animation reports itself as \"{state_start}\" a frame after it was started")
+                gpui::quit()
+            } else if phase_mid <= 0.0 || phase_mid >= 1.0 {
+                println(f"FAIL BG6 a third of the way through, the phase is {phase_mid} rather than something between 0 and 1")
+                gpui::quit()
+            } else if state_paused != "paused" {
+                println(f"FAIL BG6 a paused animation reports itself as \"{state_paused}\"")
+                gpui::quit()
+            } else if paused_a != paused_b {
+                println(f"FAIL BG6 the phase moved while the animation was paused: {paused_a} then {paused_b}")
+                gpui::quit()
+            } else if phase_resumed <= 0.5 {
+                println(f"FAIL BG6 a tenth of a second after resuming, the phase is {phase_resumed}: resuming restarted the animation instead of carrying it on")
+                gpui::quit()
+            } else if phase_end < 0.999 {
+                println(f"FAIL BG6 the animation was resumed and reached {phase_end}, not the end")
+                gpui::quit()
+            } else if state_end != "done" {
+                println(f"FAIL BG6 a finished animation reports itself as \"{state_end}\"")
+                gpui::quit()
+            } else if state_stopped != "none" {
+                println(f"FAIL BG6 a stopped animation reports itself as \"{state_stopped}\"")
+                gpui::quit()
+            } else if phase_stopped >= 0.0001 {
+                println(f"FAIL BG6 a stopped animation still has a phase of {phase_stopped}")
+                gpui::quit()
+            } else {
+                println("OK BG6 a 300ms animation ran, held its phase while paused, reached the end when resumed, and was gone after it was stopped")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        // The seam this fills: a painter's phase comes from the clock rather than from
+        // arithmetic in the program.
+        let root = gpui::column("p=8 size=full bg=#111111")
+        gpui::child(root, gpui::draw("bars", gpui::animation_phase("grow"), "h=120"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL BG6 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

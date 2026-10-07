@@ -1,0 +1,69 @@
+BG4 — a repeat timer that can be rescheduled and cancelled.
+
+AFTER THE WORK. Every tier, byte-identical:
+
+    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/bg4_timer.gos
+    === check ===
+    check: ok (1 items typed)
+
+    === run (interpreter) (exit 0) ===
+    OK BG4 a 30ms timer raised 11 events, the same id rescheduled to 300ms raised 1, and after tick_stop it raised none
+
+    === run --no-jit (exit 0) ===
+    OK BG4 a 30ms timer raised 11 events, the same id rescheduled to 300ms raised 1, and after tick_stop it raised none
+
+    === build (debug) ===
+    build: 26796376B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+    === build -> ./target/debug/learn-gpui (exit 0) ===
+    OK BG4 a 30ms timer raised 11 events, the same id rescheduled to 300ms raised 1, and after tick_stop it raised none
+
+    === build --release ===
+    build: 7571592B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+    === release -> ./target/release/learn-gpui (exit 0) ===
+    OK BG4 a 30ms timer raised 11 events, the same id rescheduled to 300ms raised 1, and after tick_stop it raised none
+
+The duplicate-symbol `ld` warnings on both builds are the toolchain's and predate this run.
+
+**The margins are wide on purpose.** 11 events against 1 against 0: the discriminator is
+`slow * 2 < fast`, not an exact count, because a millisecond timer measured against a wall
+clock will never give the same number twice. The periods are read back at each step as well,
+so a binding that reported success while doing nothing would have to report the wrong period
+too.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `app.rs` — `TICKS` becomes `HashMap<(window, id), (generation, ms)>` rather than a set,
+    with `TICK_GENERATION` handing each loop its own. A **generation** is what makes a
+    reschedule or a stop reach a loop that is already asleep: it wakes, finds the entry
+    belongs to another generation or is gone, and ends without raising anything. A period
+    alone would not do — rescheduling to the same period would leave the old loop alive
+    beside the new one and every event would arrive twice. `Request::Tick` now always
+    inserts and spawns; `Request::TickStop` drops the entry; `tick_period` reads it.
+  * `store.rs` — `Request::TickStop`.
+  * `lib.rs` — `gpui::tick`'s doc promises the reschedule, and `gpui::tick_stop` /
+    `gpui::tick_period` are new.
+  * `README.md` — the `gpui::tick` row.
+
+**A finding about this machine, from this round's own false alarm.** The first five-tier
+run of this probe came back with both interpreter tiers `exit 124` and both compiled tiers
+passing — which reads like a tier-specific bug and is not one. `uptime` said the load
+average was **18.86 over five minutes**, with `WindowServer` at 10.7% and nothing of the
+run's left alive; after it settled to 2.30 the same binary passed first try. A probe that
+needs the window to go on being painted for four seconds cannot be relied on at that load,
+which is why the probe was **retimed to about 1.2 seconds** — three windows of a few hundred
+milliseconds each — before the run that stands. This is the ledger's known hazard arriving
+by a new route: the window stops being painted, frames stop, and a frame-driven probe never
+reaches its verdict. A minimal control probe with *no timers at all* hung the same way at
+the same load, which is what settled it.
+
+Residual doubt. The generation scheme retires a loop when it next wakes, so an old loop can
+outlive its reschedule by up to one period — with a ten-minute period that is ten minutes of
+a sleeping task that will do nothing when it wakes; nothing observable depends on it, but it
+is a task alive longer than the timer it belonged to. `Request::Tick` spawns a task per
+reschedule rather than reusing one, so a program that reschedules in a loop accumulates
+sleeping tasks — each ends at its next wake, after the replacement has taken over. The
+period is `i64` milliseconds floored at 1 by `gpui::tick`, so a sub-millisecond period is not
+expressible. And the timings are wall-clock windows: on a machine slow enough that the whole
+probe is compressed, `fast` could fall to the guard of 4 events and the check would fail
+rather than hang — a false negative in an extreme environment, named here rather than
+discovered later.

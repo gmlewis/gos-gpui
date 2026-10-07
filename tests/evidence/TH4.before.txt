@@ -1,0 +1,52 @@
+TH4 — theme overrides at token level.
+
+BEFORE THE WORK. The check was written first and run against the binding as it stood:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    FAIL theme_tokens_are_known: error[GX0005]: panic: theme.<field>= is a style token: 2 were refused
+    FAIL the_eight_platform_colours_can_be_overridden: error[GX0002]: name `gpui::theme_override` is not bound in this scope
+    FAIL a_name_that_is_not_a_platform_colour_is_refused: error[GX0002]: name `gpui::theme_override` is not bound in this scope
+    test: 75 passed, 3 failed, 286 assertion(s)
+
+The first is a **behavioural** red — `unknown_style_tokens` has been able to answer since
+TM5 — and the other two are unresolved names because the reader is new. Both kinds are in
+the file as the register asks.
+
+**The row's premise, checked before anything was built, and it is two-fifths wrong.** The
+register names five colours to override: *accent, selection, border, caret* and *tick*.
+Checked against the pinned crate:
+
+    $ grep -rn "\baccent\b" ~/.cargo/registry/src/*/gpui-0.2.2/src
+    .../src/platform/windows/window.rs:1342:            let accent = AccentPolicy {
+    (Windows window material, not a colour in `Colors`)
+
+    $ grep -rn "caret_color\|caret.*Rgba\|fn caret" ~/.cargo/registry/src/*/gpui-0.2.2/src
+    (no output — there is no caret colour in gpui 0.2.2)
+
+    $ grep -rn "pub struct Colors" -A 40 ~/.cargo/registry/src/*/gpui-0.2.2/src/colors.rs | grep "pub [a-z_]*:"
+    pub text: Rgba,
+    pub selected_text: Rgba,
+    pub background: Rgba,
+    pub disabled: Rgba,
+    pub selected: Rgba,
+    pub border: Rgba,
+    pub separator: Rgba,
+    pub container: Rgba,
+
+So: `selection` is `Colors::selected` and `border` is `Colors::border` — those two are real.
+`accent` and `caret` are **colours gpui does not have**, and no binding can override what
+does not exist. `tick` is this binding's own checkbox colour, reachable since round 2 as
+the store key `"<id>#tick"` (`view.rs:1561`, documented in `lib.rs:551`) — so the row's
+"the undocumented `<id>#tick` key is the whole surface" was stale twice over: it is
+documented, and it is not a platform colour.
+
+That left one honest question: *can a program override the platform colours it does
+draw with?* The vocabulary is `gpui::colors::Colors`' eight fields, and the binding could
+read all eight (`default_color`, `colour_names`) and write none.
+
+The break that isolates the vocabulary — one field removed from the list:
+
+    FAIL the_eight_platform_colours_can_be_overridden: error[GX0005]: panic: the eight
+    fields of Colors, in order: text,selected_text,background,disabled,selected,border,separator
+
+which names exactly which one is missing. Restored immediately.

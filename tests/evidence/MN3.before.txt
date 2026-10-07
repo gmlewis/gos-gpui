@@ -1,0 +1,39 @@
+MN3 — separators that do not shift the action mapping.
+
+BEFORE THE WORK.
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    FAIL a_separator_does_not_shift_the_slots: error[GX0002]: name `gpui::menu_slots` is not bound in this scope
+    FAIL the_other_entry_kinds_take_no_slot: error[GX0002]: name `gpui::menu_slots` is not bound in this scope
+    FAIL a_menu_entry_that_is_not_one_is_dropped: error[GX0002]: name `gpui::menu_slots` is not bound in this scope
+    test: 105 passed, 3 failed, 400 assertion(s)
+
+The weak kind of red — the reader *is* the capability, so at HEAD the whole probe is unbound.
+The bug it reads, though, is old and was visible in the source: the binding numbered a menu
+entry's action slot by its **position in the entry vector** —
+
+    $ sed -n '358,369p' gpui-binding/src/app.rs   (as it stood before this round)
+                let mut menu_items = Vec::new();
+                for (index, entry) in items.iter().enumerate() {
+                    let mut parts = entry.splitn(3, ':');
+                    match parts.next().unwrap_or("") {
+                        "separator" => menu_items.push(gpui::MenuItem::separator()),
+                        ...
+                        "events" => {
+                            let label = parts.next().unwrap_or("").to_string();
+                            push_menu_action(&mut menu_items, label, index);
+                        }
+
+— so a `"separator"` in front of an action renumbered every action after it, and a
+program that keyed its own handlers off `"menu|<n>"` had to renumber them whenever it
+changed the menu's shape. The register's own words for this row: *"separators that do not
+shift the action mapping"*.
+
+The break that reproduces it, exactly, by putting the vector position back:
+
+    FAIL a_separator_does_not_shift_the_slots: error[GX0005]: panic: a separator in front of it does not renumber it: 2:Save
+    FAIL a_menu_entry_that_is_not_one_is_dropped: error[GX0005]: panic: an entry kind the binding does not know is not built, and takes no slot
+    test: 106 passed, 2 failed, 404 assertion(s)
+
+`"2:Save"` is the bug: `Save` is the second `events` entry and the old numbering put it in
+slot 2. Restored immediately, and the restore re-checked by `gos check`.

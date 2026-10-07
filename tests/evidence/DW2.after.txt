@@ -1,0 +1,60 @@
+DW2 — undo and redo with coalescing.
+
+AFTER THE WORK. Headless, and this row can be finished here because of where its model lives.
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    test: 268 passed, 0 failed, 963 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 63 file(s), 40 with no tests
+
+    $ ./scripts/tiers tests/dw2_history_test.gos check
+    === check ===
+    check: ok (14 items typed)
+
+The check tier prints nothing but that line: five lints this file had raised — four discarded tail
+values and one bool literal — were corrected rather than tolerated.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `history.rs` (new) — one `History` per (window, key): the texts the key has held, where the
+    current one is, and what kind of change produced it. `pure_insertion` and `pure_deletion` are
+    the coalescing rule, and they are arithmetic on two strings with no timers in them, so the rule
+    is the same in a test as at a keyboard. `watch_in`/`unwatch_in`, `note`, `undo_in`/`redo_in`,
+    `depth_in`/`can_undo_in`/`can_redo_in`, and `step`, which is the one place a step is taken and
+    the text written back — through which `gpui::history_undo`, `gpui::history_redo` **and the
+    editor's own ⌘Z** all go, so the binding's undo and the widget's cannot land on different texts.
+  * `store.rs` — `set_text_in` reads the old value, writes, and *then* tells the history (three
+    statements rather than one, because the history takes its own lock and nothing here holds both
+    at once); `set_text_quiet_in` writes without recording, for the writer that *is* the history —
+    recording an undo would make undoing an edit into editing again, which is the loop a history
+    exists to avoid.
+  * `lib.rs` — `history_watch`, `history_unwatch`, `history_undo`, `history_redo`,
+    `history_can_undo`, `history_can_redo`, `history_depth`.
+  * `editor.rs` — `undo` and `redo` on the entity, and two arms in `on_key_down`:
+    `"z" if command && modifiers.shift` and `"z" if command`. **That is the row's named defect** —
+    they used to fall through every arm and reach `gpui::on_keys`, so the editor had no undo at all.
+    Neither touches `self.content`: the text comes back through the store and `adopt_program_text`
+    picks it up next frame, because there is one writer.
+  * `README.md` — an "Undo and redo" section with the pattern, the rule, and the table.
+
+**Coalescing is the row, and the rule is stated rather than tuned.** A run of insertions is one
+step; a run of deletions is one; a change of kind, a replacement, or a paste over a selection starts
+a new one. Nothing in it is a timer or a keystroke count, which is why it can be checked here at
+all — a real editor would also break a run on a pause, and that half is deliberately absent rather
+than approximated by a clock a test cannot control.
+
+Residual doubt, and the windowed half is larger than usual.
+
+  * **The editor's half is read, not run.** That ⌘Z reaches `undo`, that `undo` calls
+    `history::step`, and that `adopt_program_text` then picks the reverted text up — all of that is
+    three lines of wiring in `editor.rs` and **none of it has been executed**, because the editor
+    needs a window and this machine's owner has forbidden one. What *is* checked is the history and
+    the one shared `step` both callers use; the keystroke path is unobserved.
+  * The rule has no time component, so a run that a person paused in the middle still coalesces —
+    a real editor would split it. That is a deliberate simplification, not an oversight.
+  * Only `set_text` is recorded. `forget` and the list operations are not, so a history over a key
+    that is also a list has a hole in it.
+  * A watched key holds its whole revision list in memory: a long document edited for an hour keeps
+    every step's text. Snapshot-per-step is simple and, for the sizes a Gossamer program holds,
+    cheap — but it is not what a production editor would do.
+  * `history::step` writes through the store and does not ask for a frame, so a program that is not
+    animating must ask for one to see the change. The editor does.

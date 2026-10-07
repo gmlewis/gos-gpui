@@ -1,0 +1,35 @@
+WH1 — minimum window size.
+
+BEFORE THE WORK. Against a pristine copy of this project at HEAD
+(`git archive HEAD` into /tmp/gpui-before, the probe and the headless test copied
+in, the runner build lock cleared first):
+
+    cd /tmp/gpui-before
+    timeout -k 5 25 gos run --main-thread tests/gui/wh_window_options.gos
+
+Output: nothing on stdout or stderr, exit 124 — the timeout killed it. This is the
+weak kind of red, and worth being exact about why: `gpui::window_option` is the
+*first* call the probe makes on frame 2, above the `gpui::animate()` that would ask
+for the next frame, so the callback is abandoned, the window goes idle, and the
+probe never quits. The interpreter draws the unresolved name as an error card *in
+the window*; nothing reaches a terminal.
+
+`gos check` does not catch it either: at HEAD it answers `check: ok (1 items
+typed)` on this probe. That is the trap the ledger already names — the checker is
+not proof.
+
+The row's premise is exactly right and was re-verified against the source before
+touching anything: `WindowOptions` has `window_min_size: Option<Size<Pixels>>`
+(`gpui-0.2.2/src/platform.rs:1127`) and the macOS backend applies it
+(`setContentMinSize_`, `platform/mac/window.rs:749-753`), but nothing in this
+binding ever wrote the field. The old `app.rs::window_options` parsed twelve keys
+and `window_min_size` was not one of them, so `minsize=420,240` was not merely
+unimplemented — it was a token that no reader and no checker would ever mention.
+
+The break that isolates this row's mechanism — `window_min_size` set to `None` in
+`gpui-binding/src/options.rs::build`, everything else untouched:
+
+    FAIL WH1 the window reports a minimum size of "", not the 420,240 it asked for
+
+Restored immediately, and the restore re-checked by the `check` tier below, which
+recompiles the binding.

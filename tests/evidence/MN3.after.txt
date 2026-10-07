@@ -1,0 +1,46 @@
+MN3 — separators that do not shift the action mapping: **tested** for that clause; the row's
+other two clauses are recorded unreachable, because the API they need does not exist.
+
+AFTER THE WORK. Headless, so the locked screen does not matter — the mapping is arithmetic
+on a list of strings:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    PASS a_separator_does_not_shift_the_slots (4 assertions)
+    PASS the_other_entry_kinds_take_no_slot (2 assertions)
+    PASS a_menu_entry_that_is_not_one_is_dropped (1 assertion)
+    test: 108 passed, 0 failed, 407 assertion(s)
+
+What is new, and it is one function used twice:
+
+  * `gpui-binding/src/app.rs` — `menu_plan(items)` reads a menu's entry list into the items
+    it describes, numbering an `"events:"` entry's slot by counting **events entries**.
+    `process_requests` now *builds* the menu from it, and `gpui::menu_slots` *reports* it, so
+    the wiring and the reader cannot drift apart — the reader is not a second opinion about
+    the numbering, it is the same code.
+  * `gpui-binding/src/lib.rs` — `gpui::menu_slots(items)` answers `"<slot>:<label>"` for every
+    `events` entry, and `set_menus`'s doc, which said "maps entries onto them by position",
+    now says what it means: by counting events entries, with a separator taking no slot.
+  * `"quits"` with no label now defaults to `"Quit"` rather than building an item with an
+    empty name.
+
+**A behaviour change worth naming.** A program that put a separator in front of an action
+used to see that action answer `"menu|2"`; it now answers `"menu|1"`. That is the fix, and it
+is the kind of change that wants saying out loud rather than discovering. No example is
+affected: `examples/17_set_menus.gos` passes `["separator", "quits:Quit"]` and has no `events`
+entry at all.
+
+**The row's other two clauses: checkmarks and disabled items.** They are not checkable here
+because they do not exist upstream:
+
+    $ grep -n "impl MenuItem" -A 40 ~/.cargo/registry/src/*/gpui-0.2.2/src/platform/app_menu.rs | grep "pub fn "
+        pub fn separator() -> Self
+        pub fn submenu(menu: Menu) -> Self
+        pub fn os_submenu(name: impl Into<SharedString>, menu_type: SystemMenuType) -> Self
+        pub fn action(name: impl Into<SharedString>, action: impl Action) -> Self
+        pub fn os_action(name: ..., action: ..., os_action: OsAction) -> Self
+
+There is no `checked` and no `disabled` on a `MenuItem` in gpui 0.2.2, so no token language
+can reach them; recorded in `## Unreachable` beside the other upstream absences.
+
+What the check is not: it does not click a menu. Whether the action a slot is wired to is
+the one that *fires* needs a menu bar and a human, which is W8's standing doubt as well.

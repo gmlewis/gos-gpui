@@ -1,0 +1,59 @@
+DW8 — the scrollbar's thumb: where it goes, how long it is, and what pulls it.
+
+AFTER THE WORK. Headless for the arithmetic; the element is read, not seen.
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    test: 284 passed, 0 failed, 1005 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 64 file(s), 40 with no tests
+
+    $ ./scripts/tiers tests/dw8_scrollbar_test.gos check
+    === check ===
+    check: ok (16 items typed)
+
+Both are clean: no lints in the new test file, and the binding builds for every tier the check tier
+reaches.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `scroll.rs` — `thumb_pixels`, the arithmetic: the length is the track's share of the document it
+    is showing (`track * track / (track + max)`), floored at a minimum and capped at the track; the
+    start is the fraction scrolled measured over the thumb's **travel**, so its far end meets the
+    track's end at the bottom. `thumb` and `scrollbar_thumb` are the same numbers as text, and
+    `thumb_of` reads them for a scrolled element the binding already keeps an offset for. Then
+    `paint` — one quad where those numbers say, the track itself being the element's background —
+    and `jump`, which turns a press into an offset, plus the `TRACKS` registry that lets a press know
+    where the track is, since a canvas is given its bounds only while it paints.
+  * `view.rs` — `Kind::Scrollbar { id, axis }`: a `canvas` inside the styled `div` that carries the
+    handlers, because a canvas on its own is not an element anything can be pressed on. The element
+    id is `~scrollbar|<id>|<axis>`, in the binding's own namespace.
+  * `style.rs` — the `thumb=<colour>` token, and its place in the known-token list so
+    `gpui::unknown_style_tokens` does not report it.
+  * `lib.rs` — `scrollbar(id, axis, style)`, `scrollbar_thumb(id, axis, track, min)` and
+    `thumb_geometry(offset, max, track, min)`.
+  * `README.md` — the `ui::` table row, with the reader and the element in the same sentence.
+
+**One shared function, three callers** — the element that draws, the reader that reports, and the
+four-numbers-in form a program with its own scrollbar uses. That is the whole reason the element's
+numbers can be trusted to be the numbers the reader answers.
+
+Residual doubt, and the windowed half is most of the row.
+
+  * **The element has never been drawn and the press has never been pressed.** `Kind::Scrollbar`,
+    `scroll::paint` and `scroll::jump` compile and are wired, and nothing has observed them: a
+    window is needed, and this machine's owner has forbidden one. What is checked is the arithmetic
+    they call. In particular the *drag* — "driving real offsets", the row's own words — is
+    unverified, and so is the claim that a canvas inside a div receives the mouse events the div's
+    handlers are attached to.
+  * `jump` puts the thumb's **middle** under the pointer, which is the jump-to behaviour rather than
+    the relative drag some toolkits use. Both move a real offset; only one of them is implemented,
+    and the choice is documented rather than accidental.
+  * The thumb's minimum is `DEFAULT_MIN_THUMB` (24px) and is not reachable from the style. A program
+    that wants another can draw its own with `thumb_geometry`, which is what the reader is for.
+  * `TRACKS` grows one entry per (window, scrollbar) and is never pruned — bounded by how many
+    distinct bars a program draws, but unbounded in principle, like every other per-element registry
+    in this crate.
+  * The default thumb colour (`#585b70`) is a literal in `view.rs` rather than a theme token, so it
+    does not change with the appearance. TH5's tokens are the place that would fix it.
+  * `02_data_table`'s inert thumb is **not yet replaced** with this element: changing an example
+    cannot be verified while windows are forbidden, which is the same reason DW9 left
+    `12_ownership_post` alone.

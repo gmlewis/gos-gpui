@@ -1,0 +1,72 @@
+BG6 — animation: pause, resume, stop, duration and easing.
+
+AFTER THE WORK.
+
+The headless half — `env -u GOSSAMER_IN_RUNNER gos test tests`:
+
+    test: 171 passed, 0 failed, 615 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 51 file(s), 35 with no tests
+
+The GUI half, on every tier, byte-identical:
+
+    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/bg6_animation.gos
+    === check ===
+    check: ok (1 items typed)
+
+    === run (interpreter) (exit 0) ===
+    OK BG6 a 300ms animation ran, held its phase while paused, reached the end when resumed, and was gone after it was stopped
+
+    === run --no-jit (exit 0) ===
+    OK BG6 a 300ms animation ran, held its phase while paused, reached the end when resumed, and was gone after it was stopped
+
+    === build (debug) ===
+    build: 26899208B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+    === build -> ./target/debug/learn-gpui (exit 0) ===
+    OK BG6 a 300ms animation ran, held its phase while paused, reached the end when resumed, and was gone after it was stopped
+
+    === build --release ===
+    build: 7658248B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+    === release -> ./target/release/learn-gpui (exit 0) ===
+    OK BG6 a 300ms animation ran, held its phase while paused, reached the end when resumed, and was gone after it was stopped
+
+The duplicate-symbol `ld` warnings on both builds are the toolchain's and predate this run.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `app.rs` — `Animation { duration_ms, elapsed_ms, running_since, easing }` and one
+    `ANIMATIONS` map per window. The clock is the binding's rather than the program's:
+    `elapsed_ms` is what it has run for, `running_since` is when the current run began, so a
+    **pause** adds the run to the total and stops counting, and a **resume** starts counting
+    again — neither recomputed from a start time, neither kept in the program's own state.
+    `easing_names` and `easing_at` are the four curves (`linear`, `ease-in`, `ease-out`,
+    `ease-in-out`), clamped and anchored at both ends, with an unknown name answering
+    `linear`. `process_requests` now returns "ask for another frame" if any of the window's
+    animations is running **and unfinished**, so a paused or finished one stops asking — a
+    program does not have to call `gpui::animate` to keep its own animation moving.
+  * `store.rs` — `Animation`, `AnimationPause`, `AnimationResume`, `AnimationStop`.
+  * `lib.rs` — `gpui::animation`, `animation_phase`, `animation_state`, `animation_pause`,
+    `animation_resume`, `animation_stop`, `animation_easings`, `easing_at`, each documented.
+  * `README.md` — the `gpui::animation` row beside `gpui::animate`, including the painter
+    seam.
+  * The tests: `tests/bg6_easing_test.gos` (five headless cases for the curves) and
+    `tests/gui/bg6_animation.gos` (the clock, over about 1.2 seconds).
+
+**The three claims are checked apart from each other.** Pause is checked by reading the phase
+twice while held and requiring the *same number*; resume by requiring the phase a tenth of a
+second later to be past four fifths, which a restart could not be; stop by requiring both the
+state `"none"` and a phase at zero. `BG6.before.txt` carries a break for each, and each failed
+its own assertion and no other.
+
+Residual doubt. **The easing curve is applied to the phase but nothing checks that a running
+animation is *sampled* through its curve over time** — the probe uses `linear`, and the curves
+are checked headlessly as arithmetic (`easing_at`) rather than through the clock, so a binding
+that stored the easing name and ignored it in `animation_phase` would pass both halves. That
+is the one seam left unprobed, and it is one assertion away: read the phase twice under
+`ease-in` and require the ratio not to be the ratio of the times. A **duration of zero** is
+floored to 1ms by `gpui::animation`, and an animation whose id is never started answers phase
+`0.0` and state `"none"`, which is also what a stopped one answers — a program cannot tell
+"never started" from "stopped", and both are what a fresh id should be. `animation_state`
+reports `"done"` for a finished animation whether it was paused or not, so a program that
+pauses right at the end sees `"done"` rather than `"paused"`. And the painter is exercised with
+a real `gpui::draw("bars", gpui::animation_phase("grow"), …)` in the probe's own tree, but what
+it *looks like* is pixels this machine cannot capture.

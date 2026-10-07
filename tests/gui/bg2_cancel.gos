@@ -1,0 +1,115 @@
+// BG2 — cancelling background work that is already in flight.
+//
+// Tier: every tier.
+//
+// `gpui::task` ends with `.detach()`, and the work runs on GPUI's background executor where
+// nothing holds a handle to it. So a program that starts slow work and then wants it stopped
+// — the user closed the panel, the input changed, the window is going away — has nothing to
+// stop it with. The work runs to the end, leaves its result, and raises its event anyway.
+//
+// Pass means a cancelled task raises **no** event and leaves **no** result, that the reader
+// says whether one is in flight, and — the assertion that stops this being a global switch —
+// that a task which was *not* cancelled still finishes normally.
+//
+// The probe runs in well under a second: 200ms of work, cancelled 30ms in, and a verdict once
+// the work would have been long over.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("bg2 - cancel work", 380.0, 220.0, || {
+        let f = gpui::frame()
+        let phase = gpui::state_int("bg2.phase", 0)
+
+        let mut cancelled = 0
+        let mut control = 0
+        for event in gpui::take_events() {
+            let id, _ = gpui::event_parts(event)
+            if id == "work" {
+                cancelled = cancelled + 1
+            } else if id == "other" {
+                control = control + 1
+            }
+        }
+        gpui::set_int("bg2.cancelled_events", gpui::state_int("bg2.cancelled_events", 0) + cancelled)
+        gpui::set_int("bg2.control_events", gpui::state_int("bg2.control_events", 0) + control)
+
+        if f == 2 {
+            gpui::task("work", 200)
+            gpui::task("other", 120)
+        }
+        if f == 3 {
+            // A frame later: a request is applied during the frame that raised it.
+            if gpui::task_running("work") {
+                gpui::set_text("bg2.running_start", "yes")
+            } else {
+                gpui::set_text("bg2.running_start", "no")
+            }
+        }
+        if phase == 0 && gpui::now() >= 0.03 {
+            gpui::task_cancel("work")
+            gpui::set_int("bg2.phase", 1)
+        }
+        if phase == 1 && gpui::now() >= 0.06 {
+            if gpui::task_running("work") {
+                gpui::set_text("bg2.running_after_cancel", "yes")
+            } else {
+                gpui::set_text("bg2.running_after_cancel", "no")
+            }
+            gpui::set_int("bg2.phase", 2)
+        }
+        if phase == 2 && gpui::now() >= 0.7 {
+            // Long past the 200ms the cancelled work was asked for.
+            gpui::set_text("bg2.cancelled_result", gpui::task_result("work"))
+            gpui::set_text("bg2.control_result", gpui::task_result("other"))
+            gpui::set_int("bg2.phase", 3)
+        }
+
+        if phase == 3 {
+            let running_start = gpui::state_text("bg2.running_start", "")
+            let running_after_cancel = gpui::state_text("bg2.running_after_cancel", "")
+            let cancelled_events = gpui::state_int("bg2.cancelled_events", -1)
+            let cancelled_result = gpui::state_text("bg2.cancelled_result", "")
+            let control_events = gpui::state_int("bg2.control_events", -1)
+            let control_result = gpui::state_text("bg2.control_result", "")
+
+            // One exclusive chain ending in the verdict: `gpui::quit()` asks the
+            // app to stop, it does not abort the callback that called it. Every branch is
+            // a positive condition, because the linter is right that `if !flag` and
+            // `if flag == false` are both noise.
+            if running_start != "yes" {
+                println(f"FAIL BG2 a task that was just started reports running as \"{running_start}\"")
+                gpui::quit()
+            } else if running_after_cancel != "no" {
+                println(f"FAIL BG2 a cancelled task still reports running as \"{running_after_cancel}\"")
+                gpui::quit()
+            } else if cancelled_events != 0 {
+                println(f"FAIL BG2 the cancelled task raised its event anyway, {cancelled_events} time(s)")
+                gpui::quit()
+            } else if cancelled_result != "" {
+                println(f"FAIL BG2 the cancelled task left a result anyway: \"{cancelled_result}\"")
+                gpui::quit()
+            } else if control_events != 1 {
+                println(f"FAIL BG2 the task that was NOT cancelled raised its event {control_events} times, not once, so the cancel stopped more than one task")
+                gpui::quit()
+            } else if control_result == "" {
+                println("FAIL BG2 the task that was NOT cancelled left no result")
+                gpui::quit()
+            } else {
+                println(f"OK BG2 a task in flight was reported running, cancelled 30ms in, and left neither an event nor a result, while the task beside it finished and left \"{control_result}\"")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 size=full bg=#111111")
+        gpui::child(root, gpui::text("bg2", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL BG2 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

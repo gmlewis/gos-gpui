@@ -1,0 +1,80 @@
+// MN2 — OS actions and the application/dock menu, installed.
+//
+// Tier: every tier.
+//
+// The headless cases in `tests/mn2_os_actions_test.gos` pin the grammar. This pins what reaches
+// the platform, and it can be read directly rather than inferred from a keystroke — which is a
+// better position than MN1 was in. `gpui::installed_menu()` walks the menu bar the platform was
+// given, and `gpui::installed_menu_os_actions()` the system selectors among its items.
+//
+// Pass means three things:
+//
+//   * the **Services** menu arrived as a system menu, not as an ordinary submenu;
+//   * the `os:` entry arrived carrying its selector — `Copy` — which is the whole point of the
+//     kind, since the OS performs that action and a plain item would not;
+//   * and the dock menu (which the binding can install and **not read back**: gpui has no
+//     `get_dock_menu`) was accepted without the process falling over.
+//
+// What the dock menu *does* is unchecked and named as such in the evidence — it is the one thing
+// in this row with no observable at all.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("mn2 - os actions", 380.0, 240.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            gpui::set_menus("App", #[
+                "submenu:Edit",
+                ">os:Copy:copy",
+                ">os:Paste:paste",
+                ">services:Services",
+                "events:Quit App",
+            ])
+            // Right-clicking the dock icon. Installed, and — gpui having no getter — not
+            // readable; what this proves is that the request is accepted and the app survives it.
+            gpui::set_dock_menu(#["events:New Window", "separator", "events:Quit App"])
+        }
+
+        if f >= 10 {
+            let installed = gpui::installed_menu()
+            let os_actions = gpui::installed_menu_os_actions()
+
+            // One exclusive chain ending in the verdict: `gpui::quit()` asks the
+            // app to stop, it does not abort the callback that called it. Every branch is
+            // a positive condition, because the linter is right that `if !flag` and
+            // `if flag == false` are both noise.
+            if installed.len() != 6 {
+                println(f"FAIL MN2 the installed menu bar has {installed.len()} items, not the 6 that were declared: {installed}")
+                gpui::quit()
+            } else if installed[4] != "2:system:Services:" {
+                println(f"FAIL MN2 the Services menu was installed as \"{installed[4]}\", not as a system menu")
+                gpui::quit()
+            } else if os_actions.len() != 2 {
+                println(f"FAIL MN2 the platform has {os_actions.len()} system action(s), not the 2 declared: {os_actions}")
+                gpui::quit()
+            } else if os_actions[0] != "2:Copy:copy" {
+                println(f"FAIL MN2 the Copy item arrived as \"{os_actions[0]}\", so its selector did not survive the build")
+                gpui::quit()
+            } else if os_actions[1] != "2:Paste:paste" {
+                println(f"FAIL MN2 the Paste item arrived as \"{os_actions[1]}\"")
+                gpui::quit()
+            } else {
+                println(f"OK MN2 the Services menu arrived as a system menu and both system actions arrived carrying their own selectors ({os_actions[0]}, {os_actions[1]}), and the dock menu was accepted")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 size=full bg=#111111")
+        gpui::child(root, gpui::text("mn2", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL MN2 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

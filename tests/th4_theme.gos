@@ -1,0 +1,31 @@
+// TH4 — theme overrides at token level: the same assertions as `tests/th4_theme_test.gos`
+// as a program, so they run on the interpreter and on both LLVM builds. No window: a
+// theme override is a parse, and a parse needs no frame.
+
+use gpui
+
+fn main() {
+    let mut bad = 0
+
+    if gpui::unknown_style_tokens("theme.background=#111111 theme.text=#eeeeee").len() != 0 {
+        eprintln("FAIL TH4 theme.<field>= is refused as an unknown token")
+        bad = bad + 1
+    }
+    let all = gpui::theme_override("theme.text=#111111 theme.selected_text=#222222 theme.background=#333333 theme.disabled=#444444 theme.selected=#555555 theme.border=#666666 theme.separator=#777777 theme.container=#888888")
+    if all != "text,selected_text,background,disabled,selected,border,separator,container" {
+        eprintln(f"FAIL TH4 the eight fields read back as \"{all}\"")
+        bad = bad + 1
+    }
+    if gpui::theme_override("theme.accent=#ff0000") != "" {
+        eprintln("FAIL TH4 accent is not a colour gpui has, and is not overridable")
+        bad = bad + 1
+    }
+    if gpui::unknown_style_tokens("theme.accent=#ff0000").len() != 1 {
+        eprintln("FAIL TH4 a name that is not a platform colour is not reported")
+        bad = bad + 1
+    }
+
+    if bad == 0 {
+        println("OK TH4 all eight of the platform's colours are overridable by theme.<field>= tokens, in order, and a name that is not one is refused")
+    }
+}

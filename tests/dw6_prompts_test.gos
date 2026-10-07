@@ -1,0 +1,123 @@
+// DW6 — queued prompts.
+//
+// Headless: `gos test tests`. The row is "prompt/dialog widget: queued prompts with buttons, plus a
+// file-picker fallback". gpui's own dialog is `Window::prompt` (`window.rs:4141`), which is one
+// dialog at a time — two prompts in one frame is a re-entrant call gpui refuses outright
+// (`unreachable!("Re-entrant window prompting is not supported by GPUI")`). So the queue is the
+// binding's share, and a queue is a registry: it can be checked without a window even though the
+// dialog cannot.
+//
+// **The queue is usable on its own**, which is what makes this row finishable here: a program draws
+// its own dialog from `ui::rect` / `ui::button`, reads the head with `gpui::prompt_current` and its
+// answers with `gpui::prompt_buttons`, and answers it with `gpui::prompt_answer`. The native dialog
+// is the *other* consumer of the same queue, and it is the one that needs a window.
+//
+// Pass means: a prompt is queued and read back with its buttons in order, answers come in order and
+// only the head can be answered, an answer raises its own event, a prompt with no answers is refused
+// rather than queued as a dead end, a queued prompt can be cancelled before its turn, and an empty
+// queue answers nothing.
+//
+// The queue belongs to window 0 in these tests, and they share it, so each case clears it first
+// rather than trusting the one before to have tidied up.
+
+use gpui
+
+#[test]
+fn a_prompt_is_queued_and_read_back() {
+    gpui::prompts_clear()
+    let id = gpui::prompt("Unsaved", "Save before closing?", "Save;Discard;Cancel")
+    assert(id > 0, f"a prompt with answers is queued: {id}")
+    assert(
+        gpui::prompt_current() == f"{id}|Unsaved|Save before closing?",
+        f"and read back with its own id: {gpui::prompt_current()}",
+    )
+    assert(
+        gpui::prompt_buttons() == #["Save", "Discard", "Cancel"],
+        f"with its buttons in the order given: {gpui::prompt_buttons()}",
+    )
+    let _ = gpui::prompts_clear()
+}
+
+#[test]
+fn answers_come_in_order_and_only_the_head_can_be_answered() {
+    gpui::prompts_clear()
+    let first = gpui::prompt("One", "", "Yes;No")
+    let second = gpui::prompt("Two", "", "Yes;No")
+    assert(first > 0, "the first is queued")
+
+    assert(
+        !gpui::prompt_answer(second, 0),
+        "the second cannot be answered before its turn — that is what a queue is for",
+    )
+    assert(gpui::prompt_current() == f"{first}|One|", "the first is still up")
+
+    assert(gpui::prompt_answer(first, 1), "the first answers")
+    assert(gpui::prompt_current() == f"{second}|Two|", "and the second is now up")
+    assert(gpui::prompt_answer(second, 0), "and answers in its turn")
+    assert(gpui::prompt_current() == "", "leaving nothing behind")
+    let _ = gpui::prompts_clear()
+}
+
+#[test]
+fn an_answer_raises_its_own_event() {
+    gpui::prompts_clear()
+    let _ = gpui::take_events() // the queue is window 0's, and so is its event queue
+    let id = gpui::prompt("Ask", "", "Yes;No")
+    assert(gpui::prompt_answer(id, 1), "answered with the second button")
+    let events = gpui::take_events()
+    assert(events.len() == 1, f"one event, got {events.len()}")
+    assert(
+        events[0] == f"prompt|{id}|1",
+        f"naming the prompt and which button: {events[0]}",
+    )
+    let _ = gpui::prompts_clear()
+}
+
+#[test]
+fn a_prompt_with_no_answers_is_refused() {
+    gpui::prompts_clear()
+    assert(
+        gpui::prompt("Nothing", "No way out", "") == 0,
+        "a dialog with nothing to click is a dead end, so it is not queued at all",
+    )
+    assert(
+        gpui::prompt("Nothing", "Also nothing", ";;") == 0,
+        "and neither are empty labels",
+    )
+    assert(gpui::prompts() == #[], "so the queue is still empty")
+    let _ = gpui::prompts_clear()
+}
+
+#[test]
+fn a_queued_prompt_can_be_cancelled_before_its_turn() {
+    gpui::prompts_clear()
+    let first = gpui::prompt("One", "", "Yes")
+    let second = gpui::prompt("Two", "", "Yes")
+    assert(gpui::prompt_cancel(second), "the one that never came up can be dropped")
+    assert(!gpui::prompt_cancel(second), "and only once")
+    assert(gpui::prompt_answer(first, 0), "the first still answers")
+    assert(gpui::prompt_current() == "", "and the cancelled one never takes its turn")
+    let _ = gpui::prompts_clear()
+}
+
+#[test]
+fn an_empty_queue_answers_nothing() {
+    gpui::prompts_clear()
+    assert(gpui::prompt_current() == "", "nothing to show")
+    assert(gpui::prompt_buttons() == #[], "and nothing to click")
+    assert(!gpui::prompt_answer(1, 0), "and nothing to answer")
+    assert(gpui::prompts() == #[], "the queue reads empty")
+    assert(gpui::prompts_clear() == 0, "and clearing it drops nothing")
+}
+
+#[test]
+fn a_queue_belongs_to_one_window() {
+    gpui::prompts_clear()
+    gpui::prompts_clear_in(11)
+    let id = gpui::prompt_in(11, "Mine", "", "Yes")
+    assert(gpui::prompt_current_in(11) == f"{id}|Mine|", "window 11 has it")
+    assert(gpui::prompt_current_in(12) == "", "window 12 does not")
+    assert(!gpui::prompt_answer_in(12, id, 0), "and cannot answer it")
+    assert(gpui::prompt_answer_in(11, id, 0), "the window that owns it can")
+    let _ = gpui::prompts_clear_in(11)
+}

@@ -1,0 +1,60 @@
+KM5 — `observe_keystrokes` must see keys an element handled.
+
+AFTER THE WORK — **complete, and the five-tier run is in.** The screen was locked in round
+21 (see "The screen is locked"), which is why this file said `implemented` and not `tested`;
+a later session found the screen awake and ran the missing tier, unchanged code and unchanged
+probe:
+
+    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/km5_observed_keys.gos
+    === check ===
+    check: ok (1 items typed)
+
+    === run (interpreter) (exit 0) ===
+    OK KM5 the editor handled "a" and backspace, the observer saw 2 keystrokes: a backspace, and the editor's text is back to empty
+
+    === run --no-jit (exit 0) ===
+    OK KM5 the editor handled "a" and backspace, the observer saw 2 keystrokes: a backspace, and the editor's text is back to empty
+
+    === build (debug) ===
+    build: 26657384B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+    === build -> ./target/debug/learn-gpui (exit 0) ===
+    OK KM5 the editor handled "a" and backspace, the observer saw 2 keystrokes: a backspace, and the editor's text is back to empty
+
+    === build --release ===
+    build: 7534616B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+    === release -> ./target/release/learn-gpui (exit 0) ===
+    OK KM5 the editor handled "a" and backspace, the observer saw 2 keystrokes: a backspace, and the editor's text is back to empty
+
+All four GUI tiers agree byte-for-byte on the verdict line. The two builds print the
+duplicate-symbol link warnings this project has carried since round 2; those are the
+toolchain's, they are in `build`, not in the program's own output, and every tier's run
+transcript is silent but for `OK`.
+
+The probe types `"a"` and then `backspace` into a focused editor and requires three things:
+that the observer saw two keystrokes, that it saw *those* two (` a backspace`), and that the
+editor's own text — which the editor publishes to the store under its key — is back to empty.
+The third is what stops the check from passing on a binding that merely *reports* keystrokes
+without the editor doing anything with them.
+
+What is new:
+
+  * `gpui-binding/src/lib.rs` — `gpui::send_key(stroke)`. `Keystroke::parse` reads gpui's
+    grammar (`"shift-tab"`, `"cmd-c"`, `"up"`) and `Window::dispatch_keystroke`
+    (`window.rs:3540`) delivers it after the frame that asked, so the focused element
+    handles it exactly as it would a real key. A string it cannot parse raises
+    `"~key.bad|<stroke>"` rather than failing silently.
+  * `gpui-binding/src/view.rs` — the window root's listener is registered with
+    **`.capture_key_down`** rather than `.on_key_down`, so it is dispatched from the root
+    down to the focused element, before any handler below it can stop propagation. It
+    serves both `gpui::on_keys` and every observer id, and `KEY_OBSERVERS` + `add_key_observer`
+    record the ids per window.
+  * `gpui-binding/src/app.rs` — `Request::ObserveKeys` records the id instead of installing
+    `cx.observe_keystrokes`; `Request::SendKey` parses and defers the dispatch.
+  * `scripts/docs` — claim 5 rewritten in the same round, as the rule requires. It used to
+    assert that the doc *admits* which keys never arrive; it now asserts that the doc
+    promises the keys an element handled and names the capture phase that makes it true.
+
+Residual doubt, beyond the missing tier run: the observer list is read when the root is
+built, so a program that registers an observer from a callback that runs later than the
+frame which renders takes effect on the next frame; and the check depends on the editor
+holding focus, which it does because it takes focus when it opens.

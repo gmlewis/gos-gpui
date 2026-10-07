@@ -16,7 +16,8 @@ use std::path::PathBuf;
 use gpui::prelude::*;
 use gpui::{
     canvas, div, fill, img, point, px, relative, svg, uniform_list, AnyElement, App, Bounds,
-    ElementId, EntityId, FocusHandle, KeyDownEvent, MouseButton, Pixels, SharedString, Svg, Window,
+    ElementId, EntityId, FocusHandle, KeyDownEvent, KeyUpEvent, MouseButton, Pixels, SharedString,
+    Svg, Window,
 };
 
 use gossamer_binding::{NativeDispatch, RetainedCallback, Value};
@@ -124,6 +125,9 @@ pub enum Kind {
     Virtual { count: usize, build: RetainedCallback, row_height: f64 },
     /// A `canvas` painted by one of the routines below.
     Canvas { painter: String, phase: f64 },
+    /// A scrollbar for a scrolled element: a track, drawn as the element's own background, with a
+    /// thumb that follows the element's offset and can be pulled to set it.
+    Scrollbar { id: String, axis: String },
     /// A `canvas` that paints built paths, in order.
     Paths { paths: Vec<i64>, backgrounds: Vec<String> },
     /// A wrapper that reports pointer events for the element it holds.
@@ -230,6 +234,21 @@ thread_local! {
         RefCell::new(HashMap::new());
     static COLORS: RefCell<HashMap<i64, HashMap<String, String>>> = RefCell::new(HashMap::new());
     static WINDOW_RECT: RefCell<HashMap<i64, (f64, f64, f64, f64)>> = RefCell::new(HashMap::new());
+    /// The window's *content* rectangle, which the platform insets from the outer
+    /// one on Windows, Wayland and X11 — and which macOS reports as the outer one,
+    /// because there is no such inset here.
+    static INNER_RECT: RefCell<HashMap<i64, (f64, f64, f64, f64)>> = RefCell::new(HashMap::new());
+    /// What `Window::window_bounds` says about the window: windowed, maximized or
+    /// fullscreen, and — for the last two — the size it would go back to. gpui keeps
+    /// that restore size inside the `WindowBounds` variant, which is the only place a
+    /// program can read it.
+    static BOUNDS_STATE: RefCell<HashMap<i64, (&'static str, f64, f64)>> = RefCell::new(HashMap::new());
+    /// The platform colours the window's root asked to override, recorded as the frame
+    /// that carried them was built. They are applied to the next frame's colours, because
+    /// the colours are read at the *start* of a frame — before the view callback that
+    /// describes the root — and a program's style string is only known once it has run.
+    static THEME_OVERRIDES: RefCell<HashMap<i64, Vec<(String, gpui::Hsla)>>> =
+        RefCell::new(HashMap::new());
     static DISPLAYS: RefCell<HashMap<i64, Vec<Display>>> = RefCell::new(HashMap::new());
     static KEYBOARD: RefCell<String> = const { RefCell::new(String::new()) };
 
@@ -480,29 +499,63 @@ pub fn clipboard_kind() -> String {
 /// The eight names are `gpui::colour_names()`; there are exactly eight fields, so
 /// this is the whole of what the platform offers rather than a selection from it.
 fn named_colors(colors: &gpui::colors::Colors) -> HashMap<String, String> {
-    let hex = |c: gpui::Rgba| {
-        format!(
-            "#{:02x}{:02x}{:02x}{:02x}",
-            (c.r * 255.0).round() as u8,
-            (c.g * 255.0).round() as u8,
-            (c.b * 255.0).round() as u8,
-            (c.a * 255.0).round() as u8,
-        )
-    };
-    let mut map = HashMap::new();
-    map.insert("text".into(), hex(colors.text));
-    map.insert("selected_text".into(), hex(colors.selected_text));
-    map.insert("background".into(), hex(colors.background));
-    map.insert("disabled".into(), hex(colors.disabled));
-    map.insert("selected".into(), hex(colors.selected));
-    map.insert("border".into(), hex(colors.border));
-    map.insert("separator".into(), hex(colors.separator));
-    map.insert("container".into(), hex(colors.container));
-    map
+    colour_fields(colors)
+        .into_iter()
+        .map(|(name, colour)| (name.to_string(), hex(colour)))
+        .collect()
+}
+
+/// The eight platform colours, each once, under the name it answers to.
+///
+/// One list, two renderings: [`named_colors`] turns it into the hex strings
+/// `gpui::default_color` answers with, and [`colour_table`] into the `Hsla` values the
+/// style language resolves `theme:<name>` against. Neither can gain a ninth without the
+/// other, and `gpui::colour_names` is the same eight.
+fn colour_fields(colors: &gpui::colors::Colors) -> [(&'static str, gpui::Rgba); 8] {
+    [
+        ("text", colors.text),
+        ("selected_text", colors.selected_text),
+        ("background", colors.background),
+        ("disabled", colors.disabled),
+        ("selected", colors.selected),
+        ("border", colors.border),
+        ("separator", colors.separator),
+        ("container", colors.container),
+    ]
+}
+
+/// `#rrggbbaa`, lower case: the form every colour reader in this binding answers in.
+pub fn hex(c: gpui::Rgba) -> String {
+    format!(
+        "#{:02x}{:02x}{:02x}{:02x}",
+        (c.r * 255.0).round() as u8,
+        (c.g * 255.0).round() as u8,
+        (c.b * 255.0).round() as u8,
+        (c.a * 255.0).round() as u8,
+    )
+}
+
+/// The frame's colours as the style language's vocabulary, for `theme:<name>` values
+/// to resolve against.
+fn colour_table(colors: &gpui::colors::Colors) -> HashMap<String, gpui::Hsla> {
+    colour_fields(colors)
+        .into_iter()
+        .map(|(name, colour)| (name.to_string(), colour.into()))
+        .collect()
+}
+
+/// What a style value resolves to right now, as `#rrggbbaa`.
+///
+/// Literals resolve to themselves; a `theme:<name>` value resolves against this window's
+/// table — the platform's palette, the theme [`crate::view::theme_choice`] chose, and any
+/// `theme.<field>=` overrides, in that order. The same call the element path makes, so a
+/// program can see what it is about to draw with instead of guessing.
+pub fn resolve_colour(spec: &str) -> String {
+    hex(style::colour(spec).into())
 }
 
 /// gpui's two appearances, as one word each.
-fn appearance_of(appearance: gpui::WindowAppearance) -> String {
+pub fn appearance_of(appearance: gpui::WindowAppearance) -> String {
     match appearance {
         gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => "dark".into(),
         _ => "light".into(),
@@ -546,6 +599,18 @@ pub fn default_color_for(appearance: &str, name: &str) -> String {
 pub fn default_color(name: &str) -> String {
     let win = window::current();
     COLORS.with(|c| c.borrow().get(&win).and_then(|m| m.get(name)).cloned().unwrap_or_default())
+}
+
+/// The palette a program asked the named colour table to answer from, as
+/// `"system"`, `"light"` or `"dark"`.
+///
+/// `"system"` — the default — means the platform's own choice of palette for this
+/// window's appearance; the other two pin the table whatever the desktop is set to.
+/// It selects the colours a *program* reads and draws with; it does not change what
+/// [`appearance`] reports, which stays the operating system's answer, and it does not
+/// repaint the platform's window chrome.
+pub fn theme_choice(win: i64) -> String {
+    store::get_text_in(win, "~theme", "system")
 }
 
 /// How far the scrolled element `id` has scrolled in this window, on `axis`.
@@ -804,6 +869,63 @@ pub fn unknown_style_tokens(spec: &str) -> Vec<String> {
     style::unknown_tokens(spec)
 }
 
+/// Where a program's assets live, as it declared it, or `""` when it declared nothing.
+pub fn asset_root() -> String {
+    store::get_text("~asset.root", "")
+}
+
+/// Resolves an asset name against the program's declared root.
+///
+/// An empty name, and an absolute path, come back unchanged — a program that knows where its
+/// asset is is believed. Otherwise the declared root is tried first, and the name is handed back
+/// as it was given when the root does not have it. That fallback is what keeps a program that
+/// declares no root behaving exactly as it did before: `img(PathBuf::from(path))` and
+/// `svg().path(..)` resolve against the process's working directory, which is where a
+/// double-clicked program's working directory is *not*.
+///
+/// One resolver, three callers: the `image` element, the `icon` element, and `gpui::asset_path`,
+/// so what a program checks is what it gets.
+pub fn asset_path(name: &str) -> String {
+    if name.is_empty() || std::path::Path::new(name).is_absolute() {
+        return name.to_string();
+    }
+    let root = asset_root();
+    if root.is_empty() {
+        return name.to_string();
+    }
+    let candidate = std::path::Path::new(&root).join(name);
+    if candidate.exists() {
+        candidate.to_string_lossy().into_owned()
+    } else {
+        name.to_string()
+    }
+}
+
+/// The platform colours `spec` overrides, as `"selected,border"`.
+pub fn theme_override(spec: &str) -> String {
+    style::theme_overrides(spec)
+        .into_iter()
+        .map(|(field, _)| field)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The interaction refinements `spec` carries, as `"hover,active,focus"`.
+pub fn style_refinements(spec: &str) -> String {
+    let (hover, active, focus) = style::interaction(spec);
+    let mut kinds = Vec::new();
+    if hover.is_some() {
+        kinds.push("hover");
+    }
+    if active.is_some() {
+        kinds.push("active");
+    }
+    if focus.is_some() {
+        kinds.push("focus");
+    }
+    kinds.join(",")
+}
+
 /// The scrolled element's viewport rectangle, in window pixels: `field` is `x`,
 /// `y`, `w` or `h`.
 ///
@@ -885,6 +1007,9 @@ pub fn list_scroll_to(id: &str, index: i64, strategy: &str) -> bool {
 /// colours. Called once, before the view callback runs.
 pub fn begin_frame(window: &mut Window, cx: &App) {
     let win = window::current();
+    // Once per window, and not every frame: the driver's name cannot change while a program runs,
+    // and the call is a trip through the platform layer.
+    crate::gpu::sample(win, window);
     let position = window.mouse_position();
     MOUSE_AT.with(|p| {
         p.borrow_mut().insert(
@@ -905,6 +1030,34 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
             ),
         )
     });
+    let inner = window.inner_window_bounds().get_bounds();
+    INNER_RECT.with(|r| {
+        r.borrow_mut().insert(
+            win,
+            (
+                f32::from(inner.origin.x) as f64,
+                f32::from(inner.origin.y) as f64,
+                f32::from(inner.size.width) as f64,
+                f32::from(inner.size.height) as f64,
+            ),
+        )
+    });
+    let state = match window.window_bounds() {
+        gpui::WindowBounds::Windowed(_) => ("windowed", 0.0, 0.0),
+        gpui::WindowBounds::Maximized(restore) => (
+            "maximized",
+            f32::from(restore.size.width) as f64,
+            f32::from(restore.size.height) as f64,
+        ),
+        gpui::WindowBounds::Fullscreen(restore) => (
+            "fullscreen",
+            f32::from(restore.size.width) as f64,
+            f32::from(restore.size.height) as f64,
+        ),
+    };
+    BOUNDS_STATE.with(|b| {
+        b.borrow_mut().insert(win, state);
+    });
     DISPLAYS.with(|d| {
         let mut list = Vec::new();
         for display in cx.displays() {
@@ -922,7 +1075,36 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
     // `get_global` panics when nothing installed the colours, which is the
     // case for the frames GPUI draws before a program asks for anything.
     let colors = if cx.has_global::<gpui::colors::GlobalColors>() {
-        Some(gpui::colors::Colors::get_global(cx).clone())
+        // `get_global` hands back the shared `Arc`; this frame wants its own copy to
+        // paint overrides onto, so the clone is of the `Colors` inside it.
+        let mut colors = gpui::colors::Colors::clone(gpui::colors::Colors::get_global(cx));
+        // The palette the program asked for, in place of the one the window's own
+        // appearance installed. `"system"` — the default, and what a program that
+        // never calls `set_theme` has — leaves the platform's choice alone.
+        match theme_choice(win).as_str() {
+            "light" => colors = gpui::colors::Colors::light(),
+            "dark" => colors = gpui::colors::Colors::dark(),
+            _ => {}
+        }
+        // What the root asked for last frame, on top of what the platform says.
+        let overrides = THEME_OVERRIDES.with(|o| o.borrow().get(&win).cloned());
+        if let Some(overrides) = overrides {
+            for (field, colour) in overrides {
+                let rgba: gpui::Rgba = colour.into();
+                match field.as_str() {
+                    "text" => colors.text = rgba,
+                    "selected_text" => colors.selected_text = rgba,
+                    "background" => colors.background = rgba,
+                    "disabled" => colors.disabled = rgba,
+                    "selected" => colors.selected = rgba,
+                    "border" => colors.border = rgba,
+                    "separator" => colors.separator = rgba,
+                    "container" => colors.container = rgba,
+                    _ => {}
+                }
+            }
+        }
+        Some(colors)
     } else {
         None
     };
@@ -930,6 +1112,10 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
         COLORS.with(|c| {
             c.borrow_mut().insert(win, named_colors(&colors));
         });
+        // The same colours again as the style language's vocabulary, so `theme:<name>`
+        // resolves against this window's frame and not against a second copy of the
+        // platform defaults.
+        style::set_colour_table(win, colour_table(&colors));
     }
     // What this window shapes text with: its own text system, and the font and
     // size its inherited text style resolves to — so a measurement is of the
@@ -961,12 +1147,42 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
         });
         set.borrow_mut().insert(win, focused);
     });
+    // What only the platform can answer about this window: how big a pixel is,
+    // whether it is zoomed or fullscreen, and which display it landed on. Read
+    // here because a binding function has no `Window` to ask.
+    crate::options::observe(
+        win,
+        window.scale_factor() as f64,
+        window.is_maximized(),
+        window.is_fullscreen(),
+        window
+            .display(cx)
+            .map(|display| i64::from(u32::from(display.id())))
+            .unwrap_or(0),
+    );
 }
 
 /// The window's rectangle, as of the start of this frame.
 pub fn window_rect() -> (f64, f64, f64, f64) {
     let win = window::current();
     WINDOW_RECT.with(|r| r.borrow().get(&win).copied().unwrap_or((0.0, 0.0, 0.0, 0.0)))
+}
+
+/// The window's *content* rectangle, as of the start of this frame.
+///
+/// The same four numbers as [`window_rect`] on a platform with no window-manager
+/// insets — which is this one — and smaller than them where a titlebar and a
+/// border are drawn by the system.
+pub fn inner_rect() -> (f64, f64, f64, f64) {
+    let win = window::current();
+    INNER_RECT.with(|r| r.borrow().get(&win).copied().unwrap_or((0.0, 0.0, 0.0, 0.0)))
+}
+
+/// Whether the window is `"windowed"`, `"maximized"` or `"fullscreen"`, and the
+/// size it would go back to — zero while it is windowed.
+pub fn bounds_state() -> (&'static str, f64, f64) {
+    let win = window::current();
+    BOUNDS_STATE.with(|b| b.borrow().get(&win).copied()).unwrap_or(("windowed", 0.0, 0.0))
 }
 
 /// One connected display's geometry.
@@ -1143,6 +1359,9 @@ fn snapshot(handle: i64) -> Option<El> {
                 Kind::Canvas { painter, phase } => {
                     Kind::Canvas { painter: painter.clone(), phase: *phase }
                 }
+                Kind::Scrollbar { id, axis } => {
+                    Kind::Scrollbar { id: id.clone(), axis: axis.clone() }
+                }
                 Kind::Paths { paths, backgrounds } => {
                     Kind::Paths { paths: paths.clone(), backgrounds: backgrounds.clone() }
                 }
@@ -1172,7 +1391,16 @@ pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: Enti
     // column only appears when there is something to report.
     if errors.is_empty() {
         let element = match root.and_then(snapshot) {
-            Some(el) => render(&el, window, cx, entity),
+            Some(el) => {
+                // The root's `theme.` tokens are the window's, and they are remembered
+                // for the frame after this one — see `THEME_OVERRIDES`.
+                let overrides = style::theme_overrides(&el.style);
+                let win = window::current();
+                THEME_OVERRIDES.with(|o| {
+                    o.borrow_mut().insert(win, overrides);
+                });
+                render(&el, window, cx, entity)
+            }
             None => error_card(
                 "the view callback answered no root element — end it with an element, \
                  such as `ui::column(..)`, rather than a bare statement"
@@ -1194,37 +1422,180 @@ pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: Enti
     }
 }
 
+thread_local! {
+    /// The windows whose `gpui::on_keys(true)` the root has already taken focus
+    /// for. The flag is set by the program and read every frame, so "the frame it
+    /// turned on" is not a frame number — it is the transition from not being in
+    /// this set to being in it. `on_keys(false)` takes the window back out, so a
+    /// program that wants the keyboard again can ask again.
+    static KEYS_ARMED: RefCell<std::collections::HashSet<i64>> =
+        RefCell::new(std::collections::HashSet::new());
+}
+
+/// Disarms the window's keyboard, so that enabling it again takes focus again.
+pub fn disarm_keys(win: i64) {
+    KEYS_ARMED.with(|a| {
+        a.borrow_mut().remove(&win);
+    });
+}
+
+/// Records one keystroke's fields for the program, under `prefix` — `~key` for a
+/// press and `~keyup` for a release — and answers the stroke an event payload
+/// should carry.
+///
+/// The point of the prefix pair is that a program can tell a press from a release
+/// and can tell one keystroke from another: `unparse` is gpui's own spelling of
+/// the whole stroke (`"shift-tab"`, `"cmd-c"`, `"a"`), while `key` is only the
+/// character printed on the key — and gpui maps **both** Tab and Shift-Tab to the
+/// key `"tab"`, so a program reading `key` alone cannot tell them apart. The five
+/// modifier flags are the state that distinguishes them, and `char` is what would
+/// have been typed (`"A"` under shift, nothing under cmd).
+fn record_keystroke(prefix: &str, keystroke: &gpui::Keystroke) -> String {
+    let unparsed = keystroke.unparse();
+    store::set_text(&format!("{prefix}.unparse"), &unparsed);
+    store::set_text(&format!("{prefix}.key"), &keystroke.key);
+    store::set_text(
+        &format!("{prefix}.char"),
+        keystroke.key_char.as_deref().unwrap_or(""),
+    );
+    let m = keystroke.modifiers;
+    for (name, on) in [
+        ("shift", m.shift),
+        ("control", m.control),
+        ("alt", m.alt),
+        ("platform", m.platform),
+        ("function", m.function),
+    ] {
+        store::set_flag(&format!("{prefix}.{name}"), on);
+    }
+    // The modifier half of `unparsed`, in gpui's own order and spelling, joined
+    // with `+` — `"shift"`, `"ctrl-alt"`, `""` when none is held. The flags above
+    // are the same information one bit at a time; this is the one glance.
+    store::set_text(&format!("{prefix}.mods"), &modifier_words(&m));
+    unparsed
+}
+
+/// The held modifiers as one word, in `gpui::Keystroke::unparse`'s order: the
+/// function key, control, alt, the platform key, then shift.
+fn modifier_words(m: &gpui::Modifiers) -> String {
+    let mut words: Vec<&str> = Vec::new();
+    if m.function {
+        words.push("fn");
+    }
+    if m.control {
+        words.push("ctrl");
+    }
+    if m.alt {
+        words.push("alt");
+    }
+    if m.platform {
+        words.push("platform");
+    }
+    if m.shift {
+        words.push("shift");
+    }
+    words.join("+")
+}
+
 /// After `gpui::on_keys(true)`, the window itself listens for keystrokes and
 /// raises `"key|<name>"`, so a program can use the keyboard without owning a
-/// GPUI element. It takes focus once; a click into a text field moves focus
-/// there until focus comes back.
+/// GPUI element.
+///
+/// The root takes focus **once, the frame the program enables the keyboard** —
+/// not only in the window's first two frames, which is what it used to do: a
+/// program that turned the keyboard on at frame 40 got the listener and no focus,
+/// and focus is what a key event needs to be delivered at all, so its shortcuts
+/// were silently dead. A click into a text field still moves focus there and keeps
+/// it: this runs on the frame the flag turns on, or when nothing at all is focused,
+/// and never steals focus back afterwards.
+///
+/// The listener is registered in the **capture** phase, and that is the whole of
+/// KM5: gpui dispatches a key to the path from the root down to the focused element
+/// and then back up (`window.rs:3878-3906`), and `cx.stop_propagation()` in an
+/// element's handler ends the *bubble* half — taking the window's
+/// `cx.observe_keystrokes` observers with it (`window.rs:3861-3869`). The text editor
+/// stops propagation for every key it handles, so those keys never reached a program
+/// that was watching. A capture listener on the root runs before any of that and
+/// cannot be stopped by a handler below it.
 fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
-    if !store::get_flag("~keys", false) {
+    let win = window::current();
+    let keys = store::get_flag("~keys", false);
+    let observers = key_observers(win);
+    if !keys && observers.is_empty() {
         return element;
     }
-    let win = window::current();
+
     let handle = focus_for(win, "~root", cx);
-    if frame_number() <= 2 && !handle.is_focused(window) {
-        window.focus(&handle);
+    if keys {
+        let armed = KEYS_ARMED.with(|a| a.borrow().contains(&win));
+        if !handle.is_focused(window) && (!armed || window.focused(cx).is_none()) {
+            window.focus(&handle);
+        }
+        KEYS_ARMED.with(|a| {
+            a.borrow_mut().insert(win);
+        });
     }
+
     div()
         .size_full()
         .id(ElementId::Name("~root".into()))
         .track_focus(&handle)
-        .on_key_down(move |event: &KeyDownEvent, _window, _cx| {
+        .capture_key_down(move |event: &KeyDownEvent, _window, _cx| {
             window::with(win, || {
-                store::push_event_with("key", event.keystroke.key.clone());
-                // The rest of the keystroke, for a program that wants to echo
-                // it: upstream's input example logs both halves.
-                store::set_text(
-                    "~key.char",
-                    event.keystroke.key_char.as_deref().unwrap_or(""),
-                );
-                store::set_text("~key.unparse", &event.keystroke.unparse());
+                let unparsed = record_keystroke("~key", &event.keystroke);
+                store::set_flag("~key.held", event.is_held);
+                if keys {
+                    // The whole stroke, not the key's name: `"shift-tab"` and
+                    // `"tab"` are the same `key` in gpui, so reporting `key` here
+                    // left a program unable to tell the two apart.
+                    store::push_event_with("key", &unparsed);
+                }
+                // The program's own observers, whether or not an element handled
+                // the key this frame.
+                for id in &observers {
+                    store::push_event_with(id, &unparsed);
+                }
+            });
+        })
+        // The release, on the same element and under the same flag: a program
+        // driving movement from the keyboard needs to know when the key stopped
+        // being held, and nothing used to listen for it at all.
+        .capture_key_up(move |event: &KeyUpEvent, _window, _cx| {
+            window::with(win, || {
+                let unparsed = record_keystroke("~keyup", &event.keystroke);
+                if keys {
+                    store::push_event_with("keyup", &unparsed);
+                }
             });
         })
         .child(element)
         .into_any_element()
+}
+
+thread_local! {
+    /// The keystroke observers a program has asked for, per window: the ids
+    /// [`add_key_observer`] recorded, in the order they were asked for.
+    static KEY_OBSERVERS: RefCell<HashMap<i64, Vec<String>>> = RefCell::new(HashMap::new());
+}
+
+/// Records that window `win` should raise `id` for every keystroke it receives.
+///
+/// Asked for once; asking twice with the same id is ignored, because the listener
+/// this feeds is rebuilt every frame and would otherwise raise the event twice per
+/// frame it was asked for again.
+pub fn add_key_observer(win: i64, id: String) {
+    KEY_OBSERVERS.with(|o| {
+        let mut observers = o.borrow_mut();
+        let list = observers.entry(win).or_default();
+        if !list.contains(&id) {
+            list.push(id);
+        }
+    });
+}
+
+/// The keystroke observer ids recorded for `win`.
+fn key_observers(win: i64) -> Vec<String> {
+    KEY_OBSERVERS.with(|o| o.borrow().get(&win).cloned().unwrap_or_default())
 }
 
 fn error_card(message: String) -> AnyElement {
@@ -1305,7 +1676,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 .map(|child| render(&child, window, cx, entity))
                 .collect();
             let base = style::apply(div(), &el.style);
-            let (hover, active) = style::interaction(&el.style);
+            let (hover, active, focus) = style::interaction(&el.style);
             match style::scroll_axis(&el.style) {
                 // A scrolled container is given this window's handle for its id,
                 // so the program can read the offset back and set it. The handle
@@ -1357,8 +1728,14 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         .into_any_element()
                 }
                 // A plain box only becomes interactive when it asks to be, so
-                // the common case keeps a stateless element.
-                None if hover.is_some() || active.is_some() => {
+                // the common case keeps a stateless element. A `ctx=` counts as
+                // asking: a key context lives on a dispatch-tree node, and a node
+                // exists only for an element with an id.
+                None if hover.is_some()
+                    || active.is_some()
+                    || focus.is_some()
+                    || style::key_context(&el.style).is_some() =>
+                {
                     let interactive = apply_focus_order(
                         apply_interactions(
                             base.id(ElementId::Name(el.id.clone().into())),
@@ -1597,12 +1974,12 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
         // The element id matters here beyond hit-testing: GPUI keeps an
         // image's animation cursor (`ImgState`) keyed by its global element id,
         // so without `.id(..)` an animated GIF never advances a frame.
-        Kind::Image(path) => style::apply(img(PathBuf::from(path)), &el.style)
+        Kind::Image(path) => style::apply(img(PathBuf::from(asset_path(path))), &el.style)
             .id(ElementId::Name(el.id.clone().into()))
             .into_any_element(),
 
         Kind::Icon(path) => {
-            let icon: Svg = svg().path(SharedString::from(path.clone()));
+            let icon: Svg = svg().path(SharedString::from(asset_path(path)));
             let icon = style::apply(icon, &el.style);
             match style::rotation(&el.style) {
                 Some(degrees) => icon
@@ -1800,6 +2177,41 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             );
             style::apply(element, &el.style).into_any_element()
         }
+
+        Kind::Scrollbar { id, axis } => {
+            let painting_id = id.clone();
+            let painting_axis = axis.clone();
+            let down_id = id.clone();
+            let down_axis = axis.clone();
+            let move_id = id.clone();
+            let move_axis = axis.clone();
+            let colour = style::thumb_colour(&el.style).unwrap_or_else(|| style::colour("#585b70"));
+
+            // The track is the element's own background and the thumb is painted over it, so the
+            // bar is `canvas` inside a `div` that carries the style and the handlers — a canvas on
+            // its own is not an element anything can be pressed on.
+            let bar = canvas(
+                move |_bounds, _window, _cx| (),
+                move |bounds, _state, window, _cx| {
+                    scroll::paint(&painting_id, &painting_axis, bounds, colour, window)
+                },
+            );
+
+            // Pressing or dragging sets the offset — the half of a scrollbar the inert thumb in
+            // `02_data_table` does not have. Both are the same rule, so there is no drag state to
+            // lose when the pointer leaves the track.
+            style::apply(div().child(bar), &el.style)
+                .id(ElementId::Name(format!("~scrollbar|{id}|{axis}").into()))
+                .on_mouse_down(MouseButton::Left, move |event, _window, _cx| {
+                    scroll::jump(&down_id, &down_axis, event.position);
+                })
+                .on_mouse_move(move |event, _window, _cx| {
+                    if event.dragging() {
+                        scroll::jump(&move_id, &move_axis, event.position);
+                    }
+                })
+                .into_any_element()
+        }
     }
 }
 
@@ -1818,15 +2230,35 @@ fn apply_focus_order<T: StatefulInteractiveElement + 'static>(el: T, spec: &str)
     el
 }
 
-/// Applies `hover=`/`active=` refinements to an already identified element.
+/// Applies the `hover=` / `active=` / `focus=` refinements to an already identified
+/// element.
+///
+/// `focus=` is gpui's `InteractiveElement::focus`, which needs the element to be
+/// focusable to mean anything — `track_focus` for a focus handle of its own, or
+/// `focusable`/`tabindex=`/`tabstop` for the framework's. A program that asks for a focus
+/// refinement on an element nothing can focus has asked for something that will not
+/// happen; that is the style language's usual bargain, and `gpui::style_refinements`
+/// exists so it can be checked rather than guessed at.
 fn apply_interactions<T: StatefulInteractiveElement + 'static>(el: T, spec: &str) -> T {
-    let (hover, active) = style::interaction(spec);
+    let (hover, active, focus) = style::interaction(spec);
     let mut el = el;
     if let Some(hover) = hover {
         el = el.hover(move |r| style::refine(r, &hover));
     }
     if let Some(active) = active {
         el = el.active(move |r| style::refine(r, &active));
+    }
+    if let Some(focus) = focus {
+        el = el.focus(move |r| style::refine(r, &focus));
+    }
+    // The element's place on the focused node's context stack, which is what a
+    // keymap binding's context predicate is evaluated against. Passed through
+    // verbatim: gpui's grammar is wider than a name and it logs what it cannot
+    // parse.
+    if let Some(context) = style::key_context(spec) {
+        // `&str`, because that is the `TryInto<KeyContext>` gpui implements; the
+        // context owns its own entries once built.
+        el = el.key_context(context.as_str());
     }
     el
 }

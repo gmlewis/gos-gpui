@@ -1,0 +1,68 @@
+DW2 — undo and redo with coalescing.
+
+BEFORE THE WORK.
+
+**The decision the round had to make first, because it decided everything else.** This row is a
+widget's behaviour, and the widget's model lives inside a gpui `Entity<TextEditor>`
+(`editor.rs:102`) — which cannot exist without an app and a window, so a `#[test]` cannot reach it.
+The two ways out were to lift the whole text model into a plain module (a real refactor of a 34KB
+widget, and one that would change DW1's foundation) or to find something already shared that the
+history could be written over.
+
+**And there was something, which the code said in its own words.** `TextEditor::changed`
+(`editor.rs:516-527`) writes the editor's content into the store under the editor's key and raises
+`"<key>|change"`; `adopt_program_text` (`editor.rs:534-565`) takes on whatever the program wrote
+there when it differs:
+
+    /// Takes on text the program wrote under `key`.
+    ///
+    /// The editor is the owner of its content while it is being edited, so this
+    /// only does anything when the stored text differs from what the editor
+    /// last published — that is, when the program called `gpui::set_text`
+    /// (or `gpui::forget`) behind it.
+
+So **the store is the document**, both sides write to it, and a history of the *store's* text is a
+history of the document. That is the version that got built: no refactor, and the history is
+checkable without a window because it never touches the entity. It is also undo for a program with
+no editor at all, since `ui::input` keeps its value under `key` too.
+
+**The red is an unresolved symbol, and only that** — the row's half is new surface:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+      FAIL a_run_of_typing_is_one_step: error[GX0002]: name `gpui::history_watch` is not bound in this scope
+      ... and the same for the five cases that follow
+    test: 233 passed, 6 failed, 836 assertion(s)
+
+**Three breaks**, each applied alone — and **the third one passed when it should not have**, which
+is the round's most useful finding.
+
+  * **nothing coalesces**, so every keystroke is its own step:
+
+        FAIL a_run_of_typing_is_one_step: panic: three keystrokes, one step: 3
+        FAIL a_run_of_deleting_is_another_step: panic: typing, then deleting: 5
+
+  * **the kind ignored**, so a deletion coalesces onto the typing before it:
+
+        FAIL a_run_of_typing_is_one_step: panic: three keystrokes, one step: 0
+        FAIL a_run_of_deleting_is_another_step: panic: typing, then deleting: 0
+        FAIL an_edit_that_breaks_the_run_starts_a_step: panic: an insertion, then a replacement: 1
+
+  * **the redo kept instead of thrown away** — and the whole suite stayed green. The test asked
+    only whether redo was *available* after a new edit, and the broken version moves to the tip, so
+    the abandoned branch was still in the list but **unreachable**: the answer was right for the
+    wrong reason. What the branch does is decide where the *next undo lands*, so the test gained
+    that:
+
+        assert(gpui::history_undo("dw2.d"), "the new edit can be undone")
+        assert(gpui::state_text("dw2.d", "") == "",
+               "straight back to before it, not through the abandoned branch")
+
+    and the break then failed the first time it was applied again:
+
+        FAIL an_edit_after_an_undo_throws_the_redo_away: panic: straight back to before it, not
+        through the abandoned branch: first
+
+That is the seventh time in this run that a check has been shown to be narrower than it looked —
+and the second in which the fix was to the *test* rather than the code. It is also the second this
+session where the break was invisible because the broken version was right about the thing asked
+and wrong about the thing next to it.

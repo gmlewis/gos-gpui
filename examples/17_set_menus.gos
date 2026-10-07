@@ -2,9 +2,12 @@
 //
 // The macOS application menu bar, with a Quit item wired to an action, over a
 // green window holding one line of text. `gpui::set_menus(name, items)` takes a
-// flat list of entries — `"separator"`, `"quits:<label>"` or
-// `"events:<label>"` — so upstream's one `Menu` named `set_menus` with a
-// separator and `MenuItem::action("Quit", Quit)` is a two-entry list.
+// list of entry strings — `"separator"`, `"quits:<label>"`, `"events:<label>"`,
+// `"os:<label>:<selector>"` or `"services:<label>"` — so upstream's one `Menu`
+// named `set_menus` with a Services submenu, a separator and
+// `MenuItem::action("Quit", Quit)` is a three-entry list. (`MenuItem::Submenu`
+// is expressible too, as `"submenu:<label>"` with the entries inside it indented
+// by one `>` each; upstream's menu has none.)
 //
 // Upstream also registers the action itself (`actions!(set_menus, [Quit])`,
 // `cx.on_action(quit)`) and quits from its own handler. Menu items carry a
@@ -19,9 +22,6 @@
 // rebuild the menu bar on every frame.
 //
 // Deviations, all on the binding's side:
-//   * `MenuItem::os_submenu("Services", SystemMenuType::Services)` has no
-//     equivalent — the binding has no submenu entry — so the menu is a
-//     separator and Quit, with the Services submenu dropped.
 //   * upstream's quit handler prints "Gracefully quitting the application . . ."
 //     before `cx.quit()`. `"quits:Quit"` runs the binding's own handler, which
 //     only quits, so that line is not printed.
@@ -49,7 +49,7 @@ fn main() {
         // frame that asked for it, so the first frame is where it belongs.
         if !gpui::state_bool("menus", false) {
             gpui::set_bool("menus", true)
-            gpui::set_menus("set_menus", #["separator", "quits:Quit"])
+            gpui::set_menus("set_menus", #["services:Services", "separator", "quits:Quit"])
         }
 
         ui::panel("flex size=full justify=center items=center bg=#2e7d32 font=xl color=#ffffff")

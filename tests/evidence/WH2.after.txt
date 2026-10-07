@@ -1,0 +1,30 @@
+WH2 — maximized / fullscreen at open, `toggle_fullscreen`, `zoom_window`.
+
+AFTER THE WORK. In this tree:
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh2_window_state.gos
+
+Output, identical on all five tiers:
+
+    OK WH2 a window opened with start=maximized reports itself maximized
+    OK WH2 zoom_window put the window back, and the platform reports it
+
+The probe opens its window with `start=maximized`, waits for the platform to say so
+through `gpui::window_option("maximized")` — which is `Window::is_maximized`, the
+window's bounds being the display's work area — and then calls `gpui::zoom_window()`
+and waits for the platform to say *that*. Both directions are the platform's own
+answer, not the binding's record, which is why this row's check is behavioural where
+WH1's, WH3's and WH8's cannot be.
+
+Two measurements worth keeping, both taken while writing the probe:
+
+  * **The zoom takes about 23 frames.** `start=maximized` is applied on the
+    window's first frame — `options::take_start` is consulted there — but
+    `Window::is_maximized` only becomes true when the animation lands, measured at
+    frame 23 (frame 22 was still false, frame 23 true) on a 60 Hz display. That is
+    why the deadline is a *time* and not a frame count.
+  * **An occluded window stops being painted.** In the deliberate break below, the
+    window is never zoomed, and frames stopped around frame 40 with the process
+    still alive — so the probe's deadline was never reached and the run had to be
+    killed. This is the row's residual doubt, and it is a property of every probe
+    here that waits in a window it does not keep on top.

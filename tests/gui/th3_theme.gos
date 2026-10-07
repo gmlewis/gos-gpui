@@ -1,0 +1,89 @@
+// TH3 — a real theme: the named colour table, and the theme that chooses it.
+//
+// Tier: every tier.
+//
+// Two thirds of this row were already true when the round began, and it is worth
+// saying so rather than pretending to have built them: `Colors::for_appearance` has
+// been wired since TM4 (all eight fields cached and chosen by the appearance), and
+// the named table has been readable since TH1 and TM4 (`gpui::colour_names`,
+// `gpui::default_color`, `gpui::default_color_for`).
+//
+// What was not true is the row's third clause. `gpui::set_theme` recorded a name that
+// **nothing consulted** — its own doc said so, and `scripts/docs` guarded the claim —
+// so a program could name a theme and get the platform's colours anyway.
+//
+// Pass means the name is consulted. The probe asks for the palette the machine is
+// *not* using, and requires three things of it: the named colour table answers from
+// that palette; the table really changed; and `gpui::appearance` still reports what
+// the operating system says, because choosing how to draw is not the same as lying
+// about the desktop. A fourth: a name the binding does not know is refused rather than
+// quietly taken.
+//
+// This needs no window state beyond what any probe has, and no change to the machine's
+// own appearance — contrast TH2, whose trigger could only come from outside.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("th3 - theme", 380.0, 220.0, || {
+        let f = gpui::frame()
+
+        if f == 2 {
+            let now = gpui::appearance()
+            // The palette this machine is not using, so the probe means the same thing
+            // on a light machine as on a dark one.
+            let other = if now == "dark" { "light" } else { "dark" }
+            gpui::set_text("th3.appearance_before", now)
+            gpui::set_text("th3.background_before", gpui::default_color("background"))
+            gpui::set_text("th3.other", other)
+            gpui::set_text("th3.expected", gpui::default_color_for(other, "background"))
+        }
+        if f == 4 {
+            gpui::set_theme(gpui::state_text("th3.other", "light"))
+        }
+        if f == 6 {
+            // A name the binding does not know: refused, and the choice stands.
+            gpui::set_theme("nosuchtheme")
+        }
+
+        if f >= 10 {
+            let appearance_before = gpui::state_text("th3.appearance_before", "")
+            let before = gpui::state_text("th3.background_before", "")
+            let expected = gpui::state_text("th3.expected", "")
+            let other = gpui::state_text("th3.other", "")
+            let chosen = gpui::theme()
+            let after = gpui::default_color("background")
+            let appearance_now = gpui::appearance()
+
+            // One exclusive chain ending in the verdict: `gpui::quit()` asks the
+            // app to stop, it does not abort the callback that called it.
+            if after != expected {
+                println(f"FAIL TH3 the \"{other}\" theme's background should be {expected} and the table answers {after}, so the theme name is still not consulted")
+                gpui::quit()
+            } else if after == before {
+                println(f"FAIL TH3 the table answers {after} before and after the theme was set, so nothing changed")
+                gpui::quit()
+            } else if appearance_now != appearance_before {
+                println(f"FAIL TH3 choosing a palette changed what the OS appearance reports: {appearance_before} then {appearance_now}")
+                gpui::quit()
+            } else if chosen != other {
+                println(f"FAIL TH3 set_theme(\"{other}\") was followed by an unknown name and theme() reads \"{chosen}\", so a name the binding does not know was taken")
+                gpui::quit()
+            } else {
+                println(f"OK TH3 set_theme(\"{other}\") moved the named table's background from {before} to {after} while appearance() still reports \"{appearance_now}\", and an unknown theme name was refused")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 size=full bg=#111111")
+        gpui::child(root, gpui::text("th3", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL TH3 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

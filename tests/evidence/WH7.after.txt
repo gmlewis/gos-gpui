@@ -1,0 +1,40 @@
+WH7 — `run`/`run_with` reach the whole `WindowOptions` vocabulary and reject bad
+tokens loudly.
+
+AFTER THE WORK. Two commands.
+
+The behavioural red is headless, and it is a diagnostic rather than a timeout:
+
+    env -u GOSSAMER_IN_RUNNER gos test tests
+    ...
+    PASS every_window_option_key_is_known (1 assertion, 35ms)
+    PASS a_misspelt_or_meaningless_option_is_refused (4 assertions, 34ms)
+    PASS a_minimum_size_is_a_pair (3 assertions, 35ms)
+    PASS the_option_names_are_not_style_tokens (2 assertions, 34ms)
+    test: 28 passed, 0 failed, 106 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s), across 24 file(s)
+
+And the probe the other rows share, on all five tiers (`check` prints `check: ok
+(1 items typed)`; each of the other four exits 0):
+
+    TIER_TIMEOUT=45 ./scripts/tiers tests/gui/wh_window_options.gos
+    OK WH1 WH3 WH5 WH7 WH8 the window answers for its minimum size, app id, kind and tab group; the scale factor is 1; the vocabulary knows its own keys and refuses minsize=420, kind=dialog and nosuch=1
+
+The loud half, which is the half the row asks for and which no other check here can
+see — a program opened with a bad key says so on stderr, once per distinct spec:
+
+    $ gos run --main-thread <a program opened with "minsize=420 nosuchkey=1">
+    OK ...
+    gpui: unknown window options: minsize=420 nosuchkey=1
+
+What is new: `gpui-binding/src/options.rs` (new) is one parse of the vocabulary, with
+every key it has in a single `match` and everything else collected into
+`Options::unknown` in token order. `app.rs::run_app`'s own four-key parser is gone, so
+the first window and every window after it cannot disagree again — which they did:
+`background=transparent` was honoured by one parser and ignored by the other, and
+`place=center` was read into `centered` and then compared in an `if` whose two arms
+were the same expression. `gpui::unknown_window_tokens(spec)` is the reader, the
+counterpart of `gpui::unknown_style_tokens`.
+
+The two vocabularies are deliberately separate lists, and the headless test says so:
+`minsize=` is unknown to the *style* language and `p=16` is unknown to the option
+language, so a token in the wrong string is reported either way.

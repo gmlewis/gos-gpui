@@ -1,0 +1,61 @@
+BG4 — a repeat timer that can be rescheduled and cancelled.
+
+BEFORE THE WORK.
+
+Three reds. The first is a lesson about names, the second is the row, and the third pair is
+what proves the check is sensitive to each half.
+
+**1. The probe against HEAD's binding.**
+
+`gpui::tick_stop` and `gpui::tick_period` do not exist at HEAD, and an unbound binding
+function's failure mode is not a diagnostic:
+
+    $ timeout -k 5 60 gos run --main-thread tests/gui/bg4_timer.gos
+    exit 124, no output
+
+An unbuffered trace narrowed it — and then narrowed it further, to something that was not
+the timer at all:
+
+    trace f2: tick
+    trace f2: ticked
+    ===== killed at 60 s =====
+
+`gpui::tick` and `gpui::tick_stop` were both fine. What had stopped the probe's own phase
+machine was `gpui::seconds_since_start()` — which is the name of the **Rust** function. The
+name a program calls is `gpui::now()`. Nothing in the repository had ever called it, so the
+probe's use of the wrong name produced a statement that fails without a diagnostic, a phase
+machine that never advanced, and a window that never reached its verdict. Written down
+because this ledger mentions `seconds_since_start` twice in its own prose (W7's doubt, and
+the "still process-wide" note), so a future round will read that name and reach for it.
+
+**2. The behavioural red: the reader and the stop in, the reschedule not.**
+
+`gpui::tick_period`, `gpui::tick_stop` and the generation-keyed registry implemented, with
+HEAD's rule kept for `tick` itself — an id already running is left alone — so the probe
+could run and fail on the thing the row is about rather than on a missing name:
+
+    $ timeout -k 5 30 gos run --main-thread tests/gui/bg4_timer.gos
+    FAIL BG4 the same id rescheduled to 300ms still reads back as 30
+    exit 0
+
+That is the row's sentence. At HEAD the registry was a `HashSet` and the id was simply
+already in it (`app.rs:533`, `if !fresh { continue }`), so the second period was thrown
+away; and the async loop was `.detach()`ed with nothing holding it, so no id could be
+stopped at all.
+
+**3. The two halves, by deliberate break** — because the historical red reaches only the
+first. Each was applied alone:
+
+  * **the reschedule**, by rewriting the period but keeping the generation, so the loop
+    already sleeping is never retired:
+
+        FAIL BG4 rescheduling the id from 30ms to 300ms did not slow it down: 11 events in
+        the first window, 12 in the second
+
+  * **the cancel**, by zeroing the period for the reader and leaving the generation alone,
+    so nothing retires the loop:
+
+        FAIL BG4 the timer was stopped and raised 1 more events afterwards
+
+Both restored before the tier run in `BG4.after.txt`; the `check` tier recompiles the
+binding, which is what proves the restore took.

@@ -1,0 +1,57 @@
+CL10 — persist and restore window bounds and settings across runs.
+
+BEFORE THE WORK.
+
+**Every red is an unresolved symbol, and that is worth saying plainly.** This row is new surface
+from end to end — a settings store, its readers, and one window-option token — so nothing it
+touches existed to fail in a behavioural way. The red is seven unbound names:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+      FAIL a_setting_round_trips_through_a_file: error[GX0002]: name `gpui::settings_set` is not bound in this scope
+      FAIL one_key_does_not_disturb_another: error[GX0002]: name `gpui::settings_set` …
+      FAIL forgetting_a_key_removes_it_and_leaves_the_rest: error[GX0002]: name `gpui::settings_set` …
+      FAIL a_file_that_is_not_there_reads_empty: error[GX0002]: name `gpui::settings_get` …
+      FAIL remembered_bounds_read_back_as_four_fields: error[GX0002]: name `gpui::remember_window_state` …
+      FAIL a_half_written_window_state_reads_as_nothing: error[GX0002]: name `gpui::settings_set` …
+      FAIL two_windows_remember_their_own_bounds: error[GX0002]: name `gpui::remember_window_state` …
+    test: 217 passed, 7 failed, 770 assertion(s)
+
+The `pos=` token came later and got its own red before it was written, which the ledger's
+rule asks for even when the rest of the row is already in:
+
+    FAIL a_remembered_position_can_be_given_to_the_first_window: error[GX0005]: panic: pos is
+    part of the vocabulary: #["pos=100,200"]
+
+**Four breaks**, each applied alone. Three are caught and one is not, and the one that is not
+is the useful one:
+
+  * **a half-written state treated as whole** — a missing field read as `0.0` rather than as
+    "not whole":
+
+        FAIL a_half_written_window_state_reads_as_nothing: panic: a saved state with no height
+        is not a window at 0,0 — it is nothing to restore
+
+  * **writing one key clobbering the rest** — the file rewritten with this one key:
+
+        FAIL one_key_does_not_disturb_another: panic: the other survived the rewrite
+        FAIL forgetting_a_key_removes_it_and_leaves_the_rest: panic: the other is not
+
+  * **forgetting one key emptying the file**:
+
+        FAIL forgetting_a_key_removes_it_and_leaves_the_rest: panic: the other is not
+
+  * **and the break that was invisible.** Making the parser *accept* a position that is not two
+    numbers left the whole suite green, because the test only exercised `"pos=abc"` — a string
+    with **no comma at all**, which takes the other refusal path. The test was given the second
+    path as well (`"pos=1,abc"`), and the break then failed the first time it was applied again:
+
+        FAIL a_remembered_position_can_be_given_to_the_first_window: panic: a position with a
+        word in it is not one: #[]
+
+    That is the fifth time in this run that a check has been shown to be narrower than it
+    looked, and the first time the *test* rather than the code was the thing that had to change
+    twice.
+
+**Tiers.** `test` and `check` only. This row's check is a `#[test]` file, and the owner of this
+machine has forbidden windows (see "Headless mode"), so the two windowed halves named in
+`residual doubt` were not run — there was nothing to run them with that would not open one.

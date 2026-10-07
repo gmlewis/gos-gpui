@@ -7,8 +7,14 @@
 //
 // The focus *order* is real: the boxes carry `focusable tabstop=1 tabindex=N`
 // and Tab calls `gpui::focus_next()`, so GPUI's own tab machinery is what
-// moves. Four deviations, all of them the binding's shape rather than a
-// choice:
+// moves. The keys are real too, in the one shape the binding offers:
+// upstream's `KeyBinding::new("tab", Tab, None)` and
+// `KeyBinding::new("shift-tab", TabPrev, None)` cannot be registered from here,
+// so they are read as `key|<stroke>` events instead — and both arrive
+// distinctly, `key|tab` and `key|shift-tab`, because `gpui::on_keys` reports
+// gpui's unparsed stroke rather than just the key's name.
+//
+// Three deviations, all of them the binding's shape rather than a choice:
 //
 //   * The ring never lights up. Upstream tests `item_handle.is_focused(window)`
 //     on every box; `gpui::is_focused(id)` instead looks the id up in a map of
@@ -18,14 +24,6 @@
 //     never reaches that map, and a plain element's id is the binding's own
 //     `gpui-auto-N`, which a program cannot name. Nothing in the frame can
 //     read focus, so the blue border is absent rather than faked.
-//   * Shift-Tab cannot be told from Tab. The binding owns its key bindings, so
-//     upstream's `KeyBinding::new("shift-tab", TabPrev, None)` cannot be
-//     registered; the only route to a keystroke is `gpui::on_keys(true)`, whose
-//     payload is `event.keystroke.key` alone. GPUI's macOS layer maps Shift-Tab
-//     to key "tab" and keeps the shift in `modifiers`, which the binding does
-//     not forward, so both keys arrive as `key|tab`. Tab drives `focus_next`;
-//     a small labelled control below the buttons drives `focus_prev` instead,
-//     so both of the APIs this example is about are reached.
 //   * The two buttons are a focusable box around a `ui::button`, not one
 //     element. Focus tokens are applied to plain elements only, and
 //     `ui::button` is a kind of its own with no focus order; the box carries
@@ -73,14 +71,14 @@ fn tab_button(id: String, label: String, tab_index: i64) -> ui::El {
 }
 
 /// Upstream's `on_tab` / `on_tab_prev` / the two `on_click`s, over the state
-/// store. The Shift-Tab control is this port's addition; see the header.
+/// store. Upstream's two key bindings are the two `key|` arms below.
 fn handle_events() {
     for event in gpui::take_events() {
         let id, kind = gpui::event_parts(event)
         if id == "key" && kind == "tab" {
             gpui::focus_next()
             gpui::set_text("message", "You have pressed `Tab`.")
-        } else if id == "tabprev" {
+        } else if id == "key" && kind == "shift-tab" {
             gpui::focus_prev()
             gpui::set_text("message", "You have pressed `Shift-Tab`.")
         } else if id == "el1" {
@@ -94,7 +92,7 @@ fn handle_events() {
 fn main() {
     let outcome = gpui::run("19 - tab_stop", 800.0, 600.0, || {
         // Upstream binds Tab and Shift-Tab to actions; the binding owns its key
-        // bindings, so the keys are read here as `key|<name>` events instead.
+        // bindings, so the keys are read here as `key|<stroke>` events instead.
         gpui::on_keys(true)
 
         handle_events()
@@ -111,10 +109,6 @@ fn main() {
             .child(ui::row("gap=12 items=center")
                 .child(tab_button("el1", "Button 1", 4))
                 .child(tab_button("el2", "Button 2", 5)))
-            // This port's addition: `focus_prev` has no keystroke to reach it.
-            .child(ui::row("gap=8 justify=center items=center")
-                .text("shift-tab arrives as plain tab here:", "font=xs color=#888888")
-                .button("tabprev", "⇧ Tab — focus_prev()", "px=8 py=4 rounded=6 bg=#e5e5e5 color=#111111"))
             |> ui::root
     })
 

@@ -1,0 +1,48 @@
+KM4 — `on_keys(true)` must take focus at any frame, not only `frame() <= 2`.
+
+BEFORE THE WORK. Against a pristine copy of this project at HEAD (`git archive HEAD`
+into /tmp/gpui-before, the probe copied in, the stale build lock cleared first):
+
+    cd /tmp/gpui-before
+    timeout -k 5 25 gos run --main-thread tests/gui/km4_keys_focus.gos
+
+    FAIL KM4 the program asked for the keyboard at frame 20 and the window does not
+    have focus at frame 24, so no keystroke would reach it
+    exit=0
+
+**A behavioural red**, and the probe calls nothing this round added: `on_keys`,
+`is_focused`, `frame` and `quit` all exist at HEAD. What the row is about is a piece of
+state — whether the window holds focus — so it can be read without producing a
+keystroke, which matters because nothing in this binding can synthesize one.
+
+The obstacle, quoted from `gpui-binding/src/view.rs:1274` at HEAD:
+
+    if frame_number() <= 2 && !handle.is_focused(window) {
+        window.focus(&handle);
+    }
+
+The gate was not arbitrary. `listen_for_keys` rebuilds the window's root on every
+frame, so without a gate it would take focus back from a text field every frame and
+typing in one would be impossible. The cost was the other end of the same trade: a
+program that turned the keyboard on at frame 20 got the listener, no focus, and
+keystrokes that went nowhere — shortcuts dead, with nothing to show for it.
+
+The break — HEAD's gate put back into the new code:
+
+    FAIL KM4 the program asked for the keyboard at frame 20 and the window does not
+    have focus at frame 24, so no keystroke would reach it
+
+The same line, which is the point: the check is sensitive to exactly this change and to
+nothing else. Restored immediately, and the restore re-checked by the `check` tier,
+which recompiles the binding.
+
+What replaces the gate, and why it is still not "every frame": the window is *armed*
+once per enablement — remembered per window as the transition from not-armed to armed —
+so it takes focus on the frame the program asks for it, whenever that is, and keeps it.
+`on_keys(false)` disarms it, so asking again takes focus again. A window that already
+has focus is left alone.
+
+Measured while writing the probe, and recorded because it bounds what can be checked:
+`gpui::focus_next()` does not move focus off the window root even with an editor in the
+tree, so the other half of the trade — "a click into a text field keeps focus" — could
+not be driven from a probe. It is in the row's residual doubt.

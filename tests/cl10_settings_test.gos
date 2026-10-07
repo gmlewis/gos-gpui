@@ -1,0 +1,133 @@
+// CL10 — persist and restore window bounds and settings across runs.
+//
+// Headless: `gos test tests`. The row's obstacle is "no settings store", and a store is a file:
+// writing one, reading it back, and turning four remembered numbers into the bounds a window
+// would open at. None of that needs a window — what needs one is the last step, a window actually
+// opening where it was, and that is named in the row's residual doubt rather than pretended here.
+//
+// The format is `key=value` a line at a time, so a settings file is something a person can read
+// and a program can write without a schema.
+//
+// Pass means a value survives a round trip through the file, that keys do not disturb each other,
+// that forgetting one leaves the rest, that a file which is not there reads as empty rather than
+// as an error, and that a **half-written** window state reads as nothing rather than as a window
+// at 0,0.
+
+use gpui
+use std::fs
+
+#[test]
+fn a_setting_round_trips_through_a_file() {
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10")
+    assert(
+        gpui::settings_set("/tmp/gpui-cl10/settings.txt", "editor.font", "Menlo"),
+        "the settings file and its directory should be created",
+    )
+    assert(
+        gpui::settings_get("/tmp/gpui-cl10/settings.txt", "editor.font") == "Menlo",
+        "what was written should read back",
+    )
+    assert(
+        gpui::settings_get("/tmp/gpui-cl10/settings.txt", "never.written") == "",
+        "a key nobody wrote is empty, not an error",
+    )
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10")
+}
+
+#[test]
+fn a_remembered_position_can_be_given_to_the_first_window() {
+    // `gpui::run` takes a title, a size and a callback — and no position, so without a token for
+    // one the first window can only be centred or at 0,0, and a remembered position could never
+    // be restored to it. An extra window already takes x and y in `gpui::open_window`.
+    let unknown = gpui::unknown_window_tokens("pos=100,200 place=at")
+    assert(unknown.len() == 0, f"pos is part of the vocabulary: {unknown}")
+
+    // Two ways to not be a position, and both are refused: no comma at all, and a comma with
+    // something that is not a number on one side of it.
+    let bad = gpui::unknown_window_tokens("pos=abc")
+    assert(bad == #["pos=abc"], f"a position with no comma is not one: {bad}")
+
+    let wordy = gpui::unknown_window_tokens("pos=1,abc")
+    assert(wordy == #["pos=1,abc"], f"a position with a word in it is not one: {wordy}")
+}
+
+#[test]
+fn one_key_does_not_disturb_another() {
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-b")
+    assert(gpui::settings_set("/tmp/gpui-cl10-b/s.txt", "a", "1"), "first key written")
+    assert(gpui::settings_set("/tmp/gpui-cl10-b/s.txt", "b", "2"), "second key written")
+    assert(gpui::settings_set("/tmp/gpui-cl10-b/s.txt", "a", "3"), "first key rewritten")
+    assert(gpui::settings_get("/tmp/gpui-cl10-b/s.txt", "a") == "3", "the rewritten one")
+    assert(gpui::settings_get("/tmp/gpui-cl10-b/s.txt", "b") == "2", "the other survived the rewrite")
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-b")
+}
+
+#[test]
+fn forgetting_a_key_removes_it_and_leaves_the_rest() {
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-c")
+    assert(gpui::settings_set("/tmp/gpui-cl10-c/s.txt", "keep", "yes"), "written")
+    assert(gpui::settings_set("/tmp/gpui-cl10-c/s.txt", "drop", "yes"), "written")
+    assert(gpui::settings_forget("/tmp/gpui-cl10-c/s.txt", "drop"), "forgotten")
+    assert(gpui::settings_get("/tmp/gpui-cl10-c/s.txt", "drop") == "", "the forgotten key is gone")
+    assert(gpui::settings_get("/tmp/gpui-cl10-c/s.txt", "keep") == "yes", "the other is not")
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-c")
+}
+
+#[test]
+fn a_file_that_is_not_there_reads_empty() {
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-d")
+    assert(
+        gpui::settings_get("/tmp/gpui-cl10-d/nothing.txt", "anything") == "",
+        "a program's first run has nothing to read, and that is not a failure",
+    )
+}
+
+#[test]
+fn remembered_bounds_read_back_as_four_fields() {
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-e")
+    assert(
+        gpui::remember_window_state("/tmp/gpui-cl10-e/s.txt", "main", 100.0, 200.0, 800.0, 600.0),
+        "the four numbers should be written",
+    )
+    assert(
+        gpui::saved_bounds("/tmp/gpui-cl10-e/s.txt", "main") == "100,200,800,600",
+        f"and read back as one string: {gpui::saved_bounds("/tmp/gpui-cl10-e/s.txt", "main")}",
+    )
+    let w = gpui::saved_field("/tmp/gpui-cl10-e/s.txt", "main", "w")
+    assert(w > 799.99 && w < 800.01, f"and one field at a time, for an open_window call: {w}")
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-e")
+}
+
+#[test]
+fn a_half_written_window_state_reads_as_nothing() {
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-f")
+    assert(gpui::settings_set("/tmp/gpui-cl10-f/s.txt", "main.x", "100"), "one field written")
+    assert(gpui::settings_set("/tmp/gpui-cl10-f/s.txt", "main.y", "200"), "two fields written")
+    assert(gpui::settings_set("/tmp/gpui-cl10-f/s.txt", "main.w", "800"), "three fields written")
+    assert(
+        gpui::saved_bounds("/tmp/gpui-cl10-f/s.txt", "main") == "",
+        "a saved state with no height is not a window at 0,0 — it is nothing to restore",
+    )
+    let x = gpui::saved_field("/tmp/gpui-cl10-f/s.txt", "main", "x")
+    assert(
+        x > -0.01 && x < 0.01,
+        f"and a field of a state that is not whole reads as 0, not as a stale number from it: {x}",
+    )
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-f")
+}
+
+#[test]
+fn two_windows_remember_their_own_bounds() {
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-g")
+    assert(gpui::remember_window_state("/tmp/gpui-cl10-g/s.txt", "main", 1.0, 2.0, 3.0, 4.0), "main")
+    assert(gpui::remember_window_state("/tmp/gpui-cl10-g/s.txt", "tools", 10.0, 20.0, 30.0, 40.0), "tools")
+    assert(
+        gpui::saved_bounds("/tmp/gpui-cl10-g/s.txt", "main") == "1,2,3,4",
+        "the first window's own",
+    )
+    assert(
+        gpui::saved_bounds("/tmp/gpui-cl10-g/s.txt", "tools") == "10,20,30,40",
+        "and the second's, in one file",
+    )
+    let _ = fs::remove_dir_all("/tmp/gpui-cl10-g")
+}

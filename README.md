@@ -268,7 +268,8 @@ it is where the chaining lives.
 | `ui::input(key, placeholder, style)` | single line; the value lives in state under `key` |
 | `ui::slider(key, min, max, style)` | the value lives in state under `key`, as a float |
 | `ui::progress(value, style)` | `0.0 ..= 1.0` |
-| `ui::image(path, style)` / `ui::icon(path, style)` | a raster image / an SVG tinted by `color=` |
+| `gpui::scrollbar(id, axis, style)` | a track with a thumb on it, for the scrolled element `id`: `"y"` or `"x"`, the track from the style's `bg=` and `w=`/`h=`, the thumb from its `thumb=` token. Pressing or dragging moves the thumb to the pointer and the offset with it; a track with nothing to scroll draws no thumb. `gpui::scrollbar_thumb(id, axis, track, min)` reads where the thumb is — as `"<start>,<length>"` — and `gpui::thumb_geometry(offset, max, track, min)` is the same arithmetic from four numbers, for a program drawing its own. |
+| `ui::image(path, style)` / `ui::icon(path, style)` | a raster image / an SVG tinted by `color=`. A path is resolved against the root `gpui::asset_root(dir)` declared first — which matters because a program started from a desktop icon has a working directory its assets are not in — and falls back on the working directory when the root does not have it. `gpui::asset_path(name)` is the same resolution, for reading a file yourself. |
 | `ui::rect(style)` | an empty styled box |
 | `ui::divider(style)` / `ui::spacer(size)` | |
 | `ui::draw(painter, phase, style)` | a directly painted surface: `"bars"`, `"wave"`, `"stripes"` or `"prism"` |
@@ -306,10 +307,20 @@ a per-frame arena, which is why `ui` exists; a program can also use it directly.
 
 | | |
 |---|---|
-| `gpui::animate()` | ask for another frame as soon as this one is on screen. Call it while you want a frame loop; stop calling it to park. |
-| `gpui::tick(id, ms)` | raise the event `id` every `ms` milliseconds. Installed once, then left running. |
-| `gpui::task(id, ms)` | do slow work off the UI thread for `ms`, then raise `id` and leave a description under `"<id>.result"`. |
-| `gpui::on_keys(true)` | route keystrokes to the program as `"key\|<name>"` events. |
+| `gpui::animate()` | ask for another frame as soon as this one is on screen. Call it while you want a frame loop; stop calling it to move. |
+| `gpui::animation(id, ms, easing)` | start a clock that runs from 0 to 1 over `ms`; `gpui::animation_phase(id)` is where it is, which is what a painter takes — `gpui::draw("bars", gpui::animation_phase("grow"), …)`. While one runs the frames come by themselves. `gpui::animation_pause` / `_resume` / `_stop` hold it, carry it on and take it away; `gpui::animation_state(id)` is `"none"`/`"running"`/`"paused"`/`"done"`, `gpui::animation_easings()` the curves, and `gpui::easing_at(name, t)` one of them applied. |
+| `gpui::tick(id, ms)` | raise the event `id` every `ms` milliseconds. Calling it again for a running id **reschedules** it; `gpui::tick_stop(id)` ends it. `gpui::tick_period(id)` answers the period, or `0`. |
+| `gpui::delay(id, ms)` | raise the event `id` **once**, `ms` milliseconds from now. Ask again for an id already waiting to restart the wait; `gpui::delay_cancel(id)` takes it back, and `gpui::delay_pending(id)` says whether one is waiting. |
+| `gpui::task(id, ms)` | do slow work off the UI thread for `ms`, then raise `id` and leave a summary under `"<id>.result"`. The window keeps painting while it runs. `gpui::task_result(id)` reads the summary and is `""` until the work is done; `gpui::task_running(id)` says whether it is still in flight; `gpui::task_cancel(id)` stops it — no event, no result, and only that one id. While the work runs it raises `"<id>.progress"` and `gpui::task_progress(id)` is the number those events are about, `0.0` to `1.0`, so a progress bar is `gpui::draw("bars", gpui::task_progress("id"), …)`. **What the work *is*** is a Rust-side job: no callback a program can write is ever run off the UI thread (see the ledger's `## Unreachable`). |
+| `gpui::set_menus(name, items)` | install an application menu. An item is `"separator"`, `"quits:Quit"`, `"events:<label>[:<stroke>]"`, `"submenu:<label>"`, `"services:Services"` or `"os:<label>:<selector>"` — the last wired to a system selector (`cut`, `copy`, `paste`, `selectAll`, `undo`, `redo`) that the OS acts on itself. An entry indented with one `>` per level goes inside the submenu opened above it. An action raises `"menu\|<slot>"`; `gpui::menu_tree(items)` reads the nesting back, `gpui::installed_menu()` what the platform was actually given, and `gpui::installed_menu_os_actions()` the selectors among its items. |
+| `gpui::set_dock_menu(items)` | the menu the dock icon offers on a right-click, in the same entry grammar. gpui has no getter for it, so it can be installed and not inspected. |
+| `gpui::on_keys(true)` | route keystrokes to the program as `"key\|<stroke>"` events, and releases as `"keyup\|<stroke>"`. |
+| `gpui::emit(id, payload)` | raise one event for an id you name — upstream's `cx.emit`. |
+| `gpui::subscribe(topic, id)` / `unsubscribe(topic, id)` | ask the event id `id` to hear `topic`. A subscription is an *event id*, not a callback: the program handles its events once a frame, and a topic arrives in the same place as everything else. Subscribing twice is subscribing once, and a subscription belongs to a window. `gpui::subscribers(topic)` and `topics()` read the roster back. |
+| `gpui::publish(topic, payload)` | raise `"<id>\|<payload>"` for every subscriber of `topic`, and answer how many heard it. A topic nobody is on raises nothing — a signal nobody is listening for is not an error. |
+| `gpui::bind_keys(spec)` | bind keystrokes to the program's own event names: `"cmd-s=save; cmd-shift-z=redo"`. Each bound stroke raises `"<name>"`, in the window that asked. |
+| `gpui::keymap()` | what is bound, as `"<stroke>:<name>"`, in the order it was bound. |
+| `gpui::keymap_plan(spec)` | what a spec reads as, without binding it. The same parse `bind_keys` uses. |
 
 ### Events
 
@@ -336,8 +347,11 @@ you want both).
 | `ui::input(key, …)` | `key` | `"submit"`, `"cancel"`, `"focus"` |
 | `ui::slider(key, …)` | `key` | the new value, as text like `"0.420"` |
 | `gpui::tick(id, …)` | `id` | — |
+| `gpui::delay(id, …)` | `id` | — (once, `ms` after it is asked for) |
 | `gpui::task(id, …)` | `id` | — |
-| `gpui::on_keys(true)` | `"key"` | `"up"`, `"space"`, `"a"`, … |
+| `gpui::on_keys(true)` | `"key"` / `"keyup"` | the whole stroke: `"up"`, `"space"`, `"a"`, `"shift-tab"`, `"cmd-c"`. The modifiers of the last one are also under `~key.mods` and `~key.shift` / `.control` / `.alt` / `.platform` / `.function`. |
+| `gpui::publish(topic, payload)` | each subscriber of `topic` | the payload |
+| `gpui::bind_keys(spec)` | the name in the spec | — |
 
 ### State
 
@@ -365,6 +379,153 @@ does.
 
 Calling `set_int` from inside the view needs no notification at all: the tree
 you are about to build already reads the new value.
+
+### Lines, carets and words
+
+A program keeps its text in the store, so the arithmetic of that text is the program's to do — and
+the binding can do the parts that need no window:
+
+```gossamer
+let text = gpui::state_text("doc", "")
+let line = gpui::text_line(text, gpui::state_int("caret", 0))
+let bound = gpui::text_line_bounds(text, gpui::state_int("caret", 0))
+println("line {} of {}, spanning {}", line, gpui::text_lines(text), bound)
+```
+
+| | |
+|---|---|
+| `gpui::text_lines(text)` | how many lines; a text with no break is one, and so is an empty one |
+| `gpui::text_line(text, offset)` | which line an offset is on, counting from zero |
+| `gpui::text_line_bounds(text, offset)` | that line's byte range, as `"start,end"`, **excluding** its break |
+| `gpui::text_line_move(text, offset, lines, column)` | where the caret lands `lines` lines away, aiming `column` bytes in — negative is up, so a page move is one call |
+| `gpui::text_word(text, offset)` | the word at an offset, as `"start,end"` |
+
+**Offsets are UTF-8 byte offsets**, the same as `gpui::styled_text`'s highlight ranges, and every
+answer is snapped down to a character boundary and clamped into the text: an offset inside a
+multi-byte character gets a whole one, and one past the end belongs at the end. A word is a run of
+letters, digits and underscores — **anything else is not a word**, so a double-click on a comma takes
+the comma, not the run of punctuation and spaces around it. And the **column is yours to keep**:
+`text_line_move` remembers nothing, so a caret that should return to the column it left passes the
+same number again.
+
+### What the machine is
+
+`gpui::gpu_specs()` is public in gpui, but only a window can answer it, so the binding samples it
+**once**, on that window's first frame, and keeps it:
+
+```gossamer
+for name in gpui::gpu_fields() {
+    println("{}: {}", name, gpui::gpu_field(name))
+}
+println("software rendering: {}", gpui::gpu_is_software())
+```
+
+| | |
+|---|---|
+| `gpui::gpu_field(name)` | `"device"`, `"driver"` or `"info"` — the names are exact, and anything else is empty |
+| `gpui::gpu_fields()` | those three names, in that order |
+| `gpui::gpu_is_software()` | whether the GPU is really a fake running on the CPU, `llvmpipe` and its like |
+
+**Nothing is reported until a frame has asked.** Outside a frame — a `gos test`, or before the first
+window — these are empty and `false` rather than a placeholder: a diagnostics panel prints nothing
+sooner than a device name nobody looked up.
+
+### Answers to questions
+
+A prompt is a question with buttons, and **prompts queue**: only one is up at a time, and a second
+waits its turn however many a program asks for in one frame. gpui's own dialog can only be up once
+(`Window::prompt`), so the queue is what keeps that from being a program's problem.
+
+```gossamer
+gpui::prompt("Unsaved", "Save before closing?", "Save;Discard;Cancel")
+
+// Once a frame: draw whichever prompt is up, with the ordinary element tree.
+let head = gpui::prompt_current()
+if head != "" {
+    let buttons = gpui::prompt_buttons()
+    // …ui::rect / ui::button, one per label…
+    // and when one is clicked:
+    //   gpui::prompt_answer(id, index)
+}
+```
+
+| | |
+|---|---|
+| `gpui::prompt(title, message, buttons)` | queue a question; `buttons` is `";"`-separated, and answers its id, or `0` when it was refused |
+| `gpui::prompt_current()` | the one whose turn it is, as `"<id>\|<title>\|<message>"`, or `""` |
+| `gpui::prompt_buttons()` | its labels, in order — the index of one is what `prompt_answer` takes |
+| `gpui::prompt_answer(id, button)` | answer it, and answer whether that was the one whose turn it was |
+| `gpui::prompt_cancel(id)` / `prompts_clear()` | drop one, or all — cancelling is not answering |
+| `gpui::prompts()` | everything waiting, in order, as `"<id>\|<title>"` |
+
+An answer raises `"prompt\|<id>\|<button>"` in the window that asked, so a program hears it in the
+same place as every other event. A prompt with no buttons is refused rather than queued: a dialog
+with nothing to click is a dead end.
+
+### Undo and redo
+
+**The store is the document.** `ui::editor` publishes its content under its key and takes on
+whatever is written there, so a history of the *store's* text is a history of the document — and
+it works the same for a program with no editor, since `ui::input` keeps its value under `key` too.
+
+```gossamer
+gpui::set_text("notes", "")
+gpui::history_watch("notes")     // from here, steps are recorded
+
+// …the program or the editor writes "notes"…
+
+if gpui::history_can_undo("notes") {
+    gpui::history_undo("notes")  // writes the older text back
+}
+```
+
+| | |
+|---|---|
+| `gpui::history_watch(key)` | start recording `key`; the text it holds now is the baseline |
+| `gpui::history_unwatch(key)` | stop, dropping the history |
+| `gpui::history_undo(key)` / `history_redo(key)` | step back or forward, and answer whether there was a step |
+| `gpui::history_can_undo(key)` / `history_can_redo(key)` | |
+| `gpui::history_depth(key)` | how many steps back it is possible to go |
+
+A **run of typing is one step**, not one per keystroke: insertions in a row coalesce, deletions in
+a row coalesce, and a change of kind — or a replacement, or a paste over a selection — starts a
+new one. The rule is arithmetic on two strings with no timers in it, so it behaves the same in a
+test as at a keyboard. A new edit after an undo throws the redo away.
+
+`ui::editor` handles ⌘Z and ⇧⌘Z itself, through this same history — one writer, one stack.
+
+### Settings that survive a restart
+
+State lives for one run. A settings file lives for the next one, and it is
+`key=value` a line at a time so you can read it, edit it and delete keys by hand:
+
+```gossamer
+let path = "/tmp/myapp/settings.txt"
+
+// On close — or every frame; it is one small file.
+gpui::remember_window_state(path, "main",
+    gpui::window_field("x"), gpui::window_field("y"),
+    gpui::window_field("w"), gpui::window_field("h"))
+
+// Next run, open where it was. `gpui::run` takes no position of its own, so the
+// saved one goes in the option string as `pos=x,y`.
+let at = gpui::saved_bounds(path, "main")
+gpui::run("My App", 900.0, 600.0, f"pos={at}", || { … })
+```
+
+| | |
+|---|---|
+| `gpui::settings_set(path, key, value)` / `settings_get(path, key)` | one string; writing one key leaves the others |
+| `gpui::settings_forget(path, key)` | drop one key |
+| `gpui::remember_window_state(path, key, x, y, w, h)` | the four numbers a window's bounds are |
+| `gpui::saved_bounds(path, key)` | `"x,y,w,h"`, or `""` when nothing whole is stored |
+| `gpui::saved_field(path, key, field)` | one of the four, for `gpui::open_window` |
+| `gpui::save_window_state(path, key)` | the same, read from the live window instead |
+
+A **half-written** window state is nothing: if any of the four is missing or is
+not a number, `saved_bounds` is `""` and `saved_field` is `0.0`, so a window opens
+where it was told to rather than at 0,0. `pos=x,y` places a window itself;
+`place=center` after it wins, and `gpui::open_window` already takes x and y.
 
 ## The style language
 
@@ -401,6 +562,16 @@ percentage.
 `white black red green blue yellow orange cyan pink purple transparent`.
 `grad=[angle,]from,to` is a linear gradient. `opacity=0..1`.
 
+Anywhere a colour is taken, `theme:<name>` names the platform's colour table instead:
+`bg=theme:background`, `color=theme:text`, `bordercolor=theme:border`. The eight names
+are `gpui::colour_names()` — `text`, `selected_text`, `background`, `disabled`,
+`selected`, `border`, `separator`, `container` — and the value follows the scheme, so the
+same style string draws light on a light desktop and dark on a dark one, and follows
+`gpui::set_theme` when a program pins the palette. A name the table does not have is
+reported as an unknown token rather than drawn as black. `gpui::resolve_colour(spec)`
+answers what a value resolves to right now; `gpui::default_color(name)` answers the
+window's; `theme.<name>=` overrides one.
+
 **Border and decoration** — `border=`, `bordercolor=`, `dashed`,
 `rounded=N|sm|md|lg|xl|full|none`, `shadow=xs|sm|md|lg|xl|2xl|none`.
 
@@ -411,13 +582,18 @@ percentage.
 **Behaviour** — `cursor=pointer|text|move|grab|cross|default`,
 `overflow=hidden|x|y|scroll`, `debug`.
 
-**Interaction** — `hover=` and `active=` add a refinement applied while the
-pointer is over the element or the button is down. A refinement is itself a
-style, with `_` standing in for the spaces:
+**Interaction** — `hover=`, `active=` and `focus=` add a refinement applied while
+the pointer is over the element, the button is down, or the element is focused. A
+refinement is itself a style, with `_` standing in for the spaces:
 
 ```gossamer
 .button("inc", "+1", "bg=#89b4fa color=#11111b hover=bg:#a6e3fa active=bg:#74c7ec_opacity:0.9")
 ```
+
+`ctx=<predicate>` names a **key context** for the element: a keymap binding may
+require one (`gpui::bind_keys("cmd-s=save@Editor")`), and gpui evaluates it against
+the context stack of the focused element. Like `hover=`, a `ctx=` is what makes a
+plain box part of the dispatch tree. See `gpui::bind_keys`.
 
 ## Porting status
 
@@ -448,7 +624,7 @@ One file per upstream example, numbered to match. Run the pair:
 | `14_paths_bench` | `paths_bench.rs` | one path painted 2000× |
 | `15_pattern` | `pattern.rs` | `pattern_slash` |
 | `16_scrollable` | `scrollable.rs` | both axes |
-| `17_set_menus` | `set_menus.rs` | no submenu; the quit item is the binding's |
+| `17_set_menus` | `set_menus.rs` | including the *Services* system menu; the quit item is the binding's |
 | `18_shadow` | `shadow.rs` | every shadow band |
 | `19_tab_stop` | `tab_stop.rs` | focus order is real; **the blue focus ring is absent** — `is_focused` cannot observe a `focusable` element |
 | `20_text_layout` | `text_layout.rs` | including per-range highlights |

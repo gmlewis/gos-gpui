@@ -1,0 +1,54 @@
+DW8 — the scrollbar's thumb: where it goes, how long it is, and what pulls it.
+
+BEFORE THE WORK.
+
+**The row's "inert thumb" is a specific rectangle**, and the round found it before writing anything:
+`examples/02_data_table.gos:15` — "a grey scrollbar thumb over the body, 8x100 with a hover
+refinement" — a styled box that never moves. The registry that could drive it has existed since
+rounds 5–8 (SC1–SC7: `gpui::scroll_offset`, `scroll_max_offset`, `scroll_bounds`, `scroll_to`, with
+the sign documented in `scroll.rs:10-17`: zero at the top, negative going down). What was missing was
+the arithmetic between an offset and a rectangle, and an element that draws it.
+
+**Why this row and not DW5.** DW5 ("gutter and line numbers, wrap toggle, selection and caret
+colours") is the next one in the register, and **two of its three clauses cannot be attempted yet**:
+a gutter of line numbers over a *single-line* editor means nothing — `editor.rs:156-162` says the
+editor is `single_line` by construction — and a wrap toggle is a multi-line notion. Both are DW1's
+row, which is `todo`. The precedent is MR6's: a finished row cannot be closed by an unfinished one.
+DW8 depends on nothing unfinished, so it went first.
+
+**The red is an unresolved symbol, and only that** — the arithmetic is new surface:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+      FAIL nothing_to_scroll_is_nothing_to_draw: error[GX0002]: name `gpui::thumb_geometry` is not bound in this scope
+      ... and the same for the eight cases that follow
+    test: 233 passed, 9 failed, 836 assertion(s)
+
+**Three breaks**, each on one edge of the geometry, each caught:
+
+  * **the fraction measured over the whole track** instead of over the thumb's travel (the classic
+    scrollbar mistake, and what makes a thumb stop short of the end):
+
+        FAIL at_the_bottom_the_thumb_is_at_the_bottom: panic: the far end meets the track's end: 200,67
+        FAIL half_way_down_is_half_way_along: panic: half of the travel: 100,67
+
+  * **no minimum thumb** — a long document giving a thumb of no length, which is a thumb nobody can
+    see or aim at:
+
+        FAIL a_long_document_gives_a_small_thumb_no_smaller_than_its_minimum: panic: floored at the minimum: 0,0
+        FAIL a_minimum_longer_than_the_track_is_the_track: panic: capped at the track: 0,0
+
+  * **the offset not clamped to the track**:
+
+        FAIL an_offset_past_the_end_is_still_the_end: panic: an offset beyond `max_offset` cannot push
+        the thumb off the track: 3333,67
+
+Two of those three — the travel measurement and the minimum — are the difference between a scrollbar
+that looks like a scrollbar and one that does not, and both are the kind of thing that is invisible
+until it is measured.
+
+**What is *not* in this evidence, and why.** The element that draws the thumb, and the press that
+pulls it, have no headless check: they need a window, and this machine's owner has forbidden one
+(see "Headless mode"). They are implemented — `Kind::Scrollbar`, `scroll::paint`, `scroll::jump`, the
+`thumb=` token — and compile, and the arithmetic they use is the arithmetic checked here, through one
+shared function. That is the same position CL10, MR6 and DW2 ended in, and `DW8`'s residual doubt says
+it in the register.

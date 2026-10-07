@@ -1,0 +1,59 @@
+BG2 — cancelling background work that is already in flight.
+
+AFTER THE WORK. Every tier, byte-identical:
+
+    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/bg2_cancel.gos
+    === check ===
+    check: ok (1 items typed)
+
+    === run (interpreter) (exit 0) ===
+    OK BG2 a task in flight was reported running, cancelled 30ms in, and left neither an event nor a result, while the task beside it finished and left "other finished after 120 ms"
+
+    === run --no-jit (exit 0) ===
+    OK BG2 a task in flight was reported running, cancelled 30ms in, and left neither an event nor a result, while the task beside it finished and left "other finished after 120 ms"
+
+    === build (debug) ===
+    build: 26866648B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+    === build -> ./target/debug/learn-gpui (exit 0) ===
+    OK BG2 a task in flight was reported running, cancelled 30ms in, and left neither an event nor a result, while the task beside it finished and left "other finished after 120 ms"
+
+    === build --release ===
+    build: 7626376B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+    === release -> ./target/release/learn-gpui (exit 0) ===
+    OK BG2 a task in flight was reported running, cancelled 30ms in, and left neither an event nor a result, while the task beside it finished and left "other finished after 120 ms"
+
+The duplicate-symbol `ld` warnings on both builds are the toolchain's and predate this run.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `app.rs` — `TASKS: HashMap<(window, id), generation>`, one entry per piece of work in
+    flight, and `task_running`. `Request::Task` inserts a fresh generation before spawning;
+    when the work comes back it takes the entry **only if it is still its own**, and returns
+    without a result or an event if it is not. `Request::TaskCancel` drops that one entry.
+  * `store.rs` — `Request::TaskCancel`.
+  * `lib.rs` — `gpui::task_running(id)` and `gpui::task_cancel(id)`, documented, and
+    `gpui::task`'s doc now says what a cancel can and cannot do.
+  * `README.md` — the `task` row.
+
+**Nothing can interrupt a thread that is already asleep**, and that shapes the whole
+mechanism. A cancel cannot stop the work; it can only make the work's *return* a no-op. So the
+cost of a cancelled job is paid in full — the thread runs to the end — and what the program is
+promised is that nothing observable comes of it. That is also why the check reads the state a
+frame after the cancel rather than waiting for the work to finish, and why the assertion about
+the *other* task matters more than the one about the cancelled task.
+
+**The third registry of the same shape.** Rounds 38, 39 and 40 each built one keyed by
+`(window, id)` with a generation from `TIMER_GENERATION`, and each answers the same question —
+"how does a job that is already running learn it has been retired?" — the same way. Nothing
+was abstracted out of them: they hold different things (a period, an animation's clock, a
+generation), and a shared abstraction would have to name all three.
+
+Residual doubt. **The work still runs.** A program that cancels a long job to save the machine
+the cost does not get that; what it gets is silence afterwards. A cancelled job holds its
+background thread until its own deadline, so cancelling many long jobs at once briefly holds
+many threads — each ends at its own time and none reports. `gpui::task_running` means "in
+flight", not "will report": a task that has finished and reported is no longer running, so a
+program cannot use it to tell "still going" from "already done and read" — the event is what
+says that. Asking for the same id again restarts it, cancelling whatever was there, which the
+doc says and no assertion checks. And the same wall-clock caveat the rest of the BG block
+carries: the probe's windows are milliseconds against a machine that has to keep painting.

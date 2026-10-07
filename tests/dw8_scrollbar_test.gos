@@ -1,0 +1,97 @@
+// DW8 — the scrollbar's thumb: where it goes and how long it is.
+//
+// Headless: `gos test tests`. The row is "a scrollbar widget driving real offsets, replacing the
+// inert thumb" — and the inert thumb is `examples/02_data_table.gos`'s, an 8x100 grey rect that
+// never moves. The registry that could drive it already exists (SC1–SC7: `gpui::scroll_offset`,
+// `scroll_max_offset`, `scroll_bounds`, `scroll_to`), so what is missing is the arithmetic that
+// turns an offset into a thumb, and an element that draws it.
+//
+// The arithmetic is pure — four numbers in, two out — so it can be checked here even though the
+// element that uses it cannot be seen. It is also what a program drawing its own scrollbar needs,
+// which is what `02_data_table` does.
+//
+// Pass means: nothing to scroll is nothing to draw, the thumb sits at the top at the top and at the
+// bottom at the bottom, half way is half way, a long document gives a small thumb, and a thumb is
+// never smaller than its minimum nor longer than its track.
+//
+// The offsets are gpui's, kept as they are: **zero at the top and negative going down**, with
+// `max_offset` the positive amount of content that can be scrolled past.
+
+use gpui
+
+#[test]
+fn nothing_to_scroll_is_nothing_to_draw() {
+    assert(
+        gpui::thumb_geometry(0.0, 0.0, 200.0, 24.0) == "",
+        "content that fits has no thumb",
+    )
+    assert(
+        gpui::thumb_geometry(0.0, 100.0, 0.0, 24.0) == "",
+        "a track with no length has nowhere to put one",
+    )
+}
+
+#[test]
+fn at_the_top_the_thumb_is_at_the_top() {
+    // A 600px document in a 200px track: a third of the way is a third of the track.
+    assert(
+        gpui::thumb_geometry(0.0, 400.0, 200.0, 24.0) == "0,67",
+        f"the top is the top: {gpui::thumb_geometry(0.0, 400.0, 200.0, 24.0)}",
+    )
+}
+
+#[test]
+fn at_the_bottom_the_thumb_is_at_the_bottom() {
+    // `start` is measured over the thumb's *travel*, so its far end reaches the track's end.
+    assert(
+        gpui::thumb_geometry(-400.0, 400.0, 200.0, 24.0) == "133,67",
+        f"the far end meets the track's end: {gpui::thumb_geometry(-400.0, 400.0, 200.0, 24.0)}",
+    )
+}
+
+#[test]
+fn half_way_down_is_half_way_along() {
+    assert(
+        gpui::thumb_geometry(-200.0, 400.0, 200.0, 24.0) == "67,67",
+        f"half of the travel: {gpui::thumb_geometry(-200.0, 400.0, 200.0, 24.0)}",
+    )
+}
+
+#[test]
+fn a_long_document_gives_a_small_thumb_no_smaller_than_its_minimum() {
+    // 200 of 1000200 would be a fortieth of a pixel; the minimum is what makes it draggable.
+    assert(
+        gpui::thumb_geometry(0.0, 1000000.0, 200.0, 24.0) == "0,24",
+        f"floored at the minimum: {gpui::thumb_geometry(0.0, 1000000.0, 200.0, 24.0)}",
+    )
+}
+
+#[test]
+fn a_minimum_longer_than_the_track_is_the_track() {
+    assert(
+        gpui::thumb_geometry(0.0, 400.0, 10.0, 24.0) == "0,10",
+        f"capped at the track: {gpui::thumb_geometry(0.0, 400.0, 10.0, 24.0)}",
+    )
+}
+
+#[test]
+fn an_offset_past_the_end_is_still_the_end() {
+    assert(
+        gpui::thumb_geometry(-9999.0, 400.0, 200.0, 24.0) == "133,67",
+        f"an offset beyond `max_offset` cannot push the thumb off the track: {gpui::thumb_geometry(-9999.0, 400.0, 200.0, 24.0)}",
+    )
+    assert(
+        gpui::thumb_geometry(50.0, 400.0, 200.0, 24.0) == "0,67",
+        "and one above the top cannot pull it off either",
+    )
+}
+
+#[test]
+fn a_scrollbar_for_an_element_nobody_drew_has_no_thumb() {
+    // The element-shaped reader: no scrolled container has been drawn under this id, so there is
+    // no offset and no maximum, and nothing to draw.
+    assert(
+        gpui::scrollbar_thumb("never-drawn", "y", 200.0, 24.0) == "",
+        f"nothing to draw: {gpui::scrollbar_thumb("never-drawn", "y", 200.0, 24.0)}",
+    )
+}

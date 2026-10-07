@@ -1,0 +1,47 @@
+DW9 — the observable-state shim: `emit` and `subscribe` over the per-window store.
+
+AFTER THE WORK. Headless, and this row is one that headless mode can finish.
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    test: 254 passed, 0 failed, 905 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 62 file(s), 40 with no tests
+
+    $ ./scripts/tiers tests/dw9_observable_test.gos check
+    === check ===
+    check: ok (16 items typed)
+
+The check tier prints nothing but that line: eight lints this file had raised — six functions whose
+tail value was discarded, and two bool-literals compared — were corrected rather than tolerated.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `store.rs` — `push_event_in` / `push_event_with_in` / `take_events_in`, the twins the rest of
+    this module's accessors already had and the event queue did not; `push_event` and `take_events`
+    now delegate through them, so the current-window path and the addressed path cannot drift. And
+    the roster: `SUBSCRIBERS`, one `Vec<String>` of ids per (window, topic), with `subscribe_in`,
+    `unsubscribe_in`, `subscribers_in`, `topics_in` (sorted, so a program can print them) and
+    `publish_in`, which copies the roster before raising anything so a subscriber that unsubscribes
+    mid-drain still hears this one.
+  * `lib.rs` — `subscribe`, `unsubscribe`, `publish`, `subscribers`, `topics`, and the `_in` twins
+    of all five plus `take_events_in`. The twins are not decoration: they are what lets the
+    per-window question be asked at all from `gos test`, where the current window is 0.
+  * `README.md` — `subscribe` / `unsubscribe` / `publish` in the "making things happen" table and
+    `publish` among the event sources, with `emit` named as the direct raise beside it.
+
+**A subscriber is an event id, not a callback**, and that is the whole design. Upstream's
+`cx.subscribe` holds a closure to invoke; a Gossamer program rebuilds its tree every frame, so a
+retained closure would be a second copy of the program held by the binding for the life of the app.
+An id costs nothing, arrives in the same queue as every other event, and means the program reads a
+topic exactly where it reads a keystroke or a menu item.
+
+Residual doubt. **Nothing in `examples/` uses `subscribe` or `publish` yet.** The port of
+`12_ownership_post` — the example this row exists for — still approximates its subscriber with an
+`if` branch, which its own header says ("the subscriber is an `if` branch", "The port's
+'subscriber' runs inside the emitter's own frame callback"). Rewriting it to subscribe and publish
+is a faithfulness improvement and would exercise the new surface, and it is **deliberately not
+done in this round**: an example's behaviour cannot be verified while windows are forbidden, and
+the run's rule is that a change which might break a ported example must be seen not to. It is named
+here for whoever can run one again. Also unexercised: a subscription made from *inside a frame by
+the current window* (every case here names its window by hand), and `take_events_in` outside a
+test. And a topic that raises an event every frame for every subscriber puts one entry per
+subscriber per frame through the queue, which a program has to drain — nothing coalesces them.

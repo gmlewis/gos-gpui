@@ -1,0 +1,38 @@
+DW10 — program-described prepaint/paint through `canvas`: **tested** for the fixed-painter
+half, which is the half a program has.
+
+AFTER THE WORK. Headless, so the screen being locked does not matter — a path handle and a
+canvas element are *data*, and describing them needs neither a window nor a frame:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    PASS a_path_is_described_built_and_rebuilt (2 assertions)
+    PASS a_stroke_has_its_own_width_and_the_pool_resets (4 assertions)
+    PASS a_paint_element_takes_paths_and_a_checked_style (6 assertions)
+    test: 97 passed, 0 failed, 368 assertion(s)
+
+What the three tests establish:
+
+  * **A path is described in the language's own terms.** `path_move_to`, `path_line_to`,
+    `path_curve_to`, `path_arc_to`, `path_close`, `path_dash([4.0, 2.0])` and
+    `path_transform(2.0, 2.0, 1.5)` all take the builder handle, and `path_build` answers
+    `Ok`. Building twice is allowed — which is what a per-frame rebuild needs, since a
+    frame resets the pool, describes again and builds again.
+  * **A stroke has its own width**, `path_polygon` describes a closed path in one call, and
+    `path_reset` empties the pool so the next description builds as well.
+  * **The paint elements take what was built.** `paint_paths([one, two], ["#89b4fa",
+    "#f38ba8"], "size=full")` and `draw("bars", 0.0, "size=full bg=#111111")` each answer a
+    non-zero element handle, and the style a program hands them is checked by the same
+    vocabulary as every other style: a typo in it is reported, not painted as a mystery.
+
+**What is not checked**, and it is the larger half of what a painting capability is: that
+anything is *drawn*. The tests describe a path and build it; they cannot see the triangle.
+The register's own words for this row are that `ui::draw` and the path pool "already are
+the fixed-painter case" — and what a check can add to a fixed painter without pixels is
+that the description reaches it intact, which is what these assert. Whether the pixels land
+where the path says needs a capture this machine cannot make.
+
+And the other half of the row stays where it was: **the general custom element — a program
+authoring its own `prepaint`/`paint` — is AX1's wall**, recorded `unreachable` with the
+compiler error that proves it (`error[GT0070]: unknown trait Render in impl Render for
+Thing`). A shim cannot be built for it either, because a shim is exactly what the path pool
+already is.

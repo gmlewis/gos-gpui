@@ -1,0 +1,30 @@
+// BG1 — background work and its result. The reading half.
+//
+// Headless: `gos test tests`. `gpui::task` leaves a summary under `"<id>.result"` when its
+// work is done; that convention was written out by hand in every program that wanted it —
+// `examples/08_image_loading.gos` does it three times — and nothing named it, so nothing
+// could check it either.
+//
+// Pass means the convention has a reader, that it answers what the convention says, and that
+// each task's result is its own.
+
+use gpui
+
+#[test]
+fn the_result_of_a_finished_task_reads_back() {
+    gpui::set_text("job.result", "job finished after 120 ms")
+    assert(gpui::task_result("job") == "job finished after 120 ms", "the task left this under its key")
+}
+
+#[test]
+fn a_task_that_has_not_finished_has_no_result() {
+    assert(gpui::task_result("nothing-here") == "", "work that has not run has left nothing")
+}
+
+#[test]
+fn each_task_has_its_own_result() {
+    gpui::set_text("alpha.result", "alpha")
+    gpui::set_text("beta.result", "beta")
+    assert(gpui::task_result("alpha") == "alpha", "alpha reads alpha")
+    assert(gpui::task_result("beta") == "beta", "beta reads beta")
+}

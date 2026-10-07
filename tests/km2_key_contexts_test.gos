@@ -1,0 +1,44 @@
+// KM2 — key contexts: the spec grammar that carries one.
+//
+// Headless: `gos test tests`. A binding may name a key context after an `@`, and
+// that has to survive the parse and read back the same way — the request that binds
+// and the reader a program calls share one function, so what is checked here is
+// what `gpui::bind_keys` will do.
+//
+// The matching itself is a window question — contexts are read from the focused
+// node's branch of the dispatch tree — and lives in `tests/gui/km2_key_contexts.gos`.
+
+use gpui
+
+#[test]
+fn a_binding_may_carry_a_context() {
+    let plan = gpui::keymap_plan("cmd-s=save@Editor")
+    assert(plan.len() == 1, f"one pair, got {plan.len()}")
+    assert(plan[0] == "cmd-s:save@Editor", f"the context reads back after the name: {plan[0]}")
+}
+
+#[test]
+fn a_binding_without_one_reads_back_without_one() {
+    let plan = gpui::keymap_plan("cmd-j=close; cmd-s=save@Editor")
+    assert(plan == #["cmd-j:close", "cmd-s:save@Editor"], "with and without, in order")
+}
+
+#[test]
+fn a_context_is_more_than_a_name() {
+    // gpui's predicate grammar is wider than a bare name, and it is passed through
+    // verbatim rather than validated here.
+    let plan = gpui::keymap_plan("cmd-s=save@Editor && mode == full")
+    assert(plan[0] == "cmd-s:save@Editor && mode == full", f"the whole predicate: {plan[0]}")
+}
+
+#[test]
+fn a_trailing_at_is_not_a_context() {
+    let plan = gpui::keymap_plan("cmd-s=save@")
+    assert(plan == #["cmd-s:save"], "an empty context is no context, not a binding to nothing")
+}
+
+#[test]
+fn a_context_without_a_name_is_dropped() {
+    let plan = gpui::keymap_plan("cmd-s=@Editor")
+    assert(plan.len() == 0, "a pair with no event name is not a pair")
+}

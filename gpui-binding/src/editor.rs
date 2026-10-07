@@ -85,6 +85,7 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::history;
 use crate::store;
 use crate::window;
 
@@ -415,6 +416,26 @@ impl TextEditor {
     /// The guard on each arm reproduces the modifier set of upstream's binding
     /// string: `"left"` fires only with no modifier at all, `"shift-left"` only
     /// with Shift, and `"cmd-a"` on `cmd` (macOS) or `ctrl` elsewhere.
+    /// Steps the document back one step.
+    ///
+    /// The text comes back through the store, which is the document both sides write to — so
+    /// `adopt_program_text` picks it up on the next frame exactly as it picks up a program's own
+    /// write. Nothing here touches `self.content` directly, because there is one writer.
+    fn undo(&mut self, cx: &mut Context<Self>) {
+        let (win, key) = (self.win, self.key.clone());
+        if history::step(win, &key, false) {
+            cx.notify();
+        }
+    }
+
+    /// Steps it forward again, over anything that was undone.
+    fn redo(&mut self, cx: &mut Context<Self>) {
+        let (win, key) = (self.win, self.key.clone());
+        if history::step(win, &key, true) {
+            cx.notify();
+        }
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let modifiers = keystroke.modifiers;
@@ -432,6 +453,10 @@ impl TextEditor {
             "c" if command => self.copy(cx),
             "x" if command => self.cut(window, cx),
             "v" if command => self.paste(window, cx),
+            // The two the row is about: they used to fall through every arm below and reach
+            // `gpui::on_keys`, so the editor had no undo at all.
+            "z" if command && modifiers.shift => self.redo(cx),
+            "z" if command => self.undo(cx),
             "home" if plain => self.home(cx),
             "end" if plain => self.end(cx),
             "space" if modifiers.platform && modifiers.control => {

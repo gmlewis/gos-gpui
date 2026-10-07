@@ -1,0 +1,44 @@
+MR3 — style-token completeness: per-corner radii, resize cursors, the focus-order
+tokens, and `focus=<refinement>`.
+
+BEFORE THE WORK. The check was written first and run against the tree before any of it
+was implemented:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    PASS the_focus_order_tokens_are_known (1 assertion)
+    PASS per_corner_radii_and_resize_cursors_are_known (2 assertions)
+    FAIL focus_is_a_refinement_beside_hover_and_active: error[GX0005]: panic: focus= is a refinement token, the third beside hover= and active=
+    test: 58 passed, 1 failed, 218 assertion(s)
+
+**Two of the three tests passed before the work, and that is the row's first finding.**
+MR3 is listed as "partly", and the two premises turn out to be *done*: `tabindex=`,
+`tabstop`, `focusable` are applied (`view.rs:1956-1958`), the four per-corner radii are
+applied (`style.rs:373-376`), and the resize cursors are in the `cursor=` table
+(`style.rs`, `col-resize`/`row-resize`/`ew-resize`/`ns-resize`). Exactly one thing on the
+row's own list was missing, and it is the third test's subject.
+
+The failing assertion calls nothing this round added — `gpui::unknown_style_tokens` has
+been there since TM5 — so the red is a **wrong answer rather than an unresolved name**: at
+HEAD, `focus=bg:#ff0000` was reported as a token the binding does not know.
+
+The obstacle, from the source: gpui has the refinement —
+
+    $ sed -n '1018,1024p' ~/.cargo/registry/src/*/gpui-0.2.2/src/elements/div.rs
+    /// Set the given styles to be applied when this element, specifically, is focused.
+    /// Requires that the element is focusable. Elements can be made focusable using
+    /// [`InteractiveElement::track_focus`].
+    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+
+— the third of `hover` (`div.rs:670`), `active` (`div.rs:1089`) and `focus`, all on
+`InteractiveElement`. The binding exposed two of the three: `style::interaction` read
+`hover=` and `active=` and `apply_interactions` applied exactly those, so a program could
+describe what an element looks like while the pointer is over it and while it is held, and
+not while it has the keyboard.
+
+The break that isolates the check — `"focus"` removed from the style vocabulary:
+
+    FAIL focus_is_a_refinement_beside_hover_and_active: error[GX0005]: panic: focus= is a
+    refinement token, the third beside hover= and active=
+
+Restored immediately, and the restore re-checked by `gos check`, which recompiles the
+binding.

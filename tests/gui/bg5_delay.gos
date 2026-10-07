@@ -1,0 +1,112 @@
+// BG5 — a one-shot delay, and cancelling it before it fires.
+//
+// Tier: every tier.
+//
+// `gpui::tick` repeats; nothing in the binding raised an event **once** after a delay, and
+// nothing could take a pending delay back. A program that wanted "wait 200ms and then do
+// this" had to start a repeat timer and stop it in its own handler — which is a race
+// against the second tick — or lean on `gpui::task`, which is for work off the UI thread.
+//
+// Pass means four things, and the third is the row's second half:
+//
+//   * a delay is pending after it is asked for, and no longer pending after it fires;
+//   * it raises its event exactly once;
+//   * a cancel before it fires means it never raises at all;
+//   * and it is not pending afterwards either.
+//
+// The whole probe runs in about a second, in four windows of a few hundred milliseconds.
+// That is deliberate: it needs the window to go on being painted for as long as it runs,
+// and that is the one thing a probe cannot control on this machine.
+
+use gpui
+use std::process
+
+fn main() {
+    let outcome = gpui::run("bg5 - one-shot delay", 380.0, 220.0, || {
+        let f = gpui::frame()
+        let phase = gpui::state_int("bg5.phase", 0)
+
+        let mut once = 0
+        let mut gone = 0
+        for event in gpui::take_events() {
+            let id, _ = gpui::event_parts(event)
+            if id == "once" {
+                once = once + 1
+            } else if id == "gone" {
+                gone = gone + 1
+            }
+        }
+        if phase == 1 {
+            gpui::set_int("bg5.once", gpui::state_int("bg5.once", 0) + once)
+        } else if phase >= 2 {
+            gpui::set_int("bg5.gone", gpui::state_int("bg5.gone", 0) + gone)
+        }
+
+        if f == 2 {
+            gpui::delay("once", 120)
+        }
+        if phase == 0 && gpui::now() >= 0.03 {
+            // Asked for a frame ago, and not due for another tenth of a second.
+            if gpui::delay_pending("once") {
+                gpui::set_text("bg5.pending_first", "yes")
+            } else {
+                gpui::set_text("bg5.pending_first", "no")
+            }
+            gpui::set_int("bg5.phase", 1)
+        }
+        if phase == 1 && gpui::now() >= 0.35 {
+            gpui::set_bool("bg5.pending_after", gpui::delay_pending("once"))
+            // A second delay, cancelled in the same frame it was asked for. The cancel is
+            // applied after the delay, in the order they were raised.
+            gpui::delay("gone", 100)
+            gpui::delay_cancel("gone")
+            gpui::set_int("bg5.phase", 2)
+        }
+        if phase == 2 && gpui::now() >= 0.45 {
+            gpui::set_bool("bg5.pending_cancelled", gpui::delay_pending("gone"))
+            gpui::set_int("bg5.phase", 3)
+        }
+
+        if phase == 3 && gpui::now() >= 0.9 {
+            let pending_first = gpui::state_text("bg5.pending_first", "")
+            let pending_after = gpui::state_bool("bg5.pending_after", true)
+            let pending_cancelled = gpui::state_bool("bg5.pending_cancelled", true)
+            let once_count = gpui::state_int("bg5.once", 0)
+            let gone_count = gpui::state_int("bg5.gone", 0)
+
+            // One exclusive chain ending in the verdict: `gpui::quit()` asks the
+            // app to stop, it does not abort the callback that called it. Every branch
+            // is a positive condition — the linter is right that `if !flag` and
+            // `if flag == false` are both noise.
+            if once_count != 1 {
+                println(f"FAIL BG5 the delay raised its event {once_count} times, not once")
+                gpui::quit()
+            } else if pending_first != "yes" {
+                println("FAIL BG5 the delay was asked for and is not pending a frame later")
+                gpui::quit()
+            } else if pending_after {
+                println("FAIL BG5 the delay had fired and was still reported as pending")
+                gpui::quit()
+            } else if pending_cancelled {
+                println("FAIL BG5 the delay was cancelled and is still reported as pending")
+                gpui::quit()
+            } else if gone_count != 0 {
+                println(f"FAIL BG5 the cancelled delay fired anyway, {gone_count} time(s)")
+                gpui::quit()
+            } else {
+                println("OK BG5 a 120ms delay was pending, fired exactly once and was no longer pending; a cancelled 100ms delay never fired and was not pending either")
+                gpui::quit()
+            }
+        }
+
+        gpui::animate()
+        let root = gpui::column("p=8 size=full bg=#111111")
+        gpui::child(root, gpui::text("bg5", "color=#ffffff"))
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL BG5 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

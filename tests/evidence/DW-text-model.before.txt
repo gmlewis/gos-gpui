@@ -1,0 +1,74 @@
+DW1 / DW4 / DW5 — the text arithmetic three rows share: lines, carets and words.
+
+BEFORE THE WORK.
+
+**Why this and not a row of its own.** Three open rows stand on the same floor and none of them can
+be finished here:
+
+  * **DW1** — "multi-line, per-line layout, caret up/down/home/end, page moves": the caret moves are
+    arithmetic over a string; the per-line layout is the text system, which lives on a window.
+  * **DW4** — "mouse selection, double-click word, triple-click line, drag autoscroll": the word and
+    the line a click selects are arithmetic; the click, and the measurement that turns a point into an
+    offset, need a window. The input widget has **no caret at all** either — `view.rs:1812-1843` draws
+    a 1.5×16 bar after the text, always at the end — so a caret model is the first thing it would
+    need.
+  * **DW5** — "gutter and line numbers, wrap toggle, selection and caret colours": a gutter is the line
+    count and the line an offset is on; the gutter itself is *drawn*.
+
+So no row becomes `tested` this round, and none of the three is claimed. What is done is the floor:
+the arithmetic is built, checked, and named in each row's `test` column with the status left `todo`,
+because the acceptance of each is the widget and the widget cannot be seen.
+
+**Why it is not speculative surface.** Round 48 established that the store **is** the document —
+`editor.rs` publishes its content under its key and adopts what the program writes there — so a
+Gossamer program holds text it cannot today ask a single question about: where a line begins, which
+word is under an offset, where the caret lands one line down. Those are the *minimum implementation*
+of three rows, minus the part a window is required for, which is exactly how CL10, MR6, DW2 and DW8
+were closed.
+
+**The red is an unresolved symbol, and only that:**
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+      FAIL lines_are_counted_and_located: error[GX0002]: name `gpui::text_lines` is not bound in this scope
+      ... and the same for the six cases after it
+    test: 307 passed, 7 failed, 1098 assertion(s)
+
+**And one red of the round's own making**, which is worth keeping because it is what the check tier
+is for:
+
+    FAIL caret_moves_stop_at_the_ends: error[GX0003]: wrong number of arguments: expected 2, found 1
+
+A `text_line` call in the test was missing its text. The checker caught it before anything ran.
+
+**Five breaks, and one passed — the ninth time in this run that a check has been narrower than it
+looked, and the second in a row.**
+
+  * **no empty last line after a trailing break**:
+
+        FAIL a_text_with_no_break_is_one_line: panic: and an empty text is one empty line
+        FAIL line_bounds_exclude_the_break: panic: a text ending in a break has an empty last line
+
+  * **a line's bounds including the break that ends it**:
+
+        FAIL lines_are_counted_and_located: panic: after the first break is line 1
+        FAIL line_bounds_exclude_the_break: panic: the first line stops before the break
+        FAIL caret_moves_stop_at_the_ends: panic: and a page move further than the text is the last line
+
+  * **everything a word character**:
+
+        FAIL the_word_at_an_offset_is_a_run_of_letters_digits_and_underscores: panic: inside a word: 0,12
+        FAIL nothing_here_splits_a_character: panic: a word with a multi-byte character in it: 0,13
+
+  * **and the one that passed: the caret's column not clamped into the target line.** Nothing
+    noticed, because every case in the file aimed a column that stayed inside its line — the clamp
+    only shows when the column overshoots *into the line after*. A case was written for it,
+
+        assert(gpui::text_line_move(text, 1, 1, 20) == 8,
+               "a column past the end of the target line stops at its end, not in the line after it")
+
+    the file went green again, and the break then failed on its re-run:
+
+        test: 325 passed, 1 failed
+
+    This is the lesson of round 52 repeated with the fix available: a claim needs a case that can
+    disturb it, and "the clamp is not exercised" is a statement about the *test*, not the code.

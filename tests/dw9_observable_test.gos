@@ -1,0 +1,109 @@
+// DW9 — the observable-state shim: `emit` and `subscribe` over the per-window store.
+//
+// Headless: `gos test tests`. The row is the `cx.emit`/`cx.subscribe` model of upstream's
+// `12_ownership_post`, which this binding has no entity graph for: a Gossamer program rebuilds its
+// tree every frame, so there is nothing to subscribe *to*. What a program actually needs is the
+// signal — "tell whoever is interested that this happened" — and a roster of who that is, and both
+// of those are a registry and a queue. Nothing here needs a window, which is why this row can be
+// finished while the rest of the DW block cannot.
+//
+// Pass means a subscriber hears its topic and only its topic, once however many times it
+// subscribed, not at all once it has unsubscribed, and that a subscription made by one window is
+// invisible to another — the same rule the state store, the event queue and the timer registry all
+// follow. The `_in` twins are what let that last one be checked at all: `gos test` runs outside
+// every frame, where the current window is 0, and can still address window 1 and window 2 by hand.
+
+use gpui
+
+#[test]
+fn a_subscriber_hears_its_topic() {
+    let heard = gpui::publish_in(1, "save", "ok")
+    assert(heard == 0, "nobody has subscribed yet")
+    assert(gpui::take_events_in(1).len() == 0, "so nothing was raised")
+
+    assert(gpui::subscribe_in(1, "save", "saved"), "the first subscription is new")
+    assert(gpui::publish_in(1, "save", "ok") == 1, "and now one subscriber hears it")
+
+    let events = gpui::take_events_in(1)
+    assert(events.len() == 1, f"one event, got {events.len()}")
+    assert(events[0] == "saved|ok", f"raised under the subscriber's own id: {events[0]}")
+
+        let _ = gpui::unsubscribe_in(1, "save", "saved")
+}
+
+#[test]
+fn two_subscribers_both_hear_it() {
+    gpui::subscribe_in(2, "tick", "clock")
+    gpui::subscribe_in(2, "tick", "log")
+    assert(gpui::publish_in(2, "tick", "1") == 2, "both hear it")
+
+    let events = gpui::take_events_in(2)
+    assert(events.len() == 2, f"two events, got {events.len()}")
+    assert(events[0] == "clock|1", f"in the order they subscribed: {events[0]}")
+    assert(events[1] == "log|1", f"in the order they subscribed: {events[1]}")
+
+        let _ = gpui::unsubscribe_in(2, "tick", "clock")
+    let _ = gpui::unsubscribe_in(2, "tick", "log")
+}
+
+#[test]
+fn a_subscriber_of_another_topic_hears_nothing() {
+    gpui::subscribe_in(3, "save", "saver")
+    assert(gpui::publish_in(3, "quit", "now") == 0, "no listener for quit")
+    assert(gpui::take_events_in(3).len() == 0, "so the saver heard nothing")
+        let _ = gpui::unsubscribe_in(3, "save", "saver")
+}
+
+#[test]
+fn subscribing_twice_is_subscribing_once() {
+    assert(gpui::subscribe_in(4, "once", "one"), "the first is new")
+    assert(!gpui::subscribe_in(4, "once", "one"), "and the second is not")
+    assert(gpui::publish_in(4, "once", "") == 1, f"so it hears the topic once and not twice")
+    assert(gpui::take_events_in(4).len() == 1, "one event")
+        let _ = gpui::unsubscribe_in(4, "once", "one")
+}
+
+#[test]
+fn unsubscribing_stops_it() {
+    gpui::subscribe_in(5, "news", "reader")
+    assert(gpui::unsubscribe_in(5, "news", "reader"), "the first unsubscribe removes it")
+    assert(!gpui::unsubscribe_in(5, "news", "reader"), "the second has nothing to do")
+    assert(gpui::publish_in(5, "news", "extra") == 0, "and it hears nothing more")
+    assert(gpui::take_events_in(5).len() == 0, "so nothing was raised")
+}
+
+#[test]
+fn a_subscription_belongs_to_one_window() {
+    gpui::subscribe_in(6, "shared", "six")
+    assert(gpui::publish_in(7, "shared", "hello") == 0, "window 7 has no subscribers")
+    assert(gpui::take_events_in(7).len() == 0, "and heard nothing")
+    assert(gpui::publish_in(6, "shared", "hello") == 1, "window 6's subscriber is still there")
+    assert(gpui::take_events_in(6).len() == 1, "and heard it")
+        let _ = gpui::unsubscribe_in(6, "shared", "six")
+}
+
+#[test]
+fn the_roster_is_readable() {
+    gpui::subscribe_in(8, "b", "second")
+    gpui::subscribe_in(8, "a", "first")
+    assert(gpui::subscribers_in(8, "a") == #["first"], "the ids on a topic, in order")
+    assert(gpui::subscribers_in(8, "b") == #["second"], "and on another")
+    assert(gpui::subscribers_in(8, "none") == #[], "an unknown topic has none")
+
+    let topics = gpui::topics_in(8)
+    assert(topics.len() == 2, f"two topics have subscribers: {topics}")
+    assert(topics[0] == "a", f"and they are sorted, so a program can print them: {topics}")
+
+    gpui::unsubscribe_in(8, "a", "first")
+    gpui::unsubscribe_in(8, "b", "second")
+    assert(gpui::topics_in(8).len() == 0, "and a topic nobody is on is not a topic")
+}
+
+#[test]
+fn the_payload_can_be_empty() {
+    gpui::subscribe_in(9, "blink", "cursor")
+    assert(gpui::publish_in(9, "blink", "") == 1, "a signal with nothing to say")
+    let events = gpui::take_events_in(9)
+    assert(events[0] == "cursor|", f"still arrives as an event: {events[0]}")
+        let _ = gpui::unsubscribe_in(9, "blink", "cursor")
+}

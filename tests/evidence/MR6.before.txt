@@ -1,0 +1,53 @@
+MR6 — `ui::` module completeness and doc parity: where an asset path resolves.
+
+BEFORE THE WORK.
+
+**Two of the row's three clauses turned out not to be gaps, and the round says so before saying
+what it built.**
+
+  * **`ui::scroll` handles are already reachable.** `ui::scroll(style)` takes a style string, and
+    `id=panel` in that style is exactly what `gpui::scroll_offset("panel")`, `scroll_max_offset`,
+    `scroll_bounds` and `scroll_to` read — rounds 5–8 built that registry and SC1's probe uses
+    the same `id=`. So the clause is served by the style idiom rather than by a handle the
+    wrapper would have to hand out.
+  * **`ui::editor` multi-line is DW1's row**, not this one: it is the editor widget's own text
+    model, which `editor.rs` says in its own words is `single_line` by construction
+    (`editor.rs:156-162`). A row cannot be closed by another row's work, and DW1 is still `todo`.
+
+**What is left is the clause the register names as the defect**: an `image` or `icon` path
+resolves against the process's working directory (`view.rs:861`, `img(PathBuf::from(path))`),
+which for a program started from a desktop icon is somewhere its assets are not.
+
+**The red is an unresolved symbol, and only that** — the row's checkable clause is new surface, so
+there was nothing behavioural to fail first:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+      FAIL without_a_root_a_path_is_left_alone: error[GX0002]: name `gpui::asset_root` is not bound in this scope
+      ... and the same for the other four cases
+    test: 233 passed, 5 failed, 836 assertion(s)
+
+**Two breaks**, both caught:
+
+  * **the root never searched** — the candidate path computed and then ignored:
+
+        FAIL a_root_is_searched_before_the_working_directory: panic: the root comes first: logo.png
+        FAIL the_root_is_spelled_however_the_program_likes: panic: a trailing slash does not double one: logo.png
+
+  * **a miss handed back as the path it would have been** rather than as the name it was given:
+
+        FAIL an_asset_the_root_does_not_have_falls_back: panic: a miss is not a failure:
+        /tmp/gpui-mr6-b/assets/somewhere-else.png
+
+**And two pieces of the implementation are defensive rather than load-bearing, which is worth
+writing down because the breaks that would have shown them do not exist.** The early return for
+an absolute path, and the early return for an empty root, are both redundant: `Path::join` with an
+absolute path *replaces* the base, so an absolute path comes back unchanged with or without the
+guard; and `Path::new("").join("logo.png")` is `"logo.png"`, so an empty root resolves to the name
+it was given. Neither guard changes an answer, so no break can show either. They are kept because
+they say what the function means and save a `stat` — but a reader should know they are comments
+made of code, not behaviour.
+
+The other thing no break can reach: **the two element arms**. `Kind::Image` and `Kind::Icon` were
+changed to resolve through the same function, and that is the half a program actually uses — but
+seeing it needs a window, and there may be none. `gpui::asset_path` is checked; that the `image`
+element calls it is read, not measured.

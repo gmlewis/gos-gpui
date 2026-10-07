@@ -1,0 +1,74 @@
+KM6 — Shift-Tab, key-up and modifier fidelity.
+
+AFTER THE WORK. Every tier, byte-identical:
+
+    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/km6_modifiers.gos
+    === check ===
+    check: ok (2 items typed)
+
+    === run (interpreter) (exit 0) ===
+    OK KM6 the three keystrokes arrived as "shift-tab", "tab" and "cmd-c"; shift read true then false, and cmd-c reported mods="platform"
+
+    === run --no-jit (exit 0) ===
+    OK KM6 the three keystrokes arrived as "shift-tab", "tab" and "cmd-c"; shift read true then false, and cmd-c reported mods="platform"
+
+    === build (debug) ===
+    build: 26674584B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+    === build -> ./target/debug/learn-gpui (exit 0) ===
+    OK KM6 the three keystrokes arrived as "shift-tab", "tab" and "cmd-c"; shift read true then false, and cmd-c reported mods="platform"
+
+    === build --release ===
+    build: 7534696B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+    === release -> ./target/release/learn-gpui (exit 0) ===
+    OK KM6 the three keystrokes arrived as "shift-tab", "tab" and "cmd-c"; shift read true then false, and cmd-c reported mods="platform"
+
+Both builds print the duplicate-symbol link warnings this project has carried
+since round 2; they are the toolchain's and every run transcript is silent but for
+`OK`.
+
+**The check is sensitive to both mechanisms it claims to test**, which the weak
+before-transcript does not establish on its own. The payload half is the
+behavioural red in `KM6.before.txt` (`the first keystroke reached the program as
+"tab"`). The modifier half was shown by a deliberate break — the five
+`store::set_flag` writes in `view::record_keystroke` removed and nothing else
+changed:
+
+    $ timeout -k 5 60 gos run --main-thread tests/gui/km6_modifiers.gos
+    FAIL KM6 the shift modifier reads false for Shift-Tab and false for Tab, so a
+    program cannot tell them apart by modifier
+
+Restored before the tier run above, and the `check` tier in it recompiles the
+binding, which is what proves the restore took.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `view.rs` — `record_keystroke(prefix, keystroke)`, one place that writes a
+    stroke's fields under `~key.` (a press) or `~keyup.` (a release):
+    `.unparse` (the whole stroke), `.key` (the name on the key), `.char` (what
+    would have been typed), `.mods` (the held modifiers in gpui's own order and
+    spelling, `+`-joined), and `.shift` / `.control` / `.alt` / `.platform` /
+    `.function`. The key-down listener now raises `"key|<unparse>"` instead of
+    `"key|<key>"`, which is the row; it also records `~key.held`. A new
+    `.capture_key_up` listener on the same root records the release under
+    `~keyup.` and raises `"keyup|<unparse>"`.
+  * `lib.rs` — `gpui::on_keys`'s doc rewritten to promise the unparsed stroke, the
+    key-up event and the store fields by name. This was a documented behaviour
+    change: a program matching `"key|c"` now sees `"key|cmd-c"` when ⌘ is held.
+  * `README.md` — the two rows that described `"key|<name>"` updated.
+  * `examples/19_tab_stop.gos` — its header's "Shift-Tab is indistinguishable from
+    Tab" note is now false and was corrected.
+
+**Key-up is implemented and not exercised, and that is stated rather than
+implied.** gpui 0.2.2 has no externally callable way to dispatch a release, so
+`gpui::send_key_up` could not exist: `Window::dispatch_keystroke`
+(`gpui-0.2.2/src/window.rs:3540`) is the key-down path, and `Window::dispatch_event`
+(`:3581`) returns `pub(crate) DispatchEventResult` (`:1273`), which fails to
+compile from this crate:
+
+    error: type `gpui::window::DispatchEventResult` is private
+    --> gpui-binding/src/app.rs
+
+A real release from the platform reaches the `capture_key_up` listener — its
+registration is the same `.capture_*` family as the key-down listener KM5 proves
+works — but no probe can produce one, so what is checked is Shift-Tab and modifier
+fidelity, and the release is residual doubt. See `## Unreachable`.

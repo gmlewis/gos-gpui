@@ -1,0 +1,43 @@
+TH5 — colour-scheme-aware style tokens: `theme:<name>` as a style value.
+
+BEFORE THE WORK.
+
+Two reds, one per half of the row: the vocabulary that makes a bad name loud, and the
+resolution that makes a good name useful.
+
+**1. The headless half — the value was never checked.**
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+      FAIL a_name_the_table_does_not_have_is_reported: error[GX0005]: panic: reported
+        rather than silently drawn as black: #[]
+        at a_name_the_table_does_not_have_is_reported (tests/th5_theme_tokens_test.gos:30:5)
+      FAIL the_prefix_is_checked_not_the_whole_value: error[GX0005]: panic: an empty
+        name is not a name: #[]
+    test: 156 passed, 2 failed, 565 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 47 file(s), 32 with no tests
+
+**Two of five, and the other three are worth reading as a finding rather than as a
+gap.** `unknown_tokens` only ever looked at a token's *key*; nothing in the language
+validated a *value*, so `bg=theme:nosuch` and `bg=theme:` were both accepted and the two
+tests that require them to be refused are the two that failed. The three that passed did
+so for the same reason and at the same time: a value nothing checks is a value anything
+satisfies, including the good ones. That is why the red for "the vocabulary" is a red
+about refusal and not about acceptance.
+
+**2. The window half.**
+
+    $ timeout -k 5 60 gos run --main-thread tests/gui/th5_theme_tokens.gos
+    exit 124, no output
+
+The silent hang: `gpui::resolve_colour` does not exist at HEAD, so the callback is
+abandoned at its first call and the window idles — the shape KM5's, KM6's, KM2's and
+KM3's transcripts have, and the third time in this run that an unbound binding function
+has produced it. The verdict is block-buffered and vanishes with the kill, which is why
+the transcript is empty rather than truncated.
+
+**The absence itself, stated plainly.** `gpui::colour_names`, `gpui::default_color`,
+`gpui::default_color_for`, `theme.<field>=` (TH4) and `gpui::set_theme` (TH3) all existed;
+what did not is any way for a *style string* to name the table. A program that wanted the
+desktop's own background had to read `default_color("background")` and paste the hex into
+its style string, and paste a second one for the other scheme — which is the whole reason
+a `theme:` value is worth having.

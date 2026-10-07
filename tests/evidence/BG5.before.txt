@@ -1,0 +1,51 @@
+BG5 — a one-shot delay, and cancelling it before it fires.
+
+BEFORE THE WORK.
+
+Three reds. The first is the weak kind; the second is the row's own second half; the third
+pair is what proves the check is sensitive to each half.
+
+**1. The probe against HEAD's binding.**
+
+`gpui::delay`, `gpui::delay_pending` and `gpui::delay_cancel` do not exist at HEAD, and an
+unbound binding function's failure mode is not a diagnostic:
+
+    $ timeout -k 5 40 gos run --main-thread tests/gui/bg5_delay.gos
+    exit 124, no output
+
+The callback is abandoned at its first unbound call and the window idles; the verdict is
+block-buffered and vanishes with the kill. Nothing in the binding raised an event **once**:
+`gpui::tick` repeats, so a program that wanted "wait 200ms and then do this" had to start a
+repeat timer and stop it inside its own handler — a race against the second tick — or use
+`gpui::task`, which is for work off the UI thread and leaves a result string behind.
+
+**2. The behavioural red: a one-shot that exists and a cancel that does not take effect.**
+
+`gpui::delay` and `gpui::delay_pending` implemented, with `Request::DelayCancel` accepted and
+doing nothing — a plausible intermediate state, and one that lets the probe run and fail on
+the thing the row is about rather than on a missing name:
+
+    $ timeout -k 5 30 gos run --main-thread tests/gui/bg5_delay.gos
+    FAIL BG5 the delay was cancelled and is still reported as pending
+    exit 0
+
+**3. The two halves, by deliberate break**, since the historical red reaches the cancel but
+not the "fires exactly once" half. Each was applied alone:
+
+  * **the one-shot**, by leaving the entry behind after it fires, so a delay that has already
+    raised goes on being reported as pending:
+
+        FAIL BG5 the delay had fired and was still reported as pending
+
+  * **the cancel**, by having the waiting task raise whatever happened to it:
+
+        FAIL BG5 the cancelled delay fired anyway, 1 time(s)
+
+Both restored before the tier run in `BG5.after.txt`; the `check` tier recompiles the binding,
+which is what proves the restore took.
+
+**A note on the probe's own shape.** Two of the three lints this ran into were about the
+verdict chain: `warning[GL0034]` on `if !flag { … } else { … }`, and then `warning[GL0006]` on
+`if flag == false`, which is the linter correctly insisting on the first form and the first
+lint correctly refusing it. The assertion was moved to a string — `delay_pending` recorded as
+`"yes"`/`"no"` — which satisfies both. The `check` tier now prints nothing but `check: ok`.

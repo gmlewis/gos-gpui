@@ -1,0 +1,16 @@
+WH8 — window kind (dialog/popup) and tabbing identifier.
+
+AFTER THE WORK. Same probe, same five tiers, same output as `WH1.after.txt`:
+
+    OK WH1 WH3 WH5 WH7 WH8 the window answers for its minimum size, app id, kind and tab group; the scale factor is 1; the vocabulary knows its own keys and refuses minsize=420, kind=dialog and nosuch=1
+
+Two tokens, one parse. `kind=normal|popup|floating` and `tabbing=<name>` both reach
+`WindowOptions` — `kind` and `tabbing_identifier` — through the same code the first
+window uses, which is the half of this row that was wrong before: the kind was read
+by a second, different parser that only `open_window` could reach.
+
+gpui exposes neither back: there is no `Window::kind()` and no
+`Window::tabbing_identifier()`, so the reader is the mirror of `WindowOptions`
+described in `WH1.after.txt`. What the platform does with the tabbing identifier is
+visible in the source and not to a program: it is the switch that turns automatic
+window tabbing on for the whole application (`platform/mac/window.rs:595-600`).

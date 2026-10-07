@@ -1,0 +1,44 @@
+AX3 — a future / async boundary crossing the ABI: UNREACHABLE.
+
+The value vocabulary the ABI can carry has no future in it. `conv.rs` is the file that
+maps Rust types onto it, and the words do not appear:
+
+    $ grep -rn "Future\|Poll\|Pin<" $GOSSAMER_ROOT/crates/gossamer-binding/src/conv.rs
+    (no output)
+
+and the two rules that shape everything else exclude it by construction:
+
+    $ sed -n '292p;294p' $GOSSAMER_ROOT/crates/gossamer-binding/src/native.rs
+        type Input: Copy;
+        type Output: Copy + Default;
+
+`Output: Copy` means a binding answers a *value*, not a value that will exist later.
+A future is a state machine polled by an executor — owning one across a call is not
+`Copy`, being polled is not a return, and the ABI has no place to park a `Waker`. The
+register's R1 and R2 again, with R3 behind them: the ABI carries inert data and handles,
+and a future is neither.
+
+This is not a gap that a Rust widget closes either, which is what puts it here rather
+than in phase 3. A widget draws inside one frame; a future spans frames, and the thing
+that spans frames in this binding is the **event queue**, not a type in the value
+vocabulary.
+
+**What a program does instead, and it is the deliberate design.** Asynchronous work is a
+*handoff*, in three pieces that already exist or are the register's own rows:
+
+  * `gpui::task(id, ms)` — work on GPUI's background executor, off the UI thread, raising
+    `id` and storing `<id>.result` when it is done (`app.rs`). Cancellation, progress and
+    a program-chosen result are rows **BG1–BG3**, which is where a future's other halves
+    belong.
+  * `gpui::tick(id, ms)` — a repeating beat, row **BG4**.
+  * `gpui::animate()` — the next frame, row **BG6**.
+
+So the capability "do something slow without blocking the UI, and hear about it" is
+reachable and mostly built; what is unreachable is literally *a future as a value*, and
+no application is missing anything because of it. Recording it here keeps it from being
+rediscovered as a supposed hole.
+
+The toolchain change that would close it: a future representation in the ABI's type
+system — an owned handle to an executor-side task plus a completion event — or the
+`test-support`-style async bridge made part of the value vocabulary. Both are larger than
+the capability they would add.

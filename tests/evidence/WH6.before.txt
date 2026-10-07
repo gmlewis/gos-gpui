@@ -1,0 +1,55 @@
+WH6 — read and observe window bounds (inner and outer), restored bounds.
+
+BEFORE THE WORK. Against a pristine copy of this project at HEAD (`git archive HEAD`
+into /tmp/gpui-before, the probe copied in, the stale build lock cleared first — the
+lock, not the buffer: see `WH4.before.txt` for why that distinction is written down):
+
+    cd /tmp/gpui-before
+    timeout -k 5 25 gos run --main-thread tests/gui/wh6_window_bounds.gos
+
+    FAIL WH6 the window reports an inner size of 0x0, which is not a size
+    exit=0
+
+Three consecutive runs, the same line, exit 0.
+
+**A behavioural red**, and the reason it can be one is worth stating: `window_field`
+already existed at HEAD and answers `0.0` for a field it does not know, so a program
+asking for the window's inner size was handed a window with no interior — a wrong
+answer rather than a missing name, which is the stronger kind of red.
+
+The probe's chain is nested for exactly that reason, and the first version got it wrong.
+Calling `gpui::window_bounds_state()` — new in this round — *before* the assertion makes
+the callback abandoned at an unbound name, and the transcript becomes `exit 124` and
+silence instead of a wrong answer. Everything this row added is called below the first
+`else`, so at HEAD the first assertion fires before any of it is reached.
+
+What else did not exist at HEAD, and is not even observable in the same way:
+
+  * `gpui::observe_window_bounds(id)` — the row's *observe* half. gpui's
+    `Context::observe_window_bounds` (`app/context.rs:429`) registers a callback that the
+    platform invokes from `Window::bounds_changed` (`window.rs:1675`) when a window is
+    moved or resized, which is not a place a binding function can stand: it is the
+    retained-callback shape CL1 established for `on_window_should_close`. Nothing in
+    this crate reached it.
+  * `window_bounds_state()` and `restore_w`/`restore_h`. gpui keeps a window's restore
+    size *inside* the `WindowBounds` variant — `Maximized(bounds)` and
+    `Fullscreen(bounds)` carry the size the window would go back to
+    (`platform.rs:1188-1197`) — which was the only place a program could have read it,
+    and neither the variant nor the size was exposed.
+
+The break that isolates this row's *observe* half — the request arriving and the
+observer never being installed:
+
+    FAIL WH6 the resize to 430x310 took effect — the window reports 430x342 — but raised no bounds event
+
+and the break that isolates the *reader* half is HEAD itself, above. Restored
+immediately, and the restore re-checked by the `check` tier, which recompiles the
+binding.
+
+One more thing this probe taught, and it is the same lesson as `WH2.before.txt` in a
+sharper form. The first version waited ten seconds on `gpui::now()` for the bounds event.
+That deadline can outlive the last frame the probe will ever see: a window the desktop
+occludes stops being painted, so a clock-based wait ends as a silent `exit 124` rather
+than a verdict — which is what the first run of the break produced. The verdict is now
+reached by counting frames *since the geometry changed*, which is bounded by frames that
+actually happen.

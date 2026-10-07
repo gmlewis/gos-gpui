@@ -1,0 +1,51 @@
+// BG6 — animation: easing and duration. The curve half.
+//
+// Headless: `gos test tests`. A timing curve is arithmetic, so the whole of what a program
+// needs to know about one — that it is anchored at both ends, that it is not the identity,
+// and what it answers in between — can be read without a window.
+//
+// The clock half — start, pause, resume, stop, and a duration — needs a window and lives in
+// `tests/gui/bg6_animation.gos`.
+//
+// Pass means the names are discoverable (`gpui::animation_easings`), every one of them is
+// anchored at 0 and 1 (a curve that does not is not a curve), each is distinguishable from
+// `linear`, and a name the binding does not have falls back to `linear` rather than to
+// something arbitrary.
+
+use gpui
+
+#[test]
+fn the_easings_have_names() {
+    let names = gpui::animation_easings()
+    assert(names.len() >= 4, f"linear and at least three curves, got {names.len()}")
+    assert(names[0] == "linear", f"the identity comes first: {names[0]}")
+}
+
+#[test]
+fn every_easing_is_anchored_at_both_ends() {
+    for name in gpui::animation_easings() {
+        assert(gpui::easing_at(name, 0.0) == 0.0, f"{name} does not start at 0")
+        assert(gpui::easing_at(name, 1.0) == 1.0, f"{name} does not end at 1")
+    }
+}
+
+#[test]
+fn linear_is_the_identity() {
+    assert(gpui::easing_at("linear", 0.25) == 0.25, "linear answers its input")
+    assert(gpui::easing_at("linear", 0.75) == 0.75, "linear answers its input")
+}
+
+#[test]
+fn the_curves_are_curves() {
+    // A quarter of the way in: a curve that eased must not be a quarter of the way along.
+    for name in gpui::animation_easings() {
+        if name != "linear" {
+            assert(gpui::easing_at(name, 0.25) != 0.25, f"{name} is the identity, not a curve")
+        }
+    }
+}
+
+#[test]
+fn an_easing_it_does_not_have_is_the_identity() {
+    assert(gpui::easing_at("nosuch", 0.3) == 0.3, "an unknown easing falls back to linear")
+}

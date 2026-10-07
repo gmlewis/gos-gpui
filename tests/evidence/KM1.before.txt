@@ -1,0 +1,49 @@
+KM1 — a program-facing keymap (`bind_keys` from Gossamer).
+
+BEFORE THE WORK.
+
+Two reds: the one the probes meet, and the behavioural one that proves the check
+is sensitive to the mechanism it claims to test.
+
+**1. The headless half, against HEAD's binding.**
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    FAIL a_spec_parses_into_stroke_and_event_pairs: error[GX0002]: name
+      `gpui::keymap_plan` is not bound in this scope
+    ... and the same for the other three KM1 tests
+    test: 116 passed, 4 failed, 439 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 39 file(s), 27 with no tests
+    error: 4 test failure(s)
+
+**2. The GUI half, and a finding about how a missing binding function behaves.**
+
+    $ timeout -k 5 30 gos run --main-thread tests/gui/km1_keymap.gos
+    FAIL KM1 the reader says 0 bindings, not the 3 the program asked for
+
+That is a behavioural red rather than a hang, and it is worth recording *why*,
+because it contradicts a note elsewhere in this ledger. An unbound binding
+function called from a view callback on the **interpreter tier** does not abandon
+the callback: it answers a default (here, an empty list), so the probe runs all the
+way to its verdict and fails on the first thing it checks. `gos check` on the same
+probe answers `check: ok`, and the headless `gos test` tier does report the
+unbound name — so the three tiers disagree about whether a missing function is an
+error at all. The earlier "abandoned at its first call, `exit 124`, no output"
+transcripts (KM5, KM6) are the *other* shape; both exist.
+
+**3. The behavioural red, which is the one that matters here.**
+
+The historical transcript above fails on the *reader*, so it never reaches the
+part of the probe that proves a stroke fires. That was taken by a deliberate break
+instead — `cx.bind_keys(...)` removed from `bind_keys_spec` and nothing else
+changed, so the strokes parse, route and are recorded but are never bound to
+anything:
+
+    $ timeout -k 5 60 gos run --main-thread tests/gui/km1_keymap.gos
+    FAIL KM1 the program bound 3 strokes and 0 of them fired: , ,
+
+Exactly the row: before this round, the only bound stroke in the entire binding was
+⌘Q (`gpui-binding/src/app.rs:567`), because an `Action` is a trait implementation
+and R3 (`gossamer-binding/src/native.rs:287-310`) leaves no value that *is* one.
+`gpui::send_key` — added in round 21 for KM5 — is what makes any of this checkable:
+it dispatches a parsed keystroke through the window's ordinary path, keymap match
+included.

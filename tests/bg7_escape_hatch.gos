@@ -1,0 +1,67 @@
+// BG7 — file I/O from Gossamer, as the escape hatch: the same round-trip as
+// `tests/bg7_escape_hatch_test.gos`, but as a program, so it can be run on the
+// interpreter and on both LLVM builds. It opens no window and needs no binding, which
+// is the point of the row — and which is also why it is the one check in this register
+// that still runs while the screen is locked.
+//
+// Prints its verdict and exits 0. `scripts/tiers` cannot drive it (it refuses while the
+// screen is locked, and it is built for GUI programs anyway); the three tiers are run by
+// hand and recorded in `tests/evidence/BG7.after.txt`.
+
+use std::fs
+
+const PATH: &str = "/tmp/gos-bg7-program.txt"
+const DIR: &str = "/tmp/gos-bg7-program-dir"
+
+fn main() {
+    let _ = fs::remove_dir_all(*DIR)
+
+    if fs::write(*PATH, "bg7 from a program".as_bytes()).is_err() {
+        eprintln("FAIL BG7 could not write a file")
+        return
+    }
+    if fs::exists(*PATH) == false {
+        eprintln("FAIL BG7 the file it just wrote does not exist")
+        return
+    }
+    match fs::read_to_string(*PATH) {
+        Ok(text) => {
+            if text != "bg7 from a program" {
+                eprintln(f"FAIL BG7 read back \"{text}\"")
+                return
+            }
+        }
+        Err(_) => {
+            eprintln("FAIL BG7 could not read back what it wrote")
+            return
+        }
+    }
+
+    if fs::create_dir_all(*DIR).is_err() {
+        eprintln("FAIL BG7 could not create a directory")
+        return
+    }
+    let inner = f"{*DIR}/inner.txt"
+    if fs::write(inner, "nested".as_bytes()).is_err() {
+        eprintln("FAIL BG7 could not write inside the directory it made")
+        return
+    }
+    let count = match fs::read_dir(*DIR) {
+        Ok(entries) => entries.len(),
+        Err(_) => {
+            eprintln("FAIL BG7 could not list the directory it made")
+            return
+        }
+    }
+    if count != 1 {
+        eprintln(f"FAIL BG7 the directory it made holds {count} entries, not one")
+        return
+    }
+    if fs::remove_dir_all(*DIR).is_err() {
+        eprintln("FAIL BG7 could not delete the tree it made")
+        return
+    }
+    let _ = fs::remove_file(*PATH)
+
+    println("OK BG7 a program with no window wrote, read back and deleted a file, and made, listed and deleted a directory")
+}

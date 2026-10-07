@@ -1,0 +1,48 @@
+BG2 — cancelling background work that is already in flight.
+
+BEFORE THE WORK.
+
+Three reds: the weak one, the row's own clause reached through a plausible intermediate, and
+the two breaks that show which assertion each half is load-bearing for.
+
+**1. The probe against HEAD's binding.**
+
+`gpui::task_cancel` and `gpui::task_running` do not exist at HEAD, and an unbound binding
+function's failure mode is not a diagnostic:
+
+    $ timeout -k 5 40 gos run --main-thread tests/gui/bg2_cancel.gos
+    exit 124, no output
+
+What was absent: `gpui::task` ends with `.detach()`, and the work runs on GPUI's background
+executor where nothing holds a handle to it. A program that starts slow work and then wants it
+stopped — the panel closed, the input changed, the window going away — had nothing to stop it
+with. The work ran to the end, left its result and raised its event anyway.
+
+**2. The behavioural red: the registry and the reader in, the cancel accepted and not acting.**
+
+    $ timeout -k 5 40 gos run --main-thread tests/gui/bg2_cancel.gos
+    FAIL BG2 a cancelled task still reports running as "yes"
+    exit 0
+
+**3. The two halves, by deliberate break.** A cancel here can only act at one moment — when
+the work comes back — because nothing can interrupt a thread that is already asleep, so the
+interesting failures are "the cancel never reaches it" and "the cancel reaches too much". Each
+break was applied alone:
+
+  * **the cancel that does not reach the work** — the entry dropped without checking whose it
+    is, so the retired task reports anyway:
+
+        FAIL BG2 the cancelled task raised its event anyway, 1 time(s)
+
+  * **the cancel that stops too much** — the whole registry cleared instead of the one entry:
+
+        FAIL BG2 the task that was NOT cancelled raised its event 0 times, not once, so the
+        cancel stopped more than one task
+
+The second assertion exists for exactly that break. The probe runs a **control** task beside
+the cancelled one, which was asked for at the same moment and never cancelled, so a binding
+that answered "cancelled" by stopping everything cannot pass. That is the assertion that makes
+this a check of *cancelling one thing* rather than of *having a cancel*.
+
+Both breaks restored before the tier run in `BG2.after.txt`; the `check` tier recompiles the
+binding, which is what proves the restore took.

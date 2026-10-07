@@ -1,0 +1,62 @@
+MR3 — style-token completeness: **tested**.
+
+AFTER THE WORK. Three tiers, all `exit 0`, identical output. The check is a program that
+opens no window — a style token's *meaning* is a parse, and a parse needs no frame, which
+is what lets this row be closed while the screen is locked:
+
+    $ gos run tests/mr3_style_tokens.gos
+    OK MR3 per-corner radii, resize cursors, the focus-order tokens and focus= are all known, and the three refinements read back in order
+    exit=0
+
+    $ CC="$PWD/tools/cc-gpui.sh" gos build tests/mr3_style_tokens.gos && ./target/debug/learn-gpui
+    build: 26476488B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+    OK MR3 ...
+    exit=0
+
+    $ CC="$PWD/tools/cc-gpui.sh" gos build --release tests/mr3_style_tokens.gos && ./target/release/learn-gpui
+    build: 7482904B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+    OK MR3 ...
+    exit=0
+
+and the same assertions as tests:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+    PASS the_focus_order_tokens_are_known (1 assertion)
+    PASS per_corner_radii_and_resize_cursors_are_known (2 assertions)
+    PASS focus_is_a_refinement_beside_hover_and_active (4 assertions)
+    test: 59 passed, 0 failed, 222 assertion(s)
+
+What is new, and it is small because the row's list was mostly already done:
+
+  * `gpui-binding/src/style.rs` — `"focus"` joins `"hover" | "active"` in the vocabulary,
+    and `style::interaction` reads all three, in that order. A refinement's value is a
+    style language of its own and is usually quoted, because a space would otherwise end
+    the token.
+  * `gpui-binding/src/view.rs` — `apply_interactions` applies `.focus(..)` beside
+    `.hover(..)` and `.active(..)`, and a plain box with *only* a `focus=` token now
+    becomes interactive, which it did not before: the arm that decided that asked about
+    hover and active and nothing else.
+  * `gpui-binding/src/lib.rs` — `gpui::style_refinements(style)`, the reader that answers
+    `"hover,active,focus"` for a style string, so a program that assembles one from data
+    can check which states it has described instead of guessing. It is `unknown_style_tokens`'
+    counterpart, and it exists because the *effect* cannot be checked here.
+  * `README.md` and `PORTING.md` — the interaction paragraph now names the third
+    refinement, and PORTING's stale "Still to add: `tabindex=`, `tabstop=`, `focusable`,
+    `focus=<refinement>`, resize cursors, per-corner radii" is corrected: all of those were
+    already there, and what is thin is the ramp tables and the cursors gpui itself lacks.
+
+**What the check is, and what it is not.** It checks the parse: that the four corner
+radii, the four resize cursors, the three focus-order tokens and `focus=` are all names the
+binding knows; that the three refinements read back in a fixed order; and that a misspelt
+one is still refused. It does **not** check that a focus refinement is painted when an
+element takes the keyboard, and the deliberate break that shows this is worth recording:
+
+  * the vocabulary break — `"focus"` removed — **fails** the check, so the check is
+    sensitive to what it claims to test;
+  * the *application* break — `.focus(..)` never called — **passes** it (67 passed, 0
+    failed). The parse is intact and the paint is gone, and no headless check can tell.
+
+That second break is why the row's residual doubt says what it says: the visual half of
+`focus=` needs pixels, and this machine cannot capture any (see "Pixel verification is
+unavailable on this machine"). A program can check that it asked; only an eye can see the
+ring.

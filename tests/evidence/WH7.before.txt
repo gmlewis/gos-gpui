@@ -1,0 +1,41 @@
+WH7 — `run`/`run_with` reach the whole `WindowOptions` vocabulary and reject bad
+tokens loudly.
+
+BEFORE THE WORK. Two commands, against the pristine copy at HEAD.
+
+The behavioural red is the headless one, and it is a real diagnostic rather than a
+timeout — `tests/wh_options_test.gos` copied in, then:
+
+    cd /tmp/gpui-before
+    env -u GOSSAMER_IN_RUNNER gos test tests
+
+    FAIL every_window_option_key_is_known: error[GX0002]: name `gpui::unknown_window_tokens` is not bound in this scope
+    FAIL a_misspelt_or_meaningless_option_is_refused: error[GX0002]: name `gpui::unknown_window_tokens` is not bound in this scope
+    FAIL a_minimum_size_is_a_pair: error[GX0002]: name `gpui::unknown_window_tokens` is not bound in this scope
+    FAIL the_option_names_are_not_style_tokens: error[GX0002]: name `gpui::unknown_window_tokens` is not bound in this scope
+    test: 24 passed, 4 failed, 97 assertion(s), ... 23 file(s)
+    error: 4 test failure(s)
+
+    test-exit=1
+
+And the same command on the probe the other rows use:
+
+    timeout -k 5 25 gos run --main-thread tests/gui/wh_window_options.gos
+    exit 124, no output.
+
+The row's complaint, verified in the source rather than taken from it: there were
+**two** parsers and they disagreed. `app.rs::run_app` read four keys
+(`resizable`, `titlebar`, `float`, `background` — `background=transparent` among
+them was silently ignored for the first window), and `app.rs::window_options` read
+twelve, a different set with different meanings, for every window opened after it.
+Both had a `_ => {}` arm, so a misspelt key was indistinguishable from not asking
+for anything. And `place=center` was read, stored in `centered`, and then compared
+in an `if` whose two arms were the same expression — the bug is visible in the
+`git archive HEAD` copy at `gpui-binding/src/app.rs:466-476`.
+
+The break that isolates this row's mechanism — the `("minsize", pair)` arm
+removed from `options::parse`, so a pair becomes an unknown token:
+
+    FAIL WH1 the window reports a minimum size of "", not the 420,240 it asked for
+
+Restored immediately; the five-tier transcript below is against the restored tree.

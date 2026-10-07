@@ -1,0 +1,72 @@
+MN1 — submenus.
+
+AFTER THE WORK.
+
+The headless half:
+
+    test: 196 passed, 0 failed, 695 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s),
+    across 57 file(s), 39 with no tests
+
+The window half, on every tier, byte-identical:
+
+    $ TIER_TIMEOUT=45 ./scripts/tiers tests/gui/mn1_submenu.gos
+    === check ===
+    check: ok (1 items typed)
+
+    === run (interpreter) (exit 0) ===
+    OK MN1 a submenu holding a separator and a submenu of its own was built as declared — the platform has it 7 items deep and nested — and both entries inside it fired their own slots (0 and 1)
+
+    === run --no-jit (exit 0) ===
+    OK MN1 a submenu holding a separator and a submenu of its own was built as declared — the platform has it 7 items deep and nested — and both entries inside it fired their own slots (0 and 1)
+
+    === build (debug) ===
+    build: 26917960B native executable at target/debug/learn-gpui (target aarch64-apple-darwin)
+    === build -> ./target/debug/learn-gpui (exit 0) ===
+    OK MN1 a submenu holding a separator and a submenu of its own was built as declared — the platform has it 7 items deep and nested — and both entries inside it fired their own slots (0 and 1)
+
+    === build --release ===
+    build: 7644616B native executable at target/release/learn-gpui (target aarch64-apple-darwin)
+    === release -> ./target/release/learn-gpui (exit 0) ===
+    OK MN1 a submenu holding a separator and a submenu of its own was built as declared — the platform has it 7 items deep and nested — and both entries inside it fired their own slots (0 and 1)
+
+The duplicate-symbol `ld` warnings on both builds are the toolchain's and predate this run.
+
+**The grammar, in one line.** An entry may begin with `>` characters, one per level: depth 0 is an
+item of the menu, and an entry at depth `d` belongs to the submenu opened by the most recent entry
+at `d - 1`, which is closed by the next entry that is not deeper than it. `"submenu:<label>"` opens
+one. The **slot numbering MN3 established is untouched** — an `events` entry takes a slot wherever
+it sits in the nesting, because the eight action slots belong to the menu bar and not to a level of
+it — and that is asserted directly, because MN3 is already `tested` and a grammar change that
+renumbered its slots would have broken a finished row.
+
+What changed, all in `gpui-binding/src/`:
+
+  * `app.rs` — `MenuEntry.depth`; `split_depth`; `menu_parse(items) -> (plan, dropped)`, the one
+    parse that `menu_plan`, `menu_slots`, `menu_accelerators`, `menu_tree`, `menu_bad` and the
+    install path all read; `build_items`, which turns a flat plan into GPUI's nested items by
+    recursing on depth; `describe_menu_bar`/`describe_menu_items` and `installed_menu`, reading
+    the built menu back out of `App::get_menus()`; the `SetMenus` arm now reports every entry with
+    nowhere to go as `"~menu.bad|<entry>"` rather than dropping it in silence.
+  * `lib.rs` — `gpui::menu_tree`, `gpui::menu_bad`, `gpui::installed_menu`, and `set_menus`'s doc
+    carrying the nesting grammar.
+  * `README.md` — a `set_menus` row, and example 17's deviation note corrected: it said the
+    binding had *no submenu entry*, which this round made false. **What is still missing there is
+    the *system* menu** (`os_submenu`, the Services menu), which is MN2's row — a different thing
+    from a program's own submenu, and the note now says so.
+
+**The check that passed when it should not have.** See `MN1.before.txt`: with every menu item
+wired to slot 0 the probe still reported `OK`, because its slot assertions were reading the
+keyboard and the keyboard path had been bound correctly. That is what `installed_menu()`'s fourth
+field exists for — the action each item was given, which no keystroke can stand in for. It is the
+fourth time this run has found that a check's own failure mode had to be proved rather than
+assumed.
+
+Residual doubt. **The menu is never *clicked*.** A menu click cannot be synthesized (W8's doubt),
+so what is checked is the structure and the actions the platform was given, plus the keyboard path
+through the same slots. Whether macOS *draws* the submenu, and where, is the native menu bar and
+therefore pixels this machine cannot capture. The depth marker is positional: an entry that is one
+`>` too deep is dropped and reported, but one that is *too shallow* is simply placed a level up and
+nothing notices — the grammar cannot tell that mistake from an intention. Labels may not contain
+`:` (pre-existing: the third field is the accelerator) and a `submenu` takes no accelerator of its
+own. `installed_menu()` is a mirror refreshed when a menu is installed, so it goes stale if a menu
+were ever changed by something other than this binding, which nothing can do.

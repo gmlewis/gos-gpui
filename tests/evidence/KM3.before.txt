@@ -1,0 +1,93 @@
+KM3 — menu accelerators bound to items.
+
+BEFORE THE WORK.
+
+Three transcripts: the weak red the probe first meets, the behavioural red for the
+half that is the row, and the break that shows the reader half is load-bearing too.
+
+**1. The probe as first written, against HEAD's binding.**
+
+`gpui::menu_accelerators` did not exist, and an unbound binding function's failure
+mode is not a diagnostic:
+
+    $ timeout -k 5 40 gos run --main-thread tests/gui/km3_menu_accelerator.gos
+    exit 124, no output
+
+The transcript is empty because a *hanging* probe's stdout is block-buffered and
+never flushed — a probe that exits shows everything, one that is killed shows
+nothing. An unbuffered trace probe narrowed it to one line, which is worth keeping
+because it is the third distinct shape an unbound name has taken in this run:
+
+    trace f2: before set_menus
+    trace f2: after set_menus
+    trace f4: before menu_accelerators
+    ===== killed at 40 s =====
+
+So the callback was **abandoned** at the unbound name — the shape KM5's and KM6's
+transcripts have — while KM1's probe, with two unbound names of its own, ran on to a
+verdict and answered defaults. Both shapes are real and neither predicts the other.
+
+**2. The behavioural red for the accelerator itself.**
+
+The probe was re-run with the *reader* implemented and nothing binding a stroke, so
+the only thing missing is the mechanism the row is about:
+
+    $ timeout -k 5 60 gos run --main-thread tests/gui/km3_menu_accelerator.gos
+    FAIL KM3 the entry declared cmd-s and 0 menu event(s) arrived: the accelerator
+    is not bound to the item
+
+Before this round a menu entry could *say* what it does and never what key does it:
+`"events:<label>"` carried a name and nothing else, so every menu action in every
+program was keyboard-less and the native menu bar drew no key equivalent beside it.
+
+**3. The reader half, by deliberate break.**
+
+The third part of an entry read and thrown away, nothing else changed:
+
+    $ env -u GOSSAMER_IN_RUNNER gos test tests
+        at an_entry_may_declare_an_accelerator (tests/km3_menu_accelerator_test.gos:19:5)
+    FAIL the_slot_numbering_ignores_the_accelerator: error[GX0005]: panic: the
+      accelerator rides on its entry's slot: #[]
+    test: 143 passed, 2 failed, 518 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s)
+
+    $ timeout -k 5 90 gos run --main-thread tests/gui/km3_menu_accelerator.gos
+    FAIL KM3 the menu's accelerators read back as #[], not the one
+    `events:Save:cmd-s` declares
+
+**Two of the five headless cases, not five.** The other three pass under the break
+because "no accelerator declared" is exactly what they assert — an entry without a
+third part, a `quits` entry and an empty menu all read as empty either way. Restored
+before the tier run.
+
+**Why the mechanism is what it is, read from the source.** `MenuItem` has no
+accelerator field at all:
+
+    $ grep -n "impl MenuItem" -A 40 ~/.cargo/registry/src/*/gpui-0.2.2/src/platform/app_menu.rs | grep "pub fn "
+        pub fn separator() -> Self
+        pub fn submenu(menu: Menu) -> Self
+        pub fn os_submenu(name: impl Into<SharedString>, menu_type: SystemMenuType) -> Self
+        pub fn action(name: impl Into<SharedString>, action: impl Action) -> Self
+        pub fn os_action(name: ..., action: ..., os_action: OsAction) -> Self
+
+and the platform is handed the *keymap* when a menu is installed, from which the
+macOS menu derives each item's key equivalent:
+
+    $ grep -n "fn set_menus" ~/.cargo/registry/src/*/gpui-0.2.2/src/platform/mac/platform.rs
+    914:    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
+    ...
+    $ sed -n '355,392p' ~/.cargo/registry/src/*/gpui-0.2.2/src/platform/mac/platform.rs
+                        if let Some(keystrokes) = keystrokes {
+                            if keystrokes.len() == 1 {
+                                let keystroke = &keystrokes[0];
+                                ... mask |= NSEventModifierFlags::NSCommandKeyMask ...
+                                item = NSMenuItem::alloc(nil)
+                                    .initWithTitle_action_keyEquivalent_(
+                                        ns_string(name), selector,
+                                        ns_string(key_to_native(keystroke.key()).as_ref()),
+                                    )
+                                ...
+                                item.setKeyEquivalentModifierMask_(mask);
+
+So an accelerator is a key binding looked up by the item's own action — which is
+why the fix binds the entry's stroke to the entry's *slot action*, and why showing
+and firing the shortcut are one mechanism rather than two.
