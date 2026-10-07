@@ -1456,6 +1456,23 @@ gossamer_binding::register_module!(
         view::is_focused(&id)
     }
 
+    /// What the binding has noted for this window: the messages the person sees drawn as a banner.
+    ///
+    /// **Read this when something looks wrong and nothing was printed.** The binding reports problems by
+    /// drawing a banner inside the window; that is invisible to stdout, and an example that draws nothing at
+    /// all can pass a check that only watches the output stream. This is the same list, for the program:
+    /// style typos, a row builder that answered no element, a callback that was not retained.
+    ///
+    /// Non-destructive, capped at 64 entries, and per window. [`gpui::clear_noted_errors`] forgets them.
+    fn noted_errors() -> Vec<String> {
+        view::noted_errors()
+    }
+
+    /// Forget everything noted for this window.
+    fn clear_noted_errors() {
+        view::clear_noted_errors()
+    }
+
     /// The id of the element that currently holds focus, or `""` when none does.
     ///
     /// [`gpui::is_focused`] answers about one id a program already knows; this answers which one, which

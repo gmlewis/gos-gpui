@@ -201,6 +201,8 @@ impl Arena {
 }
 
 thread_local! {
+    /// What has been noted per window, kept past the frame that noted it — see `note_error`.
+    static NOTED: RefCell<HashMap<i64, Vec<String>>> = RefCell::new(HashMap::new());
     /// One arena per window.
     ///
     /// A frame describes its whole tree into an arena, and parts of that tree
@@ -1348,9 +1350,46 @@ pub fn release_to(mark: usize) {
     });
 }
 
+/// Notes a problem for the person to see, on screen and — if asked — in the log.
+///
+/// The arena's list is what the banner draws from, and it is consumed by the frame that noted it. A check
+/// that only looks at stdout therefore cannot see any of this, which is how an example that drew nothing
+/// passed every silence check for days. So a copy is kept per window for the program to ask about, and
+/// printed to stderr when `GOSSAMER_NOTED_ERRORS=1` is in the environment — opt-in, so an example run for
+/// its own sake stays silent.
 pub fn note_error(message: impl Into<String>) {
     let message = message.into();
+    if std::env::var_os("GOSSAMER_NOTED_ERRORS").is_some() {
+        eprintln!("gpui: noted: {message}");
+    }
+    let win = window::current();
+    NOTED.with(|n| {
+        let mut all = n.borrow_mut();
+        let kept = all.entry(win).or_default();
+        // Capped: a program that never asks must not grow this without bound. A row builder that fails
+        // fails for every row, so sixty-four is far more than enough to see what is wrong.
+        if kept.len() < 64 {
+            kept.push(message.clone());
+        }
+    });
     arena(|a| a.errors.push(message));
+}
+
+/// What has been noted for the current window and not yet asked about.
+///
+/// Non-destructive and capped at 64 entries. This is the program's view of the banner: the same messages,
+/// for a program that wants to react to them rather than a person who wants to read them.
+pub fn noted_errors() -> Vec<String> {
+    let win = window::current();
+    NOTED.with(|n| n.borrow().get(&win).cloned().unwrap_or_default())
+}
+
+/// Forgets everything noted for the current window.
+pub fn clear_noted_errors() {
+    let win = window::current();
+    NOTED.with(|n| {
+        n.borrow_mut().remove(&win);
+    });
 }
 
 /// Typos in a style string are reported once, on screen, rather than silently
