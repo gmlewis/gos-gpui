@@ -58,8 +58,8 @@
 //     only (no `primary_display`) and its `place=center` option, as of this
 //     revision, resolves to the same bounds as the explicit x/y it is handed,
 //     so the port computes the centred origin from `gpui::display_field(0, ..)`.
-//   * `open_window` requires a title; upstream's sub-windows set none, so ""
-//     is passed and their title bars stay empty.
+//   * `open_window` requires a title; upstream's sub-windows set none, so "" is
+//     passed — the same empty bar: GPUI titles only a `Some` (mac/window.rs:740).
 //   * `titlebar=none` is the binding's spelling of a client-drawn title bar:
 //     on macOS it keeps the traffic lights and moves them to (12,12) so they
 //     sit inside the 32px bar, where upstream's `titlebar: None` leaves them

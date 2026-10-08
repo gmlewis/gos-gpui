@@ -113,7 +113,7 @@
 26_window_shadow.gos	97	invisible	the colours are exact -- a note, not a difference
 26_window_shadow.gos	101	invisible	div() becomes ui::rect / ui::panel / ...; a Gossamer frame rebuilds the tree
 27_window.gos	56	visible	sub-windows are centred on the primary display, not placed by display id
-27_window.gos	61	visible	upstream's sub-windows set no title; this port must pass ""
+27_window.gos	61	invisible	both bar the same: gpui sets a title only for Some(title), and "" is empty either way (mac/window.rs:740)
 27_window.gos	63	visible	titlebar=none moves the traffic lights into a 32px client-drawn bar
 27_window.gos	67	invisible	geometry is returned as scalars; the structs are declared in the program
 27_window.gos	72	invisible	events are process-wide; each sub-window is given its own close handler
