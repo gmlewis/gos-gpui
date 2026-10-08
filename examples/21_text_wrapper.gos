@@ -31,7 +31,7 @@ use ui
 const TEXT: &str = "The longest word 你好世界这段是中文，こんにちはこの段落は日本語です in any of the major English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, a url https://github.com/zed-industries/zed/pull/35724?query=foo&bar=2, specifically from a volcano; medically, it is the same as silicosis."
 
 fn main() {
-    let outcome = gpui::run("21 - text_wrapper", 800.0, 600.0, || {
+    let outcome = gpui::run("", 800.0, 600.0, || {
         ui::column("gap=8 p=8 size=full bg=white")
             // `div().flex().flex_row().flex_shrink_0().gap_2()`, three children.
             .child(ui::row("gap=8 shrink=0")

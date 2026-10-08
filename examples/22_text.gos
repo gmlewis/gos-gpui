@@ -39,10 +39,6 @@
 //     not publish, and no element in the window depends on it.
 //   * `cx.init_colors()` is not called: the binding runs it once at startup
 //     (gpui-binding/src/app.rs), which is what makes `default_color` work.
-//   * The window title is the numbered one this repo runs examples under
-//     (`22 - text`); upstream titles the window "GPUI Typography".
-//   * Upstream opens the window at (0, 0); `gpui::run` centres it. Size is
-//     upstream's 920x720.
 //   * The type scale is derived in f64 here against f32 upstream, so a
 //     specimen's font size can land a few f32 ulps from upstream's — well
 //     under a thousandth of a pixel at the largest specimen, and nothing
@@ -183,7 +179,10 @@ fn sidebar() -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run("22 - text", 920.0, 720.0, || {
+    // Upstream opens the window at (0, 0) — `Bounds::Windowed(bounds(point(px(0.0),
+    // px(0.0)), size(px(920.), px(720.))))`; `pos=0,0` is that placement, and the
+    // title is upstream's.
+    let outcome = gpui::run_with("GPUI Typography", 920.0, 720.0, "pos=0,0", || {
         // `div().size_full()` with no direction of its own; `ui::panel` is the
         // same bare `div()`.
         ui::panel("size=full")

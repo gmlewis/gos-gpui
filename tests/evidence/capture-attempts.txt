@@ -1,0 +1,169 @@
+Every attempt to make the container photograph a GPUI window, in order, with
+its result. The brief (§4.3) asks for this file if none of the four routes works.
+
+The subject in all of them is /exp/zz_capture.gos -- a 400x300 window whose
+whole client area is one `bg=#3366cc` div with the word HELLO in white on it.
+A working capture must show #3366cc. "Black" below means 120000 of 120000
+pixels #000000, i.e. the entire client area.
+
+Environment: gosbox:2, aarch64 rust:1.99.0-bookworm, Xvfb 800x600x24 on :99,
+openbox where noted, Mesa 22.3.6 llvmpipe, lavapipe.
+
+--------------------------------------------------------------------------------
+Round 88's result, reproduced first (this is tests/evidence/DW3.capture.txt)
+--------------------------------------------------------------------------------
+One window, one xwd, no extra libraries. Client area entirely #000000 with a
+2-3 row strip of the WM's resize grip along one edge. Conclusion recorded at
+the time: "the container witnesses behaviour ... and not pixels."
+
+--------------------------------------------------------------------------------
+Route 3 -- Xvfb with EXTENSION PRESENT DISABLED
+--------------------------------------------------------------------------------
+Xvfb :99 -screen 0 800x600x24 -extension Present -nolisten tcp -ac
+RESULT: still black. The GPU path is not going through Present.
+
+--------------------------------------------------------------------------------
+Route 1 -- force blade-graphics' GLES backend
+--------------------------------------------------------------------------------
+apt-get install libegl1 libgles2 libgl1-mesa-dri libegl-mesa0 libglx-mesa0
+RUSTFLAGS="--cfg gles" gos build zz_capture.gos
+
+The build succeeds and the GLES HAL is genuinely in use -- the program itself
+reports it, through gpui::gpu_field on the live window:
+
+    gpu software=true
+    gpu device=llvmpipe (LLVM 15.0.6, 128 bits)
+    gpu driver=llvmpipe
+    gpu info=Mesa 22.3.6
+    noted errors: #[]        <- no errors noted by the platform
+
+RESULT: still black. Note this is a *second, independent* backend: round 88 and
+the default build use Vulkan via lavapipe, this one uses EGL/GLES via llvmpipe.
+Both produce identical black.
+
+(Blade's present path was read to check the blit reaches the window --
+blade-graphics-0.7.1/src/gles/egl.rs:487 present() does
+present_blit(&glow, frame.framebuf, extent) into DRAW_FRAMEBUFFER 0, then
+eglSwapBuffers. That is the correct target. The pixels are being blitted
+somewhere; they are not arriving.)
+
+--------------------------------------------------------------------------------
+Route 2 -- a compositing manager
+--------------------------------------------------------------------------------
+xcompmgr -c -o 0 -a      (confirmed running: pgrep -x xcompmgr -> yes)
+RESULT: still black.
+
+--------------------------------------------------------------------------------
+THE ROOT-COLOUR TEST, AND WHY IT TURNED OUT NOT TO PROVE ANYTHING
+--------------------------------------------------------------------------------
+An earlier round tried to separate "the app painted black" from "the app painted
+nothing and we are seeing the black root through it" by painting the root
+magenta first. That test is only valid if the root can actually be painted on
+this Xvfb. It cannot:
+
+    xsetroot -solid '#ff00ff'   -> exit 0
+    xwd -root histogram         -> 480000x #000000     (unchanged)
+    after xrefresh              -> 480000x #000000     (unchanged)
+    xsetroot -gray              -> exit 0, still 480000x #000000
+
+The root reads back black whatever is asked of it. So the "window rectangle was
+still black, not magenta" observation carried no information: the magenta never
+took effect, and the window rectangle and the root were both black for the same
+uninformative reason.
+
+The informative probe is not the root colour, it is `xwd -id <window>` -- which
+reads the window's *own* contents rather than anything behind it. For that probe
+to mean anything, a window on the same visual must be shown to capture
+correctly. That control is below, and it passes. Given it, `xwd -id` answering
+120000/120000 #000000 says: nothing the app drew is in the drawable.
+
+--------------------------------------------------------------------------------
+CONTROLS -- is the capture path broken in general?
+--------------------------------------------------------------------------------
+Same Xvfb, same session, same capture commands, different clients:
+
+  xlogo (plain Xlib, depth 24, XPutImage)
+      xwd -id 2097153 -> 9769x #FFFFFF (the glyphs), 5115x #000000
+      CAPTURED. The capture path works.
+
+  glxgears (GLX through Mesa/llvmpipe on this Xvfb)
+      -> 14564x #C11800, 2964x #00C130, 2727x #3030F2; 8450 frames in 5s
+         (1689 FPS)
+      CAPTURED. GL rendering does reach the framebuffer here.
+
+  es2gears_x11 (EGL + GLES2 to an X11 window -- the GPUI-shaped path)
+      -> window found as "es2gears" (its name is not "es2gears_x11", which is
+         what defeated the first attempt), wid=0x200002
+         Width: 300  Height: 300  Depth: 24  Visual Class: TrueColor
+         Map State: IsViewable
+         64398: #000000 black
+         14559: (193,24,0)  #C11800
+          2965: (0,193,48)  #00C130
+          2737: (48,48,242) #3030F2
+      CAPTURED. EGL + GLES2 presentation into an X11 window works on this Xvfb.
+      This settles the question the first attempt left open: the failure is not
+      "EGL to an X11 window" in general.
+
+The GPUI window, by contrast, per xwininfo:
+
+    Depth: 32          <- the controls above are depth 24
+    Visual: 0x40
+    Visual Class: TrueColor
+    Colormap: 0x400002 (not installed)
+    Map State: IsViewable
+    Class: InputOutput
+    ... and 120000/120000 pixels #000000.
+
+--------------------------------------------------------------------------------
+THE ARGB VISUAL, EXONERATED
+--------------------------------------------------------------------------------
+That the working controls are depth 24 and the failing window is depth 32 is the
+one property that visibly separates them. It is a hypothesis, not a finding, so
+it was tested directly -- with plain Xlib, no GL, no GPUI, no blade:
+
+    /exp/zz_d32.c   gcc -o d32 zz_d32.c -lX11
+    d32 ARGB RED: depth=32 window=0x200002 visual=0x40 pixel=0x00ff0000
+    d24 RGB  BLUE: depth=24 window=0x200005 visual=0x21 pixel=0x000000ff
+
+    xwd -id (d32) -> 60000x (255,0,0) #FF0000 red
+    xwd -id (d24) -> 60000x (0,0,255) #0000FF blue
+    xwd -root     -> 360000x #000000, 60000x #FF0000, 60000x #0000FF
+
+The depth-32 window took **visual 0x40 -- the same visual id the GPUI window
+has** -- and it photographs perfectly. So the ARGB visual is not the cause, and
+depth 32 is a coincidence of the failure rather than a mechanism for it. The
+difference between the working depth-32 control and the failing GPUI window is
+entirely on the GPUI/blade side of the boundary.
+
+(A second route out was tried and is closed: Xvfb will not give up the ARGB
+visual. `-extension RENDER`, `-extension Composite`, and both together all
+leave `depth-32 visuals: 1` in `xdpyinfo`, because the depth-32 visual comes
+from Xvfb's screen setup and not from either extension.)
+
+--------------------------------------------------------------------------------
+Route 4 -- in-process capture
+--------------------------------------------------------------------------------
+gpui's `test-support` feature / VisualTestContext::draw. NOT ATTEMPTED.
+
+Reason: it needs a Rust-side harness built against a gpui feature the binding
+does not enable, and what it produces is the renderer's own output rather than a
+photograph of the window. For Goal B -- "is this window indistinguishable from
+that one" -- that answers a different question than the one asked, so it was
+left alone rather than half-built.
+
+--------------------------------------------------------------------------------
+WHAT THIS MEANS, IN ONE PARAGRAPH
+--------------------------------------------------------------------------------
+The container can photograph a window -- xlogo, glxgears, es2gears_x11, and a
+hand-made depth-32 ARGB window on GPUI's own visual 0x40 all come back correct.
+It cannot photograph a *GPUI* window, on either of blade's two backends, with or
+without a compositor, with or without Present; `xwd -id` on that window is
+uniformly black, and the depth-32 visual is provably not the reason. Whatever
+fails is inside GPUI's or blade's presentation path as built for this container,
+and pinning it down further was not worth the time the brief allots to it.
+
+The consequence for Goal B is the one the brief anticipated: the pixel half
+cannot be settled from inside the container, and `scripts/pair.sh` exists so the
+owner can settle it in one command on a machine with a real window server. The
+half that *is* settled here is behavioural and textual, and it is in PAIRS.md:
+the census, the classification, the sizes, the build results.

@@ -265,7 +265,7 @@ fn window_view() -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run("27 - window", 800.0, 600.0, || {
+    let outcome = gpui::run("", 800.0, 600.0, || {
         // Every window runs this view; the host is 1 and the sub-windows are the
         // rest, told apart by what `open_sub` wrote for them.
         if gpui::window_id() != 1 {

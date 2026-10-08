@@ -15,10 +15,6 @@
 //   * Upstream asks for the next frame explicitly
 //     (`window.request_animation_frame()`); the binding's equivalent is
 //     `gpui::animate()`.
-//   * The window is 1024x768 as upstream asks, but upstream also titles it
-//     "Vulkan" and centres it itself with
-//     `WindowBounds::Windowed(Bounds::centered(..))`; `gpui::run` takes a
-//     title and size and lets the platform place the window.
 //   * As in every port here, a Gossamer frame rebuilds the tree rather than
 //     re-rendering a retained `Entity<PaintingViewer>`.
 
@@ -56,7 +52,7 @@ fn main() {
         process::exit(1)
     }
 
-    let outcome = gpui::run("14 - paths_bench", 1024.0, 768.0, || {
+    let outcome = gpui::run("Vulkan", 1024.0, 768.0, || {
         gpui::animate()
 
         // Upstream's `linear_gradient(180., linear_color_stop(rgb(0xFACC15),

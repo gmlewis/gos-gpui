@@ -55,8 +55,9 @@
 //     `DisplayId(1)`. `gpui::display_field(i, "id")` is that number, so the labels are
 //     reproduced with the `DisplayId(…)` wrapper spelled out by hand.
 //   * Upstream passes `titlebar: None`; the binding always attaches a titlebar,
-//     invisible here because the port asks for `titlebar=none`. Each window is
-//     given its label as a title.
+//     invisible here because the port asks for `titlebar=none`, and the title is
+//     left empty. Upstream's labels are the text drawn *inside* each window, not
+//     titles, and they are reproduced there.
 //   * Upstream's window is 350x75 with a 150px margin, which the port keeps; the
 //     host window's size is explicit, as everywhere in these ports.
 
@@ -105,7 +106,6 @@ fn positioned_view() {
 /// first frame to read. `window::allocate` hands out ids in the order windows are
 /// opened and the host took 1, so the n-th window opened here is id `n + 1`.
 fn positioned(label: String, colour: String, x: f64, y: f64) {
-    let title = f"25 - {label}"
     let n = gpui::state_int("positioned.count", 0) + 1
     gpui::set_int("positioned.count", n)
     let child = n + 1
@@ -113,7 +113,9 @@ fn positioned(label: String, colour: String, x: f64, y: f64) {
     gpui::set_text_in(child, "positioned.colour", colour)
     gpui::set_float_in(child, "positioned.x", x)
     gpui::set_float_in(child, "positioned.y", y)
-    gpui::open_window(title, x, y, WINDOW_W, WINDOW_H, *OPTIONS)
+    // Upstream attaches no titlebar and so no title; `titlebar=none` is its
+    // stand-in, and the title is left empty to match.
+    gpui::open_window("", x, y, WINDOW_W, WINDOW_H, *OPTIONS)
 }
 
 /// Upstream's nine windows for one display, in the order it opens them.
@@ -152,7 +154,7 @@ fn display_line(index: i64) -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run("25 - window_positioning", 560.0, 420.0, || {
+    let outcome = gpui::run("", 560.0, 420.0, || {
         // Every window runs this view; the host is 1 and the positioned ones are
         // the rest, told apart by what `positioned` wrote for them.
         if gpui::window_id() != 1 {

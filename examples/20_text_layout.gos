@@ -31,8 +31,6 @@
 // same `FontWeight(800.)` value the enum arm holds.
 //
 // Deviations:
-//   * The window title is the numbered one this repo runs examples under
-//     (`20 - text_layout`); upstream leaves the titlebar to GPUI's default.
 //   * Upstream writes each string as `div().child("…")`. Here each is one
 //     `ui::text(..)`, which is the binding's `div().child(text)` — the same
 //     two-level element, with the style on the outer div, exactly as upstream
@@ -53,7 +51,7 @@ use std::process
 use ui
 
 fn main() {
-    let outcome = gpui::run("20 - text_layout", 800.0, 600.0, || {
+    let outcome = gpui::run("", 800.0, 600.0, || {
         ui::column("bg=white gap=8 p=16 size=full")
             // div().child("Text left")
             .text("Text left", "")

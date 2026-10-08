@@ -54,7 +54,7 @@ fn keystroke_log(lines: i64) -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run("09 - input", 300.0, 300.0, || {
+    let outcome = gpui::run("", 300.0, 300.0, || {
         // Every keystroke the window receives, handled or not.
         gpui::observe_keystrokes("key")
         gpui::take_events() |> handle

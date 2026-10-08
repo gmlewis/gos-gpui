@@ -19,10 +19,6 @@
 //     it does not advance the way upstream's does. An id parameter on
 //     `ui::image`, or rewinding `next_id` together with `els` in
 //     `Arena::reset`, is what this needs; nothing in Gossamer can supply the id.
-//   * upstream leaves the window size to GPUI, which centres its default
-//     (1536x864, clipped to the display); `gpui::run` takes explicit
-//     dimensions, so this asks for 500x500 — the GIF's own size. The element is
-//     `size_full`/Contain either way, so only the scale differs.
 
 use gpui
 use std::process
@@ -31,7 +27,7 @@ use ui
 const GIF: &str = "examples/assets/black-cat-typing.gif"
 
 fn main() {
-    let outcome = gpui::run("04 - gif_viewer", 500.0, 500.0, || {
+    let outcome = gpui::run("", 1536.0, 864.0, || {
         ui::panel("size=full")
             .image(GIF, "size=full")
             |> ui::root

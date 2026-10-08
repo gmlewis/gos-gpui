@@ -28,13 +28,6 @@
 //   * upstream calls `cx.activate(true)` to bring the menu bar forward; the
 //     binding activates the app itself when it opens the window, and no example
 //     can call it.
-//   * upstream leaves the window size to GPUI — `WindowOptions::default()` gives
-//     the centred default, 1536x864 clipped to the display. `gpui::run` takes
-//     explicit dimensions, so this asks for 800x600. The element is `size_full`
-//     either way, so only the window's size differs.
-//   * `WindowOptions::default()` passes no titlebar options, which on macOS
-//     means no explicit title; the binding always attaches one, and `gpui::run`
-//     requires a title, so the window is titled `17 - set_menus`.
 //   * the application menu bar is a macOS feature; on Linux `set_menus` stores
 //     the menu but shows no bar, which is upstream's behaviour there too.
 
@@ -43,7 +36,7 @@ use std::process
 use ui
 
 fn main() {
-    let outcome = gpui::run("17 - set_menus", 800.0, 600.0, || {
+    let outcome = gpui::run("", 1536.0, 864.0, || {
         // Upstream installs the menu once from `Application::run`'s closure,
         // before opening its window. `gpui::set_menus` is applied after the
         // frame that asked for it, so the first frame is where it belongs.

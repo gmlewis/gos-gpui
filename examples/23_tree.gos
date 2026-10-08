@@ -45,7 +45,7 @@ fn main() {
         .map(|raw| raw.to_i64().unwrap_or(DEFAULT_DEPTH))
         .unwrap_or(DEFAULT_DEPTH)
 
-    let outcome = gpui::run("23 - tree", 300.0, 300.0, || {
+    let outcome = gpui::run("", 300.0, 300.0, || {
         nest(depth) |> ui::root
     })
 

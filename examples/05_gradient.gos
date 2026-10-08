@@ -28,7 +28,7 @@ fn half_swatch(angle: String, from: String, from_pct: String, to: String, to_pct
 }
 
 fn main() {
-    let outcome = gpui::run("05 - gradient", 700.0, 640.0, || {
+    let outcome = gpui::run("", 1536.0, 864.0, || {
         for event in gpui::take_events() {
             let id, _data = gpui::event_parts(event)
             if id == "method" {

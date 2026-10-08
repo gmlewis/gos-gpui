@@ -251,8 +251,11 @@ fn millions(v: f64) -> String {
 /// Upstream tints nine of the 24 cells by the row's change and leaves the rest
 /// on the table's own text colour.
 fn tinted(key: String) -> bool {
-    key == "last_done" || key == "prev_close" || key == "change" || key == "timestamp"
-        || key == "open" || key == "low" || key == "high" || key == "ttm" || key == "eps"
+    // The `||` stays at the end of the line on purpose: a line that *starts*
+    // with `||` is a closure with no parameters, not a continuation, so the
+    // wrapped form below would be a second statement and a type error.
+    key == "last_done" || key == "prev_close" || key == "change" || key == "timestamp" ||
+        key == "open" || key == "low" || key == "high" || key == "ttm" || key == "eps"
 }
 
 /// Upstream's `render_cell` match, arm for arm and including its `_` arm — with
@@ -392,7 +395,7 @@ fn scrollbar() -> ui::El {
 // ---- the frame --------------------------------------------------------
 
 fn main() {
-    let outcome = gpui::run_with_rows("02 - data_table", 1280.0, 1000.0, "", table_row, || {
+    let outcome = gpui::run_with_rows("", 1280.0, 1000.0, "", table_row, || {
         // A drag of the scrollbar. `<id>.y` is the pointer's position inside the
         // strip, and the strip is the track, so the fraction is direct — and the
         // offset it asks for is the offset the list is set to.

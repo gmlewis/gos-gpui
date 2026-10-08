@@ -38,10 +38,6 @@
 //     per event but read once per frame, so several move events coalescing into
 //     one frame all read the latest position. A fast drag therefore carries
 //     fewer vertices than upstream's; the rendered line is the same.
-//   * Upstream leaves `window_bounds` unset, so GPUI hands it
-//     `DEFAULT_WINDOW_SIZE` — 1536x864, clipped to the display and centred.
-//     This port passes 900x520, which is large enough for every path (the pie
-//     chart's arc reaches x=871, the wave y=460) and no larger.
 //   * The drawing surface spans the whole window instead of the area under the
 //     header. The header is painted over it, so its buttons still take clicks,
 //     and the paths it serves are in window coordinates anyway.
@@ -226,7 +222,7 @@ fn stroke_path(key: String, dashed: bool) -> i64 {
 // ---- the frame --------------------------------------------------------
 
 fn main() {
-    let outcome = gpui::run("13 - painting", 900.0, 520.0, || {
+    let outcome = gpui::run("", 1536.0, 864.0, || {
         // Upstream's listeners, through `on_mouse`: a down starts a stroke, a
         // move extends it, an up ends it. The binding reports a move only
         // while the button is down, and writes the point it reports into

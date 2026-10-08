@@ -28,7 +28,7 @@ fn entry_row(_list: String, index: i64) -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run_with_rows("24 - uniform_list", 300.0, 300.0, "", entry_row, || {
+    let outcome = gpui::run_with_rows("", 300.0, 300.0, "", entry_row, || {
         for event in gpui::take_events() {
             let id, _data = gpui::event_parts(event)
             if id == "item" {

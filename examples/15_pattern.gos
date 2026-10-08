@@ -15,7 +15,7 @@ fn slash(colour: String, width: String, interval: String, extra: String) -> ui::
 }
 
 fn main() {
-    let outcome = gpui::run("15 - pattern", 600.0, 600.0, || {
+    let outcome = gpui::run("", 600.0, 600.0, || {
         ui::panel("flex col gap=12 bg=white size=600 justify=center items=center shadow=lg font=xl color=black")
             .text("Pattern Example", "")
             .child(ui::column("flex col border=1 bordercolor=blue")

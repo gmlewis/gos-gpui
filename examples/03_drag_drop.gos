@@ -186,7 +186,7 @@ fn item_event(ix: i64, kind: String) {
 }
 
 fn main() {
-    let outcome = gpui::run("03 - drag_drop", 800.0, 600.0, || {
+    let outcome = gpui::run("", 800.0, 600.0, || {
         handle_events()
 
         // Upstream gets a frame for every pointer move from GPUI's drag

@@ -183,7 +183,7 @@ fn readout(mx: f64, my: f64, edge: String, press: String, titlebar: String) -> u
 }
 
 fn main() {
-    let outcome = gpui::run("26 - window_shadow", WINDOW, WINDOW, || {
+    let outcome = gpui::run("", WINDOW, WINDOW, || {
         // Stands in for upstream's `on_mouse_move(..) -> window.refresh()`:
         // repaint every frame so `mouse_position()` tracks the pointer.
         gpui::animate()

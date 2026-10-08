@@ -83,7 +83,7 @@ fn card(label: String, value: String, tint: String) -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run("12 - ownership_post", 720.0, 700.0, || {
+    let outcome = gpui::run("", 720.0, 700.0, || {
         // ---- the frame's events: upstream's one synchronous demo, unwound -----
 
         for event in gpui::take_events() {

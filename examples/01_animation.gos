@@ -38,7 +38,7 @@ fn bounce_ease_in_out(delta: f64) -> f64 {
 }
 
 fn main() {
-    let outcome = gpui::run("01 - animation", 300.0, 300.0, || {
+    let outcome = gpui::run("", 300.0, 300.0, || {
         gpui::animate()
 
         let delta = (gpui::now() % PERIOD) / PERIOD

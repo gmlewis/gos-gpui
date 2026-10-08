@@ -213,7 +213,7 @@ fn multiples() -> ui::El {
 
 fn main() {
     // Upstream's window: `size(px(1000.0), px(800.0))`.
-    let outcome = gpui::run("18 - shadow", 1000.0, 800.0, || {
+    let outcome = gpui::run("", 1000.0, 800.0, || {
         ui::scroll("size=full bg=#ffffff font=xs")
             .child(ui::column("w_full")
                 .child(shapes())

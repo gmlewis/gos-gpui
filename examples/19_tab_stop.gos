@@ -95,7 +95,7 @@ fn handle_events() {
 }
 
 fn main() {
-    let outcome = gpui::run("19 - tab_stop", 800.0, 600.0, || {
+    let outcome = gpui::run("", 800.0, 600.0, || {
         // Upstream binds Tab and Shift-Tab to actions; the binding owns its key
         // bindings, so the keys are read here as `key|<stroke>` events instead.
         gpui::on_keys(true)

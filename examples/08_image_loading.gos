@@ -67,11 +67,16 @@
 //     installed (above), and it logs one `Failed to load asset` line
 //     (src/asset_cache.rs:75). Upstream's `?` there sits in a subtree the
 //     binding cannot attach.
-//   * Upstream never sets a title and lets GPUI centre its 300x300 default;
-//     `gpui::run` takes explicit dimensions and a title, and this port asks for
-//     a larger window because the legend and the "absent" panel below are its
-//     own additions, as is the `justify=center` of the outer column where
-//     upstream spreads one child with `justify_around`.
+//   * Upstream lets GPUI centre its 300x300 default; this port asks for 840x800,
+//     and the port's tree carries three things upstream's does not: a heading and
+//     a subtitle above the cells, a "the four cells" legend, and an "absent, not
+//     emulated" panel. The legend is the port's own record of the capabilities it
+//     cannot reach — the four bullets below — and the size follows from it, so
+//     **this row cannot be closed until those capabilities exist**; shrinking the
+//     window first would only push its own text over the edge.
+//   * The outer column is `justify=center` here where upstream spreads its one
+//     child with `justify_around`. The white 300px box and everything inside it
+//     is upstream's: `size=300 bg=white justify=center items=center`.
 
 use gpui
 use std::math
@@ -215,7 +220,7 @@ fn missing_cell() -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run("08 - image_loading", 840.0, 800.0, || {
+    let outcome = gpui::run("", 840.0, 800.0, || {
         // Upstream asks its asset system for all four images once, as the tree
         // is built. The port asks `gpui::task` for three staged arrivals on its
         // first frame — cell 4 has no staging, it is a real load that fails —
