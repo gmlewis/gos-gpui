@@ -1,0 +1,11 @@
+Round 93 — the pointer-event check, before the fix.
+Command: GOSSAMER_ROOT=... gos test tests
+Against: HEAD (no `pointer_xy`, no `pointer_mods`, payload still bare).
+
+  FAIL a_pointer_event_carries_its_own_position: error[GX0005]: panic: the kind is the payload's first field and nothing after it; got down12.530.25
+    at a_pointer_event_carries_its_own_position (tests/pointer_event_test.gos:30:5)
+  FAIL the_modifiers_are_spelled_the_way_a_keystroke_spells_them: error[GX0002]: name `gpui::pointer_xy` is not bound in this scope
+    at the_modifiers_are_spelled_the_way_a_keystroke_spells_them (tests/pointer_event_test.gos:40:16)
+  FAIL an_event_that_is_not_a_pointer_event_has_no_position: error[GX0002]: name `gpui::pointer_xy` is not bound in this scope
+    at an_event_that_is_not_a_pointer_event_has_no_position (tests/pointer_event_test.gos:59:16)
+test: 356 passed, 3 failed, 1285 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s), across 87 file(s), 57 with no tests

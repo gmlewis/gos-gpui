@@ -1,0 +1,68 @@
+// A pointer event's own position and modifiers.
+//
+// `gpui::on_mouse` raises `"<id>|<kind>"` and writes `<id>.x` / `<id>.y` into the
+// state store. The store has one slot per key, so when several moves coalesce into a
+// single frame every one of them reads back the **last** position — and that is not a
+// guess. Measured in the container, driven by `xdotool` on the X server the window
+// really sits on (round 93, `tests/gui/mp1_pointer_event.gos`): four moves posted at
+// screen x = 111, 121, 131 and 141 arrived as four `canvas|move` events in one frame,
+// and the store answered `141` to all four. The intermediate points were gone, which is
+// what `13_painting`'s header has said in prose since it was written and what nothing
+// had ever measured.
+//
+// The fix is that the event carries its own. The payload becomes
+// `"<kind>\u{1}<x>\u{1}<y>\u{1}<mods>"` — gpui's US separator, which no keystroke, label
+// or emitted payload in this tree contains — and `gpui::event_parts` still answers just
+// the kind, so every `kind == "move"` in every example keeps working unchanged. The
+// two readers below are the new half.
+//
+// An event is `"<kind>\u{1}<x>\u{1}<y>\u{1}<mods>"`. `gpui::pointer_xy` answers the first two
+// as numbers and `gpui::pointer_mods` the last as the held modifiers in gpui's own order and
+// spelling — the same string `observe_keystrokes` puts in `~key.mods`.
+//
+// The position is the one **in the window**, not the one in the element: that is what
+// upstream's `MouseDownEvent::position` holds, which is what a port that paints needs. The
+// store's `<id>.x` stays element-relative, and the two are only the same number for an
+// element at the window's origin. Which of the two a real pointer produces, and that they
+// really do differ, is measured against a real window in `tests/gui/mp1_pointer_event.gos`.
+
+use gpui
+
+#[test]
+fn a_pointer_event_carries_its_own_position() {
+    let event = "canvas|down\u{1}12.5\u{1}30.25\u{1}"
+    let id, kind = gpui::event_parts(event)
+    assert(id == "canvas", "the id is everything before the first `|`")
+    assert(kind == "down", f"the kind is the payload's first field and nothing after it; got {kind}")
+    let x, y = gpui::pointer_xy(event)
+    assert(x == 12.5, f"x should be 12.5, not {x}")
+    assert(y == 30.25, f"y should be 30.25, not {y}")
+    assert(gpui::pointer_mods(event) == "", f"no modifier was held; got {gpui::pointer_mods(event)}")
+}
+
+#[test]
+fn the_modifiers_are_spelled_the_way_a_keystroke_spells_them() {
+    let event = "canvas|move\u{1}1\u{1}2\u{1}ctrl-platform-shift"
+    let x, y = gpui::pointer_xy(event)
+    assert(x == 1.0 && y == 2.0, "the two numbers before the modifiers are the position")
+    // The order is `modifier_words`': function, control, alt, platform, then shift — the
+    // order `gpui::Keystroke::unparse` writes them in, so the two agree by construction.
+    assert(
+        gpui::pointer_mods(event) == "ctrl-platform-shift",
+        f"got {gpui::pointer_mods(event)}",
+    )
+}
+
+#[test]
+fn an_event_that_is_not_a_pointer_event_has_no_position() {
+    // An event raised by `gpui::emit` carries whatever payload the program gave it, and it
+    // has no position at all. The two readers say so rather than inventing one, and the
+    // payload is handed back whole — the separator, not a space, is what cuts it.
+    let event = "row|hello world"
+    let id, payload = gpui::event_parts(event)
+    assert(id == "row", "the id is unchanged")
+    assert(payload == "hello world", f"a payload with a space in it survives whole; got {payload}")
+    let x, y = gpui::pointer_xy(event)
+    assert(x == -1.0 && y == -1.0, f"no position is -1, -1; got {x}, {y}")
+    assert(gpui::pointer_mods(event) == "", "and no modifiers")
+}

@@ -28,11 +28,10 @@
 02_data_table.gos	52	invisible	the visible row range is obtained differently; the same rows are drawn
 02_data_table.gos	57	invisible	ui::list takes 22.0 as the row height, the port's reading of upstream's measured height
 02_data_table.gos	60	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
-03_drag_drop.gos	24	visible	the ghost is an ordinary clipped element, not GPUI's drag-preview layer
-03_drag_drop.gos	27	visible	interaction only: the ghost appears on press, not after GPUI's ~4px threshold
-03_drag_drop.gos	34	invisible	an invisible full-window on_mouse overlay restores the same behaviour
-03_drag_drop.gos	44	invisible	animate() keeps the ghost following; the same pixels
-03_drag_drop.gos	48	invisible	handlers are plain functions over the store; cx.listener has no equivalent
+03_drag_drop.gos	33	invisible	the ghost is a tree element, not GPUI's drag-preview layer; gpui paints the preview after the root and the ghost is the root stack's last child, so the paint order matches
+03_drag_drop.gos	40	invisible	an invisible full-window on_mouse overlay restores the same behaviour
+03_drag_drop.gos	50	invisible	animate() keeps the ghost following; the same pixels
+03_drag_drop.gos	54	invisible	handlers are plain functions over the store; cx.listener has no equivalent
 04_gif_viewer.gos	8	invisible	the image loads by path instead of through AssetSource; the same pixels
 04_gif_viewer.gos	11	invisible	the image's id is unstable, so frames are requested continuously; frame 0 either way
 08_image_loading.gos	36	visible	no custom asset type, so cell 3's fallback is staged rather than timed out
@@ -56,12 +55,9 @@
 12_ownership_post.gos	57	forced	upstream's assert_eq! is silent or fatal; here it is a panel
 12_ownership_post.gos	62	forced	the binding can only run a program through gpui::run, which opens a window
 12_ownership_post.gos	64	forced	the button and the event log are the port's own additions
-13_painting.gos	25	visible	shift-constrained straight lines are absent
-13_painting.gos	32	invisible	no line-join option; at 1px bevel and miter are indistinguishable
-13_painting.gos	34	invisible	paths are rebuilt each frame; the strokes themselves are the same
-13_painting.gos	38	visible	interaction only: move events coalescing into one frame lose intermediate points
-13_painting.gos	42	visible	the canvas spans the whole window instead of the area below the header
-13_painting.gos	45	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
+13_painting.gos	33	invisible	no line-join option; at 1px bevel and miter are indistinguishable
+13_painting.gos	35	invisible	paths are rebuilt each frame; the strokes themselves are the same
+13_painting.gos	39	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
 14_paths_bench.gos	10	invisible	paths live in a persistent pool addressed by handle; the same 2000 are painted
 14_paths_bench.gos	15	invisible	gpui::animate() is window.request_animation_frame()
 14_paths_bench.gos	18	invisible	a Gossamer frame rebuilds the tree; every pixel is the same

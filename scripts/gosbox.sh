@@ -327,6 +327,10 @@ case "$cmd" in
       fi
       # `// linux:` names a claim the container cannot witness, where `// needs:` names something no
       # run could supply (a person, the macOS pointer harness). Both are skips, for the same reason.
+      #
+      # `// container:` is deliberately *not* read here. It is the mirror of `// linux:` — a probe
+      # the Mac cannot run and the container can — and `scripts/probes.sh` and `scripts/tiers.sh`
+      # are the ones that skip it. Reading it here would skip the only place it means anything.
       linux_line="$(sed -n '1,20p' "$p" | sed -n 's|^// linux: *||p' | head -1)"
       if [ -n "$linux_line" ]; then
         echo "skip   $name: $linux_line"

@@ -19,18 +19,24 @@
 //   * `on_drop(..)`                             ->  `up` on the target copies
 //     `drag.*` into `drop.*`, which the target paints from.
 //
+// The one rule upstream has that the binding does not is the drag *threshold*,
+// so the port computes it. GPUI starts a drag on the first mouse-move whose
+// offset from the pending press is more than `DRAG_THRESHOLD` — `const
+// DRAG_THRESHOLD: f64 = 2.;` (`gpui-0.2.2/src/elements/div.rs:47`), compared
+// with a strict `>` against the offset's magnitude (`:2149-2174`) — so the
+// full-window overlay below listens for `move` as well as `up`, and `move_event`
+// applies the same test. `tests/gui/mp3_drag_threshold.gos` checks the binding
+// and the arithmetic on a real pointer, on every tier.
+//
 // Deviations:
 //
 //   * The ghost is an ordinary element of the window's own tree, not GPUI's
 //     drag-preview layer. It carries no id and no listeners, so it never takes
-//     a hit, but it is painted with the rest of the frame rather than over it.
-//   * The ghost is armed by the press, where upstream waits for GPUI's ~4px
-//     `DRAG_THRESHOLD`. The binding's `move` events carry no threshold —
-//     `event.dragging()` is just "the left button is held" — and a move
-//     listener stops at the edge of the element that raised it, so a drag that
-//     leaves the square quickly could raise no `move` at all. Arming on `down`
-//     is the emulation's reliable point; the visible difference is a few
-//     pixels of travel before the ghost appears.
+//     a hit. GPUI paints its preview as a root element after the frame, and the
+//     ghost is the root stack's last child, so the two are painted in the same
+//     order: nothing covers either. The difference is the mechanism, not the
+//     pixels — `on_drag` wants a `'static` payload and an `Entity<W>` preview,
+//     and neither fits the binding's ABI.
 //   * GPUI ends a drag on the next mouse-up wherever it lands; the binding
 //     only reports `up` on an element that has a listener. A transparent
 //     800x600 `on_mouse` overlay sits at the bottom of the window to hear a
@@ -41,15 +47,16 @@
 //     do, `size=full` included. The content column is positioned `absolute`
 //     so that overlay is the stack's only in-flow child, and a release outside
 //     the overlay after a window resize is the one release still not seen.
-//   * The ghost follows the pointer only because the frame asks for another
-//     frame (`gpui::animate()`) for as long as a drag is in flight. Without it
-//     the ghost would freeze the moment the pointer left the square, since the
-//     binding's `move` events do not follow the pointer out of the element.
+//   * The ghost follows the pointer because a drag in flight asks for another
+//     frame each time round (`gpui::animate()`), where GPUI's own drag
+//     machinery redraws for its own reasons. The same pixels, one extra
+//     frame-loop iteration.
 //   * `cx.listener(..)` — a handler bound to the entity — has no equivalent
 //     here. Handlers are plain functions over the shared state store, which is
 //     how every port in this repo reaches across a frame.
 
 use gpui
+use std::math
 use std::process
 use ui
 
@@ -74,6 +81,20 @@ fn hover_of(ix: i64) -> String {
     let hovers = ["#0000ff33", "#ff000033", "#00800033"]
     let hover = hovers[ix]
     f"{hover}"
+}
+
+/// GPUI's own number, from the crate: `const DRAG_THRESHOLD: f64 = 2.;`
+/// (`gpui-0.2.2/src/elements/div.rs:47`). Upstream never names it; the port has
+/// to, because nothing in the binding applies it.
+const DRAG_THRESHOLD: f64 = 2.0
+
+/// A press on a square, held pending. Upstream's `pending_mouse_down`: the
+/// press that may or may not become a drag, and the point it landed on, in
+/// **window** coordinates — the frame gpui's own listeners measure in.
+fn arm_press(ix: i64, x: f64, y: f64) {
+    gpui::set_int("press.ix", ix)
+    gpui::set_float("press.x", x)
+    gpui::set_float("press.y", y)
 }
 
 /// Upstream's `DragInfo`: which square is being dragged, and its colour. The
@@ -113,6 +134,28 @@ fn end_drag_over_background() {
         return
     }
     cancel_drag()
+}
+
+/// `move` on the full-window overlay: the first move that takes the pointer
+/// more than `DRAG_THRESHOLD` from the press starts the drag, which is where
+/// GPUI starts it.
+///
+/// The overlay is the window, and the default `HitboxBehavior` is `Normal`, so
+/// it is hovered wherever the pointer is and hears every move of a drag — of
+/// this drag or any other. What bounds the span is the binding's own gate,
+/// `event.dragging()`, which is "the left button is held" (`interactive.rs:356`);
+/// a move with no button down never reaches here at all.
+fn move_event(x: f64, y: f64) {
+    let ix = gpui::state_int("press.ix", -1)
+    if ix < 0 || dragging() {
+        return
+    }
+    let dx = x - gpui::state_float("press.x", 0.0)
+    let dy = y - gpui::state_float("press.y", 0.0)
+    if math::sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD {
+        gpui::set_int("press.ix", -1)
+        begin_drag(ix)
+    }
 }
 
 /// One draggable square: upstream's `div().id(("item", ix)).size_32()`, with
@@ -157,37 +200,54 @@ fn ghost() -> ui::El {
         .text(f"Item {ix}", "")
 }
 
-/// Upstream's listeners, over the shared state store.
-fn handle_events() {
-    for event in gpui::take_events() {
-        let id, kind = gpui::event_parts(event)
-        if id == "drop" {
-            commit_drop()
-        } else if id == "drag-end" {
+/// Upstream's listeners, over the shared state store. `x` and `y` are the point
+/// the event carried, in **window** coordinates, taken off it by the frame's own
+/// closure — see the note at the drain in `main`.
+fn handle_event(id: String, kind: String, x: f64, y: f64) {
+    if id == "drop" {
+        commit_drop()
+    } else if id == "drag-end" {
+        if kind == "move" {
+            move_event(x, y)
+        } else {
             end_drag_over_background()
-        } else if id == "item0" {
-            item_event(0, kind)
-        } else if id == "item1" {
-            item_event(1, kind)
-        } else if id == "item2" {
-            item_event(2, kind)
         }
+    } else if id == "item0" {
+        item_event(0, kind, x, y)
+    } else if id == "item1" {
+        item_event(1, kind, x, y)
+    } else if id == "item2" {
+        item_event(2, kind, x, y)
     }
 }
 
-/// `down` on a square starts the drag; `up` back on a square ends it without a
-/// drop, which is what GPUI does when the release is not over a drop target.
-fn item_event(ix: i64, kind: String) {
+/// `down` on a square **arms** the drag and does not start it; `up` back on a
+/// square ends one without a drop, which is what GPUI does when the release is
+/// not over a drop target. Start is `move_event`'s, once the pointer has moved
+/// past the threshold — upstream's `on_drag` is not called on the press either.
+fn item_event(ix: i64, kind: String, x: f64, y: f64) {
     if kind == "down" {
-        begin_drag(ix)
+        arm_press(ix, x, y)
     } else if kind == "up" {
+        gpui::set_int("press.ix", -1)
         cancel_drag()
     }
 }
 
 fn main() {
     let outcome = gpui::run("", 800.0, 600.0, || {
-        handle_events()
+        // The drain lives here rather than in a function of its own, and `pointer_xy` is called
+        // here rather than inside `handle_event`. That is not a style choice: a pair-returning
+        // binding called from a module-level function faults under the JIT — `gossamer: fault
+        // inside JIT-compiled body '<fn>'`, exit 127 — so the point is read off the event in the
+        // frame's own closure and handed to the handler as an argument. `## Round 93` in
+        // `CAPABILITIES.md` has the repro; `tests/gui/mp3_drag_threshold.gos` met it a second
+        // time and is written the same way.
+        for event in gpui::take_events() {
+            let id, kind = gpui::event_parts(event.clone())
+            let x, y = gpui::pointer_xy(event.clone())
+            handle_event(id, kind, x, y)
+        }
 
         // Upstream gets a frame for every pointer move from GPUI's drag
         // machinery. Here the ghost has to be put where the pointer is, and a
@@ -198,10 +258,12 @@ fn main() {
         }
 
         ui::stack("size=full bg=white")
-            // The release listener for empty space. It is the stack's first
-            // child, so it paints under everything and every real target has
-            // its hitbox in front of it.
-            .child(ui::rect("w=800 h=600").on_mouse("up", "drag-end"))
+            // The release listener for empty space, and the move listener the
+            // drag threshold is computed from. It is the stack's first child, so
+            // it paints under everything and every real target has its hitbox in
+            // front of it — a hitbox that is *not* in the way, since only an
+            // occluding one would block it.
+            .child(ui::rect("w=800 h=600").on_mouse("up move", "drag-end"))
             // Upstream's root column, `absolute` so the overlay is the stack's
             // only in-flow child. The four insets rather than `size=full`: an
             // absolute box that fills its containing block needs no percentage

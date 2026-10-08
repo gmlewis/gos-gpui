@@ -1713,10 +1713,50 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
-/// Writes a pointer event into the state store and raises `"<id>|<kind>"`.
+/// The separator inside a pointer event's payload.
+///
+/// `\u{1}` — ASCII's start-of-heading, which gpui itself uses between the fields of an
+/// unparsed keystroke. It was chosen because nothing a program can put in a payload
+/// contains it: not a keystroke name, not a label, not what `gpui::emit` is handed. So a
+/// payload can be cut at it without a payload that merely *looks* like a pointer event
+/// being cut by mistake — which a space or a comma would do.
+pub(crate) const POINTER_SEP: char = '\u{1}';
+
+/// The three decimal places a pointer coordinate is kept to.
+///
+/// A `Pixels` is `f32`; printed whole, 141 becomes `141.0021514892578`. A thousandth of a
+/// pixel is far below anything a person or a layout can see, and rounding here means the
+/// payload a program reads and the `<id>.x` the store holds are the *same number* rather
+/// than two spellings of it.
+fn round3(v: f32) -> f64 {
+    ((v as f64) * 1000.0).round() / 1000.0
+}
+
+/// Writes a pointer event into the state store and raises `"<id>|<payload>"`.
 ///
 /// Coordinates are element-relative, so a program never has to know where its
 /// element sits — the same thing the slider does.
+///
+/// **The payload carries its own copy of the position**, in *two* spaces.
+///
+/// The store has one slot per key, so it can only ever hold the *latest* position: when
+/// several moves coalesce into one frame — which they do, this was measured, four `xdotool`
+/// moves posted back to back arrived as four events in one frame — every one of the four
+/// events reads back the last of them and the points in between are gone. A painter drawing
+/// a stroke from those events draws one dab and a jump. The payload is
+/// `"<kind>\u{1}<window x>\u{1}<window y>\u{1}<mods>"`, so each event answers for itself
+/// through [`crate::pointer_xy`] and [`crate::pointer_mods`].
+///
+/// **The payload's position is the one in the window**, which is what upstream's
+/// `MouseDownEvent::position` holds — gpui's own doc comment on that field is "The position
+/// of the mouse on the window", the platform backends put the raw pointer position in it
+/// (`platform/linux/x11/client.rs:1121`, `platform/mac/events.rs:151`), and gpui compares it
+/// against hitbox origins, which are window coordinates
+/// (`elements/div.rs:1966`). A port that paints — as `13_painting` does, through
+/// `Window::paint_path`, which applies no element offset of its own
+/// (`window.rs:2860`) — needs exactly that number. **The store's `<id>.x` / `<id>.y` stay
+/// element-relative**, which is the convenience they have always been and what a widget
+/// measuring a position inside itself wants; [`crate::pointer_xy`] documents the difference.
 fn report_pointer(
     id: &str,
     kind: &str,
@@ -1725,21 +1765,58 @@ fn report_pointer(
 ) {
     let win = window::current();
     let bounds = MOUSE_BOUNDS.with(|m| m.borrow().get(&(win, id.to_string())).copied());
+    let (wx, wy) = (round3(f32::from(position.x)), round3(f32::from(position.y)));
     let (x, y) = match bounds {
         Some(bounds) => (
-            f32::from(position.x) - f32::from(bounds.origin.x),
-            f32::from(position.y) - f32::from(bounds.origin.y),
+            round3(f32::from(position.x) - f32::from(bounds.origin.x)),
+            round3(f32::from(position.y) - f32::from(bounds.origin.y)),
         ),
-        None => (f32::from(position.x), f32::from(position.y)),
+        None => (wx, wy),
     };
-    store::set_float(&format!("{id}.x"), x as f64);
-    store::set_float(&format!("{id}.y"), y as f64);
+    store::set_float(&format!("{id}.x"), x);
+    store::set_float(&format!("{id}.y"), y);
     store::set_flag(&format!("{id}.dragging"), kind == "move");
     store::set_flag(&format!("{id}.shift"), modifiers.shift);
     store::set_flag(&format!("{id}.control"), modifiers.control);
     store::set_flag(&format!("{id}.alt"), modifiers.alt);
     store::set_flag(&format!("{id}.platform"), modifiers.platform);
-    store::push_event_with(id, kind);
+    let mods = modifier_words(&modifiers);
+    store::push_event_with(
+        id,
+        &format!("{kind}{POINTER_SEP}{wx}{POINTER_SEP}{wy}{POINTER_SEP}{mods}"),
+    );
+}
+
+/// The event's own position in the window and its modifiers, or `None` when it is not a
+/// pointer event.
+///
+/// Reads the payload `report_pointer` wrote. A payload that is not four `\u{1}`-separated
+/// fields — anything `gpui::emit` raised, anything with no payload at all — is not a
+/// pointer event and gets `None` rather than a position invented out of whatever numbers
+/// happened to be in it.
+pub(crate) fn pointer_fields(event: &str) -> Option<(f64, f64, String)> {
+    let (_, payload) = event.split_once('|')?;
+    let mut fields = payload.split(POINTER_SEP);
+    let _kind = fields.next()?;
+    let x = fields.next()?.parse::<f64>().ok()?;
+    let y = fields.next()?.parse::<f64>().ok()?;
+    let mods = fields.next()?;
+    // A fifth field means this is not a payload `report_pointer` wrote.
+    if fields.next().is_some() {
+        return None;
+    }
+    Some((x, y, mods.to_string()))
+}
+
+/// The payload of an event, cut at [`POINTER_SEP`].
+///
+/// This is what [`crate::event_parts`] hands back, so `kind == "move"` keeps meaning what it
+/// meant before the pointer payload grew a tail.
+pub(crate) fn payload_kind(payload: &str) -> String {
+    match payload.split_once(POINTER_SEP) {
+        Some((kind, _)) => kind.to_string(),
+        None => payload.to_string(),
+    }
 }
 
 fn focus_for(win: i64, id: &str, cx: &mut App) -> FocusHandle {

@@ -432,10 +432,60 @@ gossamer_binding::register_module!(
     }
 
     /// Split an event into `(id, payload)` in one step.
+    ///
+    /// A **pointer** payload — the one [`gpui::on_mouse`] raises — answers as just its kind,
+    /// `"down"` / `"move"` / `"up"`, because that is what every `kind == "move"` in this tree
+    /// was written against. The event still *carries* its position and modifiers; they are
+    /// behind the cut, and [`gpui::pointer_xy`] and [`gpui::pointer_mods`] are how to reach
+    /// them. The cut is at `\u{1}`, which nothing a program raises contains, so a payload of
+    /// your own — [`gpui::emit`]'s — comes back whole however it is punctuated.
     fn event_parts(event: String) -> (String, String) {
         match event.split_once('|') {
-            Some((id, data)) => (id.to_string(), data.to_string()),
+            Some((id, data)) => (id.to_string(), view::payload_kind(&data)),
             None => (event, String::new()),
+        }
+    }
+
+    /// Where a pointer event happened, **in the window** — the same number upstream's
+    /// `MouseDownEvent::position` holds, and the one to paint with.
+    ///
+    /// **This answers for one event, not for the frame.** The store holds one `<id>.x` per
+    /// element and each event overwrites it, so when several moves coalesce into a frame the
+    /// store can only report the last of them and the points between are lost. This is the
+    /// reader that does not lose them: an event handed back by [`gpui::take_events`] carries
+    /// its own position, so a stroke is drawn through all of its points instead of one dab
+    /// and a jump.
+    ///
+    /// # This is not the same number as `gpui::state_float("<id>.x")`
+    ///
+    /// The store's `<id>.x` is measured from the **element's own corner** — that is what a
+    /// widget wants when it is asking where inside itself it was touched. This is measured
+    /// from the **window's**, which is what gpui gives its own listeners and what
+    /// `gpui::paint_path` draws in: the two differ by wherever the element sits, and are the
+    /// same number only for an element at the window's own origin. A port that paints a
+    /// stroke through the points it was handed wants this one; a port asking which row of its
+    /// own list was hit wants the store's.
+    ///
+    /// `(-1.0, -1.0)` means this is not a pointer event — it was raised by [`gpui::emit`], or
+    /// it is a keystroke or a timer, and it never had a position.
+    fn pointer_xy(event: String) -> (f64, f64) {
+        match view::pointer_fields(&event) {
+            Some((x, y, _)) => (x, y),
+            None => (-1.0, -1.0),
+        }
+    }
+
+    /// The modifiers held at a pointer event, in gpui's own order and spelling —
+    /// `"shift"`, `"ctrl-alt"`, `""` when none is held.
+    ///
+    /// The same words [`gpui::observe_keystrokes`] puts in `~key.mods`, so a program that
+    /// checks for shift while the pointer is down spells it exactly as it spells it while a
+    /// key is down. `""` is both "nothing was held" and "this is not a pointer event"; a
+    /// pointer event always answers, and one with no modifier held answers `""`.
+    fn pointer_mods(event: String) -> String {
+        match view::pointer_fields(&event) {
+            Some((_, _, mods)) => mods,
+            None => String::new(),
         }
     }
 

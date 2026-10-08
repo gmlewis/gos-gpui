@@ -20,39 +20,35 @@
 // coordinates: the root carries no padding, so an absolute `rect` lands where
 // upstream's `Bounds` put the quad.
 //
+// The interactive half is upstream's line for line. A down starts a stroke and
+// records the point it started at, a move extends it, an up ends it — and while
+// shift is held the move's point is snapped to the horizontal or vertical axis
+// through the start, which is what upstream's `ev.modifiers.shift` does. The
+// point and the modifiers both come off the **event** (`gpui::pointer_xy`,
+// `gpui::pointer_mods`), not out of the store: several moves can arrive in one
+// frame, and the store keeps one slot per element.
+//
 // Deviations:
 //
-//   * Shift-constrained straight lines are absent. Upstream reads
-//     `ev.modifiers.shift` on each mouse-move and snaps the point to the
-//     horizontal or vertical axis through the stroke's start. The binding's
-//     pointer events carry no modifier state, so the header's instruction is
-//     inert — its text is upstream's, kept verbatim. (Latching shift through
-//     `gpui::on_keys` cannot work either: it raises key-down only, so the
-//     latch could never be released.)
 //   * The wave's `StrokeOptions::with_line_join(Bevel)` is not settable; the
 //     binding has no line-join option. At 1px the two are indistinguishable.
 //   * Paths are rebuilt each frame after `gpui::path_reset()` rather than once
 //     in `new()`, because the drawn strokes are program state and their paths
 //     have to follow it. The pool outlives frames, so it is reset before each
 //     rebuild — nothing accumulates. The painted result is upstream's.
-//   * Pointer points come from the binding's `canvas.x` / `canvas.y`, written
-//     per event but read once per frame, so several move events coalescing into
-//     one frame all read the latest position. A fast drag therefore carries
-//     fewer vertices than upstream's; the rendered line is the same.
-//   * The drawing surface spans the whole window instead of the area under the
-//     header. The header is painted over it, so its buttons still take clicks,
-//     and the paths it serves are in window coordinates anyway.
 //   * As in every port here, a Gossamer frame rebuilds the tree rather than
 //     re-rendering a retained `Entity<PaintingViewer>`.
 //
-// Reported to the parent as missing from the binding: modifier state on pointer
-// events, stroke options (line join / cap), and `paint_quad`. The Rust logo was
-// on this list until round 92, as "a `rust_logo` path" — what it actually needed
-// was a cubic Bézier, which the binding now has as `gpui::path_cubic_to`.
+// Reported to the parent as missing from the binding: stroke options (line
+// join / cap) and `paint_quad`. Modifier state on pointer events left this list
+// in round 93, with `gpui::pointer_mods` and `gpui::pointer_xy`; the Rust logo
+// left it in round 92, as "a `rust_logo` path" — what it actually needed was a
+// cubic Bézier, which the binding now has as `gpui::path_cubic_to`.
 
 use gpui
 use std::math
 use std::process
+use std::strings
 use ui
 
 // ---- the black quads --------------------------------------------------
@@ -488,11 +484,17 @@ fn main() {
     let outcome = gpui::run("", 1536.0, 864.0, || {
         // Upstream's listeners, through `on_mouse`: a down starts a stroke, a
         // move extends it, an up ends it. The binding reports a move only
-        // while the button is down, and writes the point it reports into
-        // `canvas.x` / `canvas.y` relative to the surface's corner — which,
-        // for a surface at the window origin, is window coordinates.
+        // while the button is down.
+        //
+        // The point comes off the event, one per event. `gpui::pointer_xy` is
+        // the position in the **window**, which is the space upstream's
+        // `MouseDownEvent::position` is in and the space the paths below are
+        // painted in — so it does not matter where the listening surface sits.
+        // The store's `canvas.x` would be the wrong number twice over: one slot
+        // per element, so a frame that coalesces four moves answers the fourth
+        // point to all four of them.
         for event in gpui::take_events() {
-            let id, kind = gpui::event_parts(event)
+            let id, kind = gpui::event_parts(event.clone())
             if id == "dashed" {
                 gpui::set_bool("dashed", !gpui::state_bool("dashed", false))
             } else if id == "clear" {
@@ -500,21 +502,40 @@ fn main() {
                 gpui::set_int("current", -1)
                 gpui::set_bool("painting", false)
             } else if id == "canvas" {
-                let x = gpui::state_float("canvas.x", 0.0)
-                let y = gpui::state_float("canvas.y", 0.0)
+                let x, y = gpui::pointer_xy(event.clone())
                 if kind == "down" {
                     let index = gpui::state_int("strokes", 0)
                     gpui::forget(f"stroke{index}")
                     gpui::list_push_float(f"stroke{index}", x)
                     gpui::list_push_float(f"stroke{index}", y)
+                    gpui::set_float("start.x", x)
+                    gpui::set_float("start.y", y)
                     gpui::set_int("strokes", index + 1)
                     gpui::set_int("current", index)
                     gpui::set_bool("painting", true)
                 } else if kind == "move" {
                     let index = gpui::state_int("current", -1)
                     if gpui::state_bool("painting", false) && index >= 0 {
-                        gpui::list_push_float(f"stroke{index}", x)
-                        gpui::list_push_float(f"stroke{index}", y)
+                        // Upstream, verbatim: while shift is held, the point
+                        // is pulled onto the axis through the stroke's start
+                        // that it is furthest from. The modifiers are *this*
+                        // event's, so shift pressed halfway through a drag
+                        // starts snapping on the next move and letting it go
+                        // stops — which a latch of the program's own could not
+                        // do, `on_keys` raising key-down only.
+                        let mut px = x
+                        let mut py = y
+                        if strings::contains(gpui::pointer_mods(event.clone()), "shift") {
+                            let sx = gpui::state_float("start.x", 0.0)
+                            let sy = gpui::state_float("start.y", 0.0)
+                            if math::abs(px - sx) > math::abs(py - sy) {
+                                py = sy
+                            } else {
+                                px = sx
+                            }
+                        }
+                        gpui::list_push_float(f"stroke{index}", px)
+                        gpui::list_push_float(f"stroke{index}", py)
                     }
                 } else if kind == "up" {
                     gpui::set_bool("painting", false)
@@ -550,12 +571,22 @@ fn main() {
             // *is* the box that listens. At the window origin the coordinates
             // it reports are window coordinates either way, being relative to
             // an element that sits at 0,0.
-            .child(ui::on_mouse(ui::rect("w=900 h=520"), "down up move", "canvas"))
-            .child(ui::row("absolute left=16 top=16 right=16 gap=8 justify=between items=center")
+            // The header in flow at the padded root's corner, then the drawing
+            // surface in flow *after* it — so the surface is the area below the
+            // header, as upstream's `size_full` canvas div is below the header
+            // row in its `flex_col`. It used to be a fixed 900x520 at the window
+            // origin, which put the listening box under the header: a drag
+            // started in the empty part of the header row drew a line here and
+            // draws nothing upstream. What that cost was the *point*, which came
+            // out of the store relative to the surface's corner; the strokes are
+            // in window coordinates now, off the event, so the surface can sit
+            // where upstream's does without moving a single painted pixel.
+            .child(ui::row("ml=16 mr=16 mt=16 gap=8 justify=between items=center")
                 .text("Mouse down any point and drag to draw lines (Hold on shift key to draw straight lines)", "")
                 .child(ui::row("gapx=8")
                     .button("dashed", label, "flex px=12 py=4 bg=black color=white active=opacity:0.8")
                     .button("clear", "Clear", "flex px=12 py=4 bg=black color=white active=opacity:0.8")))
+            .child(ui::on_mouse(ui::rect("ml=16 mr=16 mb=16 h=full"), "down up move", "canvas"))
             |> ui::root
     })
 

@@ -52,6 +52,20 @@ fi
 prog="$1"; shift
 [ -f "$prog" ] || { echo "tiers: no such program: $prog" >&2; exit 2; }
 
+# A probe may declare itself `// container: <why>` — the environment it was written for is the
+# container's, not this one, and no tier here would be a measurement of anything. `mp1` says so:
+# it reads a pointer event against a pointer driven by `xdotool` through XTEST on an X server,
+# and this machine has no server and no such tool. Refused rather than run, and refused rather
+# than skipped quietly, because a transcript of five tiers that all failed for the want of an X
+# server is exactly the sort of noise that trains a person to ignore the suite. The five tiers
+# are the container's job for this one: `./scripts/gosbox.sh tiers <prog>`.
+container_only="$(sed -n '1,20p' "$prog" | sed -n 's|^// container: *||p' | head -1)"
+if [ -n "$container_only" ]; then
+  echo "tiers: $prog is container-only — $container_only" >&2
+  echo "tiers: run it where it can be measured: ./scripts/gosbox.sh tiers $prog" >&2
+  exit 3
+fi
+
 # The one program whose subject *is* the noted-error channel (`tests/gui/noted_errors.gos`) says so in
 # its header with `// noted: expected`, exactly as `scripts/probes.sh` reads it. Its whole point is to make
 # the binding note something, so the note is the result rather than a finding — but only for a program

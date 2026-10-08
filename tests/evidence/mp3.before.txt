@@ -1,0 +1,61 @@
+Round 94 — `03_drag_drop`'s deleted threshold deviation, and what it was deleted against.
+Command: ./scripts/gosbox.sh run tests/gui/zz_mp3_t?.gos 120
+
+`examples/03_drag_drop.gos` carried a deviation saying the ghost appears on the press where
+upstream waits for GPUI's `DRAG_THRESHOLD`, and gave two reasons it could not be otherwise. The
+second reason — "a move listener stops at the edge of the element that raised it, so a drag that
+leaves the square quickly could raise no `move` at all" — is **false**, and `mp3_drag_threshold.gos`
+is the check that says so. `DRAG_THRESHOLD` is `2.0`, not the "~4px" the bullet claimed.
+
+The probe needs no "before HEAD" run for the same reason MP2's did not: the check and the fix were
+written together. What it needs is a **negative control** — the same probe, built the same way, with
+the one number it turns on set to the two values the deleted bullet asserted. Both must go red, and
+each must go red for its own reason; a check that failed for both shapes without telling them apart
+would not be evidence of anything.
+
+Control A: `THRESHOLD = 0.0` — the shape the port had, where the ghost appears the instant the
+button goes down, with no travel required.
+
+    $ ./scripts/gosbox.sh run tests/gui/zz_mp3_t0.gos 120
+    FAIL   tests/gui/zz_mp3_t0.gos: exited 0 — no verdict
+           note MP3 xdotool puts the window at 401.00,330.00 and the binding at 400.00,308.00;
+                posting relative to the binding's
+           FAIL MP3 the drag armed on the move 2.00 px from the press; gpui's comparison is
+                `> 2.0` (elements/div.rs:2160), so only the 3.00 px move should have armed it
+           ok     MP3 a move of 2 px across and 2 px down armed the drag, so what is measured is
+                the distance and not either axis
+
+Control B: `THRESHOLD = 4.0` — the "~4px" of the bullet that was struck.
+
+    $ ./scripts/gosbox.sh run tests/gui/zz_mp3_t4.gos 120
+    FAIL   tests/gui/zz_mp3_t4.gos: exited 0 — no verdict
+           note MP3 xdotool puts the window at 401.00,330.00 and the binding at 400.00,308.00;
+                posting relative to the binding's
+           FAIL MP3 none of the 2 move(s) that reached the window armed the drag, so the
+                threshold is not being applied at all
+           FAIL MP3 the diagonal move of 2.83 px did not arm the drag (armed at move 0, and 0 is
+                none), so the distance is not being measured as a magnitude
+
+The two controls fail differently, which is the point: A arms too early, B never arms at all, and
+the messages name which. Both scratch copies were deleted as soon as they had answered — they
+existed only for these two runs, and `tests/gui/` holds no file beginning `zz_`.
+
+With `THRESHOLD = 2.0`, which is the crate's own number, the same probe answers on all five
+container tiers:
+
+    $ ./scripts/gosbox.sh tiers tests/gui/mp3_drag_threshold.gos
+    ok     check: check: ok (25 items typed)
+    ok     run: OK MP3 a full-window listener heard every move of a drag — over the square, over
+           empty space and ove
+    ok     run-nosjit: OK MP3 a full-window listener heard every move of a drag — over the square,
+           over empty space and ove
+    ok     build: build: 85063840B native executable at target/debug/learn-gpui
+    ok     build-release: build: 24528792B native executable at target/release/learn-gpui
+
+(The `run` lines are truncated by `gosbox.sh` at 100 columns, not by this record.)
+
+The check is what the deleted bullet named and nothing more: it is not
+`examples/03_drag_drop.gos`. The tree it drives is the example's shape — a full-window listener at
+the bottom of a stack, a square over it that hears only `down`, a drop target over that — and the
+handler is upstream's rule, but it is written in the probe. The example's own copy of the rule is
+that same rule, and is not separately exercised. See MP3's header.

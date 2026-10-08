@@ -114,6 +114,19 @@ for p in "${probes[@]}"; do
     continue
   fi
 
+  # The mirror of `// needs:`, for a probe this machine cannot run but the container can. It says
+  # so with `// container: <why>` and is skipped here for the same reason a `// linux:` probe is
+  # skipped *there* — the environment the claim was written for is not this one. `mp1` is the
+  # case: it measures a pointer event against a pointer driven by `xdotool` through XTEST on an X
+  # server, and this machine has neither the server, the tool, nor leave to open a window for it.
+  # `scripts/gosbox.sh probes` does not read this line, so the probe still runs where it counts.
+  container="$(sed -n '1,20p' "$p" | sed -n 's|^// container: *||p' | head -1)"
+  if [ -n "$container" ]; then
+    echo "skip   $name: container-only — $container"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
   # The one probe allowed to note an error: `noted_errors.gos` exists to prove the
   # channel, so a note from it is the point rather than a finding.
   noted="$(sed -n '1,20p' "$p" | sed -n 's|^// noted: *expected.*|1|p' | head -1)"

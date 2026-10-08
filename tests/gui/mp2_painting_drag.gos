@@ -1,0 +1,321 @@
+// MP2 — the drawing surface sits below the header, and a drag through it snaps to the axis
+// through the stroke's start while shift is held. Driven by a real pointer on a real window.
+//
+// container: the pointer is driven from outside the process by `xdotool` through XTEST, against
+// the X server the window really sits on. The Mac has no such server — and `scripts/window-guard.sh`
+// keeps a window from opening there at all — so `scripts/probes.sh` and `scripts/tiers.sh` skip
+// this one by name. It runs in the container:
+//
+//   ./scripts/gosbox.sh tiers tests/gui/mp2_painting_drag.gos
+//
+// # What this exists for
+//
+// Two of `examples/13_painting.gos`'s documented deviations were about where the listening surface
+// is and what a move does while shift is held. Both were removed in round 93 and both are checked
+// here, against a real pointer, because neither can be seen in a photograph and neither is visible
+// to `gos check`.
+//
+//   * **The surface's extent.** The port's surface used to be a fixed 900x520 box at the window
+//     origin, which reaches up under the header: a drag begun in the empty part of the header row
+//     drew a line here and draws nothing upstream. It is now in flow after the header, as upstream's
+//     `size_full` canvas div is below its header row. The check posts a press above the header, one
+//     inside it and one below it, and requires the first two to raise nothing at all.
+//   * **Shift.** Upstream reads `ev.modifiers.shift` on each move and pulls the point onto the
+//     horizontal or vertical axis through the stroke's start, whichever it is furthest from. The
+//     modifiers now ride on the event (`gpui::pointer_mods`), so this can be done — and it can be
+//     done *mid-drag*, which is the part a latch of the program's own could never have done.
+//
+// # What it is not
+//
+// It is not `examples/13_painting.gos`. The tree below is the example's shape — the header in flow
+// at the padded root's corner, the surface in flow after it — and the handlers are the example's
+// handlers, but they are written here. What that means is that this checks the **binding** and the
+// **layout**, which are the two things the deviation bullets named; the example's own copy of the
+// snapping is upstream's line for line and is not separately exercised.
+//
+// # Why the geometry is written down rather than measured
+//
+// The header below is given an explicit height, so the band it occupies is known to the pixel and
+// the press above it, inside it and below it can be aimed. The real example's header is
+// content-sized; what this checks is that a surface in flow after a header begins below it, which
+// is the same question whatever the header's height turns out to be.
+
+use gpui
+use std::math
+use std::os::exec
+use std::process
+use std::strconv
+use std::strings
+
+/// The title the window is opened with, and what `xdotool` is told to look for.
+const TITLE: String = "mp2paint"
+
+/// Where the header sits and how tall it is, from its own style string below. The surface starts
+/// at `HEADER_TOP + HEADER_H`, which is what the presses above and inside the band are aimed at.
+const HEADER_TOP: f64 = 16.0
+const HEADER_H: f64 = 32.0
+
+/// The root's pad, from the header's `ml=`/`mr=`/`mt=` — the same 16px upstream's `p_4()` gives.
+/// A press here must raise nothing: the surface is inside it.
+const PAD: f64 = 16.0
+
+/// Run a program and answer its stdout, trimmed, with anything that went wrong printed.
+fn shell(program: String, args: Vec<String>) -> String {
+    match exec::run(program.clone(), args) {
+        Ok(out) => {
+            if out.code != 0 {
+                println(f"FAIL MP2 {program} exited {out.code}: {out.stderr.trim()}")
+            }
+            out.stdout.trim().clone()
+        }
+        Err(problem) => {
+            println(f"FAIL MP2 could not run {program}: {problem}")
+            String::new()
+        }
+    }
+}
+
+/// One `key=value` line out of `xdotool getwindowgeometry --shell`, as a number, or `-1.0`.
+fn field(text: String, key: String) -> f64 {
+    for line in text.split("\n") {
+        if let Some((name, value)) = line.split_once("=") {
+            if name.trim() == key {
+                return match strconv::parse_f64(value.trim().clone()) {
+                    Ok(number) => number,
+                    Err(_) => -1.0,
+                }
+            }
+        }
+    }
+    -1.0
+}
+
+/// The xdotool subcommand that posts one pointer move, as a list of words.
+fn move_to(x: f64, y: f64) -> Vec<String> {
+    let sx = x.round() as i64
+    let sy = y.round() as i64
+    #["mousemove", "--sync", f"{sx}", f"{sy}"]
+}
+
+/// A point as it will be compared: `"12.50,30.25"`, to two decimals.
+fn point(x: f64, y: f64) -> String {
+    f"{x:.2},{y:.2}"
+}
+
+/// Whether two points are the same to within a twentieth of a pixel.
+///
+/// Not a hundredth: the pointer is posted at a whole **screen** coordinate — `xdotool` takes
+/// integers — and the binding reports window coordinates against an origin that is not itself
+/// whole. Measured here, a press posted at the window's x of 400 came back as `400.01`. The
+/// origin is `inner_x` = 350 and `xdotool` puts the window's frame at 351, so the fifth of a pixel
+/// is the difference between the two readings of where the window is, not slack in the check.
+fn same(x: f64, y: f64, ex: f64, ey: f64) -> bool {
+    let dx = x - ex
+    let dy = y - ey
+    (if dx < 0.0 { -dx } else { dx }) < 0.05 && (if dy < 0.0 { -dy } else { dy }) < 0.05
+}
+
+/// Press and release without moving: the shortest gesture that can raise a `down`.
+fn tap(ox: f64, oy: f64, x: f64, y: f64) {
+    let _ = shell("xdotool", move_to(ox + x, oy + y))
+    let _ = shell("xdotool", #["mousedown", "1"])
+    let _ = shell("xdotool", #["mouseup", "1"])
+}
+
+fn main() {
+    let outcome = gpui::run(TITLE, 900.0, 600.0, || {
+        let f = gpui::frame()
+        gpui::animate()
+
+        // ---- the presses that must raise nothing, one that must -------------------
+        if f == 3 && gpui::state_int("phase", 0) == 0 {
+            gpui::set_int("phase", 1)
+            let found = shell("xdotool", #["search", "--name", TITLE])
+            let hits = found.lines()
+            if hits.is_empty() {
+                println(f"FAIL MP2 no window named {TITLE} on this display (xdotool said `{found}`)")
+            } else {
+                let geometry = shell("xdotool", #["getwindowgeometry", "--shell", hits[0].trim().clone()])
+                let ox = gpui::window_field("inner_x")
+                let oy = gpui::window_field("inner_y")
+                let wx = field(geometry, "X")
+                let wy = field(geometry, "Y")
+                if !same(wx, wy, ox, oy) {
+                    println(f"note MP2 xdotool puts the window at {point(wx, wy)} and the binding at {point(ox, oy)}; posting relative to the binding's")
+                }
+                gpui::set_float("ox", ox)
+                gpui::set_float("oy", oy)
+                // Above the header (the root's pad), inside it, and well below it.
+                tap(ox, oy, 400.0, PAD - 8.0)
+                tap(ox, oy, 400.0, HEADER_TOP + HEADER_H / 2.0)
+                tap(ox, oy, 400.0, 200.0)
+            }
+        }
+
+        // ---- the shift drag, then the same drag without it -------------------------
+        if f == 6 && gpui::state_int("phase", 0) == 1 {
+            gpui::set_int("phase", 2)
+            let ox = gpui::state_float("ox", 0.0)
+            let oy = gpui::state_float("oy", 0.0)
+            let _ = shell("xdotool", move_to(ox + 600.0, oy + 200.0))
+            let _ = shell("xdotool", #["mousedown", "1"])
+            let _ = shell("xdotool", #["keydown", "shift"])
+            // 60 across and 20 down: |dx| > |dy|, so the point is pulled back onto the
+            // horizontal axis through the start and its y becomes the start's 200.
+            let _ = shell("xdotool", move_to(ox + 660.0, oy + 220.0))
+            let _ = shell("xdotool", #["keyup", "shift"])
+            // Shift is gone, so this one lands where it was posted.
+            let _ = shell("xdotool", move_to(ox + 700.0, oy + 260.0))
+            let _ = shell("xdotool", #["mouseup", "1"])
+        }
+
+        if f == 10 && gpui::state_int("phase", 0) == 2 {
+            gpui::set_int("phase", 3)
+            let ox = gpui::state_float("ox", 0.0)
+            let oy = gpui::state_float("oy", 0.0)
+            // The same shape with no shift at all: 60 across, 20 down, and it stays there.
+            let _ = shell("xdotool", move_to(ox + 600.0, oy + 300.0))
+            let _ = shell("xdotool", #["mousedown", "1"])
+            let _ = shell("xdotool", move_to(ox + 660.0, oy + 320.0))
+            let _ = shell("xdotool", #["mouseup", "1"])
+        }
+
+        // ---- draining ---------------------------------------------------------------
+        //
+        // Over a window of frames rather than one: the gesture is posted with this callback
+        // blocked, so its events are queued before it returns, but *when* gpui hands them over is
+        // the platform's business and round 93 measured it can be the next iteration. The claim
+        // is about the events' content, not the frame they land in.
+        if f >= 4 && f <= 5 {
+            for event in gpui::take_events() {
+                let id, kind = gpui::event_parts(event.clone())
+                if id == "canvas" && kind == "down" {
+                    let x, y = gpui::pointer_xy(event.clone())
+                    gpui::list_push_float("taps", x)
+                    gpui::list_push_float("taps", y)
+                }
+            }
+        }
+
+        if (f >= 7 && f <= 9) || (f >= 11 && f <= 13) {
+            let key = if f <= 9 { "s0" } else { "s1" }
+            for event in gpui::take_events() {
+                let id, kind = gpui::event_parts(event.clone())
+                if id == "canvas" {
+                    let x, y = gpui::pointer_xy(event.clone())
+                    let shifted = strings::contains(gpui::pointer_mods(event.clone()), "shift")
+                    extend_stroke(key, kind, x, y, shifted)
+                }
+            }
+        }
+
+        if f == 14 {
+            report()
+            gpui::quit()
+        }
+
+        // What a frame says it is. `on_mouse` on the rect below is the surface; the header row
+        // above it is in flow and has no listener of its own, exactly as upstream's has none.
+        let header = gpui::row(f"ml={PAD} mr={PAD} mt={HEADER_TOP} h={HEADER_H} bg=black")
+        let surface = gpui::on_mouse(
+            gpui::rect(f"ml={PAD} mr={PAD} mb={PAD} h=full"),
+            "down up move",
+            "canvas",
+        )
+        let root = gpui::child(gpui::child(gpui::stack("size=full bg=white"), header), surface)
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}
+
+/// One event of a stroke: a `down` starts it at the point it carries, a `move` extends it —
+/// snapped to the horizontal or vertical axis through the start while shift is held, which is
+/// upstream's handler and `examples/13_painting.gos`'s. The points go into `key` as `x, y, x, y, …`,
+/// the way the example keeps its strokes.
+///
+/// The point and the modifier flag arrive as **arguments**, taken off the event by the frame's own
+/// closure, and that is not a style choice. `gpui::pointer_xy` returns a pair of floats, and round
+/// 93 measured that calling it from a module-level function — which this would otherwise be —
+/// faults under the JIT inside the callee. See `## Round 93` in `CAPABILITIES.md` for the twelve
+/// lines that show it and the five calls it is not.
+fn extend_stroke(key: String, kind: String, x: f64, y: f64, shifted: bool) {
+    if kind == "down" {
+        gpui::set_float("start.x", x)
+        gpui::set_float("start.y", y)
+        gpui::list_push_float(key.clone(), x)
+        gpui::list_push_float(key.clone(), y)
+    } else if kind == "move" {
+        let sx = gpui::state_float("start.x", 0.0)
+        let sy = gpui::state_float("start.y", 0.0)
+        let dx = math::abs(x - sx)
+        let dy = math::abs(y - sy)
+        let px = if shifted && dx <= dy { sx } else { x }
+        let py = if shifted && dx > dy { sy } else { y }
+        gpui::list_push_float(key.clone(), px)
+        gpui::list_push_float(key.clone(), py)
+    }
+}
+
+/// The verdict, and the whole of the check. Every branch prints its own line, because a check
+/// that passes by falling through is a check that has stopped checking.
+fn report() {
+    let mut bad = 0
+
+    // 1. Nothing was raised above or inside the header. `taps` holds the `down` events that did
+    //    arrive; there must be exactly one, and it must be the press below the header. The three
+    //    presses are told apart by their y and by nothing else — 8 above the header, 40 inside it
+    //    and 200 well below — so a surface that started at the window's top would answer with
+    //    three points and a surface that started under the header but inside the root's pad would
+    //    answer with two.
+    let taps = gpui::list_all_float("taps")
+    let tap_n = taps.len() as i64
+    if tap_n != 2 {
+        let heard = tap_n / 2
+        println(f"FAIL MP2 {heard} press(es) reached the surface, not 1: only the press below the header should have, and a surface starting at the window's top would also hear the one {PAD - 8.0} above it and the one inside it")
+        bad = bad + 1
+    } else if !same(taps[1], 0.0, 200.0, 0.0) {
+        let got_y = taps[1]
+        println(f"FAIL MP2 the press that reached the surface was at y={got_y}, not the 200 below the header")
+        bad = bad + 1
+    }
+
+    // 2. The shift drag. Posted 600,200 -> +60,+20, so the snap pulls y back to the start's 200;
+    //    then shift released and +40,+40 more, which lands where it was posted.
+    bad = bad + check_stroke("s0", #[600.0, 200.0, 660.0, 200.0, 700.0, 260.0], "the shift drag")
+
+    // 3. The same drag with no shift held: the intermediate point keeps its own y of 320.
+    bad = bad + check_stroke("s1", #[600.0, 300.0, 660.0, 320.0], "the plain drag")
+
+    if bad == 0 {
+        println("OK MP2 the surface heard nothing above or inside the header, a shift drag snapped to the axis through its start and stopped snapping when shift was let go, and the same drag without shift did not snap")
+    }
+}
+
+/// Whether `key`'s points are `want`, and a line for each one that is not.
+fn check_stroke(key: String, want: Vec<f64>, what: String) -> i64 {
+    let points = gpui::list_all_float(key.clone())
+    let want_n = want.len() as i64
+    let got_n = points.len() as i64
+    if got_n != want_n {
+        let pairs = got_n / 2
+        let wanted = want_n / 2
+        println(f"FAIL MP2 {what} recorded {pairs} point(s), not {wanted}")
+        return 1
+    }
+    let mut bad = 0
+    for i in 0..want_n {
+        let got = points[i]
+        let should = want[i]
+        if !same(got, 0.0, should, 0.0) {
+            let n = i / 2
+            let axis = if i % 2 == 0 { "x" } else { "y" }
+            println(f"FAIL MP2 {what}: point {n}'s {axis} is {got}, not {should}")
+            bad = bad + 1
+        }
+    }
+    bad
+}
