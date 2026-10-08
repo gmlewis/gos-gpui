@@ -1,0 +1,53 @@
+Round 95 — `02_data_table`'s thumb, after the fix. The green, and the five tiers.
+
+Command: ./scripts/gosbox.sh tiers tests/gui/dt1_thumb_track.gos
+
+    ok     check: check: ok (14 items typed)
+    ok     run: OK DT1 on a real 10000-row list in a 400-pixel viewport the rule the example carries and upstream's
+    ok     run-nosjit: OK DT1 on a real 10000-row list in a 400-pixel viewport the rule the example carries and upstream's
+    ok     build: build: 84688920B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+    ok     build-release: build: 24444512B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+(The two `run` lines are truncated by `gosbox.sh` at 100 columns, not by this record.
+`gosbox.sh run` prints the transcript only when a probe has failed, so the per-point lines were
+asked for with `GOSBOX_TRANSCRIPT=1`, which round 95 added to that one branch for exactly this.)
+
+    $ GOSBOX_TRANSCRIPT=1 ./scripts/gosbox.sh run tests/gui/dt1_thumb_track.gos 300
+    ok     tests/gui/dt1_thumb_track.gos: OK DT1 on a real 10000-row list in a 400-pixel viewport the rule the example carries and upstream's put the thumb at the same pixel at all five points, and the thumb never runs past the end of its track
+           ok     DT1 at -0.0 of 219600.0 in a 400.0-pixel viewport both put the thumb at 4.0
+           ok     DT1 at -54900.0 of 219600.0 in a 400.0-pixel viewport both put the thumb at 99.8
+           ok     DT1 at -109800.0 of 219600.0 in a 400.0-pixel viewport both put the thumb at 199.6
+           ok     DT1 at -164700.0 of 219600.0 in a 400.0-pixel viewport both put the thumb at 296.0
+           ok     DT1 at -219600.0 of 219600.0 in a 400.0-pixel viewport both put the thumb at 296.0
+           ok     DT1 the rule the example carried before round 95 disagrees with upstream's at 4 of the 5 points, by up to 67.0 px, so this check tells the two apart
+           OK DT1 on a real 10000-row list in a 400-pixel viewport the rule the example carries and upstream's put the thumb at the same pixel at all five points, and the thumb never runs past the end of its track
+
+Read against `tests/evidence/dt1.before.txt`, which is the same five points and the same two
+assertions under the rule the example carried before:
+
+| at | before | after | upstream |
+| --- | --- | --- | --- |
+| `-0.0` | 4.0 | 4.0 | 4.0 |
+| `-54900.0` | 79.0 | 99.8 | 99.8 |
+| `-109800.0` | 154.0 | 199.6 | 199.6 |
+| `-164700.0` | 229.0 | 296.0 | 296.0 |
+| `-219600.0` | 304.0 | 296.0 | 296.0 |
+
+`h = 400.0` and `max = 219600.0` are the same in both runs, and they are worth a second look in
+the *after* table: 400 + 219600 = 220000, which is exactly `10_000 * 22.0`, the row count times the
+row height the port hands `ui::list`. So `max + h` is the content height, which is what lets the
+port reach upstream's `scroll_height` — the one quantity in upstream's expression that the binding
+has no name for — without an approximation.
+
+The last line of the range is where the clamp earns its keep, and it is the one place where before
+and after differ for a reason other than the denominator: upstream's `clamp` pins the thumb at
+`h - 100 - 4 = 296`, and the rule the example carried had nothing to pin it, so it ran to 304 and
+its own hundred pixels ended at 404 in a 400-pixel track. Both the comparison and the property
+assertion fail there in the before-run, and both pass in the after-run.
+
+The negative control is the sixth line, and it is the reason this check is not two copies of one
+expression. `port_top` and `upstream_top` are separate transcriptions that happen to say the same
+thing now; `was_top` is a third, saying what the example said before. It disagrees at 4 of the 5
+points and not 5, which is the most a differing rule can disagree at — the top of the range has
+percentage zero, so `4 + 0` and `clamp(0, 4, 296)` are both 4 — and the probe fails if it is not
+exactly 4. Without that line, a green would say only that a function equals itself.

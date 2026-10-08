@@ -1,0 +1,84 @@
+Round 95 — `02_data_table`'s thumb bullet, and what it was deleted against.
+
+Command: ./scripts/gosbox.sh run tests/gui/dt1_thumb_track.gos 300
+
+`examples/02_data_table.gos` carried this deviation:
+
+    //   * Upstream sizes the thumb from the list's own visible height; this draws it
+    //     at upstream's fixed 100 pixels, as the inert version did, and only its
+    //     *position* is computed. The track is `scroll_bounds("items", "h")` less
+    //     the thumb, and the fraction is `-scroll_top / scroll_height` as upstream
+    //     has it, so the thumb sits where upstream would put it.
+
+Both of its clauses are false. Upstream's thumb is **not** sized from the visible
+height — `SCROLLBAR_THUMB_HEIGHT = px(100.)` (`tools/upstream/examples/data_table.rs:14`),
+a fixed height, and the port's `THUMB_HEIGHT` was that same 100, so there was never
+a difference there. And the position was not upstream's either. Upstream
+(`:293-305`):
+
+    let percentage = -self.scroll_top() / scroll_height;          // scroll_height = last_item_size.contents.height
+    let offset_top = (table_height * percentage).clamp(
+        px(4.),
+        (table_height - SCROLLBAR_THUMB_HEIGHT - px(4.)).max(px(4.)),
+    );
+
+The port divided by `scroll_max_offset` — the content *less the viewport*
+(`gpui-0.2.2/src/elements/div.rs:1745-1747`) — multiplied by the viewport *less the
+thumb* rather than by the viewport, and applied no clamp. At HEAD, `scrollbar()` was:
+
+    fn scrollbar() -> ui::El {
+        let max = gpui::scroll_max_offset("items", "y")
+        let at = gpui::scroll_offset("items", "y")
+        let track = gpui::scroll_bounds("items", "h") - (THUMB_HEIGHT as f64)
+        let track = if track > 0.0 { track } else { 0.0 }
+        let frac = if max > 0.0 { clamp01(-at / max) } else { 0.0 }
+        let top = 4.0 + frac * track
+
+        ui::rect("absolute right=4 top=0 w=16 h=full bg=#00000000")
+            .on_mouse("down move", "thumb")
+            .child(ui::rect(f"absolute top={top} right=0 h={THUMB_HEIGHT} w={THUMB_WIDTH} bg=#c0c0c0 rounded=lg hover=bg:#a0a0a0"))
+    }
+
+`was_top` in `tests/gui/dt1_thumb_track.gos` is a transcription of those seven
+lines, kept in the probe so that this red can be reproduced from the probe alone.
+The probe is not `examples/02_data_table.gos` and cannot be: a probe cannot import
+`examples/ui/mod.gos` — `gos check` answers `error[GR0005]: module \`ui\` does not
+exist` for a file outside `examples/` — so the port's rule is transcribed. That is
+the one soft joint, exactly as it is in `tests/gui/mp3_drag_threshold.gos`. What the
+probe measures *live* is the binding's side: five offsets reached by real
+`gpui::scroll_to` on a real 10 000-row `gpui::list` in a real window, with `h`, `max`
+and `at` read back through `gpui::scroll_bounds`, `gpui::scroll_max_offset` and
+`gpui::scroll_offset`.
+
+The red, verbatim (the `FAIL … no verdict` line is the suite's — a probe that has
+failed prints no `OK ` for it to find, which is the point):
+
+    $ ./scripts/gosbox.sh run tests/gui/dt1_thumb_track.gos 300
+    FAIL   tests/gui/dt1_thumb_track.gos: exited 0 — no verdict
+           ok     DT1 at -0.0 of 219600.0 in a 400.0-pixel viewport both rules put the thumb at 4.0
+           FAIL DT1 at -54900.0 of 219600.0 in a 400.0-pixel viewport the port's thumb sits at 79.0 and upstream's at 99.8 -- 20.8 px apart
+           FAIL DT1 at -109800.0 of 219600.0 in a 400.0-pixel viewport the port's thumb sits at 154.0 and upstream's at 199.6 -- 45.6 px apart
+           FAIL DT1 at -164700.0 of 219600.0 in a 400.0-pixel viewport the port's thumb sits at 229.0 and upstream's at 296.0 -- 67.0 px apart
+           FAIL DT1 at -219600.0 of 219600.0 in a 400.0-pixel viewport the port's thumb sits at 304.0 and upstream's at 296.0 -- 8.0 px apart
+           FAIL DT1 at -219600.0 the port's thumb runs from 304.0 to 404.0, past the bottom of a 400.0-pixel track
+           FAIL DT1 4 finding(s) across the five points: a placement upstream's rule does not make, or a thumb off the end of its track
+
+Five findings, and each of the two things the bullet asserted is one of them.
+
+`h = 400.0` and `max = 219600.0` are the live readings, and they are the first
+thing worth noticing: 400 + 219600 = 220000, and 220000 is exactly `10_000 * 22.0`,
+the row count times the row height the port hands `ui::list`. So `max + h` really is
+the content height — gpui's `max_offset` really is the content less the viewport —
+which is what lets the port reach upstream's `scroll_height` without a name for it.
+
+The top of the range is the one point where the two rules agree, and that is not a
+coincidence: the fraction is zero there, so `4 + 0` and `clamp(0, 4, 296)` are both 4.
+It is reported as `ok` because it is one — a check that fails everywhere is as
+uninformative as one that passes everywhere.
+
+The first four failures are the placement: 20.8 px, 45.6 px and 67.0 px apart across
+the middle of the range, and 8.0 px apart at the end because upstream's clamp pins
+its thumb at 296 while the port's carried on to 304. The last is not a comparison at
+all but a property anyone can see: at the end of the range the port's thumb ran from
+304.0 to 404.0, four pixels past the bottom of the 400-pixel track it slides on.
+Upstream's clamp is what forbids that, and the port had no clamp.

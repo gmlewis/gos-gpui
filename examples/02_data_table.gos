@@ -29,11 +29,6 @@
 //     its whole length, so the drag works, and the strip is narrow enough that
 //     the wheel over the body still reaches the list. A drag that leaves the
 //     strip sideways stops, which is the difference from upstream.
-//   * Upstream sizes the thumb from the list's own visible height; this draws it
-//     at upstream's fixed 100 pixels, as the inert version did, and only its
-//     *position* is computed. The track is `scroll_bounds("items", "h")` less
-//     the thumb, and the fraction is `-scroll_top / scroll_height` as upstream
-//     has it, so the thumb sits where upstream would put it.
 //   * `cx.processor` does not exist, and the row builder is not `ui::list`'s
 //     argument. It is the same hook — handed a row index instead of a whole
 //     range, and called only for the rows on screen — but it is given to
@@ -75,6 +70,9 @@ const TOTAL_ITEMS: i64 = 10_000
 /// The thumb's height, and its width, in pixels.
 const THUMB_HEIGHT: i64 = 100
 const THUMB_WIDTH: i64 = 8
+
+/// Upstream's `px(4.)`: the margin its clamp keeps at each end of the track.
+const THUMB_MARGIN: f64 = 4.0
 
 /// Upstream's `FIELDS`: every column, in order, with its fixed width in pixels.
 /// The header and the body both read it, which is what keeps them aligned.
@@ -353,39 +351,73 @@ fn header_cell(key: String, width: i64) -> ui::El {
 
 // ---- the scrollbar ----------------------------------------------------
 
-/// Keeps a fraction inside `0..=1`.
-fn clamp01(v: f64) -> f64 {
-    if v < 0.0 {
-        0.0
-    } else if v > 1.0 {
-        1.0
+/// Keeps `v` inside `lo..=hi`, which is what upstream's `.clamp(..)` does.
+fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
     } else {
         v
     }
 }
 
-/// Upstream's thumb, and now a real one.
+/// Keeps a fraction inside `0..=1`.
+fn clamp01(v: f64) -> f64 {
+    clamp(v, 0.0, 1.0)
+}
+
+/// Upstream's thumb, at upstream's own coordinates.
 ///
-/// Upstream positions it from the list's scroll state and drags it through
-/// `UniformListScrollHandle::set_offset`. The binding reaches the same three
-/// numbers through `gpui::scroll_offset`, `gpui::scroll_max_offset` and
-/// `gpui::scroll_bounds`, and moves the list with `gpui::scroll_to` — which
-/// answers for a `ui::list` as well as for a scrolled container, because a
-/// uniform list runs its scrolling through a `ScrollHandle` of its own.
+/// Upstream places it from the list's scroll state (`data_table.rs:293-305`):
+///
+/// ```text
+/// let percentage = -self.scroll_top() / scroll_height;
+/// let offset_top = (table_height * percentage).clamp(
+///     px(4.),
+///     (table_height - SCROLLBAR_THUMB_HEIGHT - px(4.)).max(px(4.)),
+/// );
+/// ```
+///
+/// `table_height` is the list's viewport, which is `gpui::scroll_bounds("items", "h")`, and
+/// `scroll_height` is `last_item_size.contents.height` — the *whole content*, rows times row
+/// height. The binding has no name for that one and does not need one:
+/// `gpui::scroll_max_offset` is the content less the viewport
+/// (`gpui-0.2.2/src/elements/div.rs:1745-1747`), so `max + h` is the content. The clamp is
+/// upstream's, and it is load-bearing: the thumb is the last thing on the track, and without
+/// it its own hundred pixels hang past the bottom of the track at the end of the range.
+///
+/// The thumb stays 8x100 because upstream's does — `SCROLLBAR_THUMB_HEIGHT` is `px(100.)`
+/// (`data_table.rs:14`), a fixed height and not a share of the viewport. That is why this
+/// example does not use `ui::scrollbar`: the library thumb is the track's share of the
+/// document (`gpui-binding/src/scroll.rs`, `thumb_pixels`), which on ten thousand rows is a
+/// twenty-four pixel speck where upstream draws a hundred.
+///
+/// `gpui::scroll_to` moves the list, and answers for a `ui::list` as well as for a scrolled
+/// container, because a uniform list runs its scrolling through a `ScrollHandle` of its own.
 ///
 /// The 16-pixel strip listens rather than the 8x100 thumb. `gpui::on_mouse`
 /// reports only while the pointer is over the element it is attached to, so a
 /// handler on the thumb itself would stop tracking the moment a drag left it;
 /// on the strip, a vertical drag stays inside for its whole length. The strip is
 /// narrow so that the wheel over the body still reaches the list, and it sits at
-/// the right edge where a scrollbar belongs.
+/// the right edge where a scrollbar belongs. The thumb carries `right=0` inside
+/// it, so the thumb's own right edge is 4 pixels in — upstream's `right_1()`.
 fn scrollbar() -> ui::El {
+    let h = gpui::scroll_bounds("items", "h")
     let max = gpui::scroll_max_offset("items", "y")
     let at = gpui::scroll_offset("items", "y")
-    let track = gpui::scroll_bounds("items", "h") - (THUMB_HEIGHT as f64)
-    let track = if track > 0.0 { track } else { 0.0 }
-    let frac = if max > 0.0 { clamp01(-at / max) } else { 0.0 }
-    let top = 4.0 + frac * track
+
+    // Upstream's `scroll_height`, which is `max` plus the viewport.
+    let content = max + h
+    let percentage = if content > 0.0 { clamp01(-at / content) } else { 0.0 }
+    // Upstream's `(table_height - THUMB_HEIGHT - px(4.)).max(px(4.))`.
+    let ceiling = if h - (THUMB_HEIGHT as f64) - THUMB_MARGIN > THUMB_MARGIN {
+        h - (THUMB_HEIGHT as f64) - THUMB_MARGIN
+    } else {
+        THUMB_MARGIN
+    }
+    let top = clamp(h * percentage, THUMB_MARGIN, ceiling)
 
     ui::rect("absolute right=4 top=0 w=16 h=full bg=#00000000")
         .on_mouse("down move", "thumb")
@@ -397,16 +429,22 @@ fn scrollbar() -> ui::El {
 fn main() {
     let outcome = gpui::run_with_rows("", 1280.0, 1000.0, "", table_row, || {
         // A drag of the scrollbar. `<id>.y` is the pointer's position inside the
-        // strip, and the strip is the track, so the fraction is direct — and the
-        // offset it asks for is the offset the list is set to.
+        // strip, and the strip is the viewport, so the fraction is upstream's —
+        // `(ev.position.y - table_bounds.origin.y) / table_bounds.size.height`
+        // (`data_table.rs:356-359`) — and the offset it asks for is the offset the
+        // list is set to. Upstream also adds the press's offset inside the thumb;
+        // that term is the thumb's own rectangle in window pixels, which a program
+        // can work out from the placement above and `scroll_bounds("items", "y")`,
+        // and this does not, so a drag puts the thumb's top under the pointer
+        // rather than holding the point that was grabbed.
         for event in gpui::take_events() {
             let id, _data = gpui::event_parts(event)
             if id == "thumb" {
-                let track = gpui::scroll_bounds("items", "h") - (THUMB_HEIGHT as f64)
+                let h = gpui::scroll_bounds("items", "h")
                 let max = gpui::scroll_max_offset("items", "y")
-                if track > 0.0 && max > 0.0 {
+                if h > 0.0 && max > 0.0 {
                     let y = gpui::state_float("thumb.y", 0.0)
-                    gpui::scroll_to("items", 0.0, -clamp01(y / track) * max)
+                    gpui::scroll_to("items", 0.0, -clamp01(y / h) * max)
                 }
             }
         }

@@ -21,13 +21,12 @@
 # line does not begin a deviation, is reported.
 #
 # pair	line	class	note
-02_data_table.gos	23	visible	interaction only: the drag stops tracking when the pointer leaves the element
-02_data_table.gos	32	visible	the thumb is drawn at a fixed 100px, not from the list's visible height
-02_data_table.gos	37	invisible	the row builder is reached through run_with_rows instead of cx.processor
-02_data_table.gos	46	forced	upstream's quotes come from rand::rng(); there is no fixed target to match
-02_data_table.gos	52	invisible	the visible row range is obtained differently; the same rows are drawn
-02_data_table.gos	57	invisible	ui::list takes 22.0 as the row height, the port's reading of upstream's measured height
-02_data_table.gos	60	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
+02_data_table.gos	23	visible	interaction only: the drag stops tracking when the pointer leaves the element, and drops the grab offset upstream's move handler adds
+02_data_table.gos	32	invisible	the row builder is reached through run_with_rows instead of cx.processor
+02_data_table.gos	41	forced	upstream's quotes come from rand::rng(); there is no fixed target to match
+02_data_table.gos	47	invisible	the visible row range is obtained differently; the same rows are drawn
+02_data_table.gos	52	invisible	ui::list takes 22.0 as the row height, the port's reading of upstream's measured height
+02_data_table.gos	55	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
 03_drag_drop.gos	33	invisible	the ghost is a tree element, not GPUI's drag-preview layer; gpui paints the preview after the root and the ghost is the root stack's last child, so the paint order matches
 03_drag_drop.gos	40	invisible	an invisible full-window on_mouse overlay restores the same behaviour
 03_drag_drop.gos	50	invisible	animate() keeps the ghost following; the same pixels

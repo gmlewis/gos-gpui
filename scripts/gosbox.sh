@@ -230,6 +230,11 @@ case "$cmd" in
     status=$?
     if reason="$(verdict "$log" no)"; then
       echo "ok     $prog: $(grep -m1 '^OK ' "$log")"
+      # A green run prints one line and throws the transcript away, which is right for a suite and
+      # wrong for a record: the per-point lines a probe prints *are* the evidence, and a `FAIL`
+      # run gets them printed for free while a passing one has to ask. `GOSBOX_TRANSCRIPT=1` is
+      # how it asks.
+      [ "${GOSBOX_TRANSCRIPT:-0}" = 1 ] && sed 's/^/       /' "$log"
       rm -f "$log"; exit 0
     fi
     echo "FAIL   $prog: exited $status — $reason"
