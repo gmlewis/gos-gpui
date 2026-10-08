@@ -1471,6 +1471,24 @@ gossamer_binding::register_module!(
         path::curve_to(handle, x, y, ctrl_x, ctrl_y)
     }
 
+    /// Add a cubic curve to `x, y` with control points `ctrl1_x, ctrl1_y` and
+    /// `ctrl2_x, ctrl2_y`.
+    ///
+    /// The endpoint comes first, as in [`gpui::path_curve_to`]. A quadratic
+    /// cannot carry the outlines `lyon`'s `extra::rust_logo` produces — those
+    /// are cubics — which is why `examples/13_painting.gos` needs this one.
+    fn path_cubic_to(
+        handle: i64,
+        x: f64,
+        y: f64,
+        ctrl1_x: f64,
+        ctrl1_y: f64,
+        ctrl2_x: f64,
+        ctrl2_y: f64,
+    ) {
+        path::cubic_to(handle, x, y, ctrl1_x, ctrl1_y, ctrl2_x, ctrl2_y)
+    }
+
     /// Add an elliptical arc.
     fn path_arc_to(handle: i64, rx: f64, ry: f64, x_rotation: f64, large_arc: bool, sweep: bool, x: f64, y: f64) {
         path::arc_to(handle, rx, ry, x_rotation, large_arc, sweep, x, y)

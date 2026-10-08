@@ -41,6 +41,34 @@ fn a_path_is_described_built_and_rebuilt() {
 }
 
 #[test]
+fn a_cubic_curve_is_describable() {
+    // The path language had lines, quadratics, arcs and polygons, and no **cubic** — which is the
+    // one `13_painting` needs. Upstream draws the Rust logo from `lyon::extra::rust_logo`, whose
+    // outlines are cubic Béziers (`relative_cubic_bezier_to`, `lyon_extra-1.1.0/src/rust_logo.rs`),
+    // and a quadratic cannot carry them. `13_painting` recorded the logo as absent for exactly this
+    // reason.
+    //
+    // What can be checked without a screen is that the op exists and that a path carrying one
+    // builds; what it looks like is pixels, and the row's residual doubt already says so. The
+    // argument that the shape is *right* is not this assertion but the generator that produced
+    // `13_painting`'s coordinates: lyon's own path, lyon's own transform, printed out.
+    let handle = gpui::path_fill()
+    gpui::path_move_to(handle, 0.0, 0.0)
+    gpui::path_cubic_to(handle, 40.0, 0.0, 10.0, 40.0, 30.0, 40.0)
+    gpui::path_close(handle)
+    assert(gpui::path_build(handle).is_ok(), "a cubic curve describes and builds")
+
+    // A cubic is a curve, not a replacement for one: a path may carry quadratics and cubics
+    // together, which is what a logo's rounded corners and its stems need.
+    let mixed = gpui::path_fill()
+    gpui::path_move_to(mixed, 0.0, 0.0)
+    gpui::path_cubic_to(mixed, 5.0, 10.0, 15.0, 10.0, 20.0, 0.0)
+    gpui::path_curve_to(mixed, 0.0, 0.0, 10.0, -8.0)
+    gpui::path_close(mixed)
+    assert(gpui::path_build(mixed).is_ok(), "and a path may mix the two")
+}
+
+#[test]
 fn a_stroke_has_its_own_width_and_the_pool_resets() {
     let stroke = gpui::path_stroke(3.0)
     gpui::path_move_to(stroke, 0.0, 0.0)

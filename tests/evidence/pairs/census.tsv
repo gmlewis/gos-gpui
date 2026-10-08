@@ -56,13 +56,12 @@
 12_ownership_post.gos	57	forced	upstream's assert_eq! is silent or fatal; here it is a panel
 12_ownership_post.gos	62	forced	the binding can only run a program through gpui::run, which opens a window
 12_ownership_post.gos	64	forced	the button and the event log are the port's own additions
-13_painting.gos	19	visible	the Rust logo is absent
-13_painting.gos	24	visible	shift-constrained straight lines are absent
-13_painting.gos	31	invisible	no line-join option; at 1px bevel and miter are indistinguishable
-13_painting.gos	33	invisible	paths are rebuilt each frame; the strokes themselves are the same
-13_painting.gos	37	visible	interaction only: move events coalescing into one frame lose intermediate points
-13_painting.gos	41	visible	the canvas spans the whole window instead of the area below the header
-13_painting.gos	44	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
+13_painting.gos	25	visible	shift-constrained straight lines are absent
+13_painting.gos	32	invisible	no line-join option; at 1px bevel and miter are indistinguishable
+13_painting.gos	34	invisible	paths are rebuilt each frame; the strokes themselves are the same
+13_painting.gos	38	visible	interaction only: move events coalescing into one frame lose intermediate points
+13_painting.gos	42	visible	the canvas spans the whole window instead of the area below the header
+13_painting.gos	45	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
 14_paths_bench.gos	10	invisible	paths live in a persistent pool addressed by handle; the same 2000 are painted
 14_paths_bench.gos	15	invisible	gpui::animate() is window.request_animation_frame()
 14_paths_bench.gos	18	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
@@ -73,9 +72,7 @@
 18_shadow.gos	23	invisible	an El's style is fixed at build time; the shapes are the same
 18_shadow.gos	27	invisible	element ids belong to the binding, which allocates one per element
 18_shadow.gos	29	invisible	a Gossamer frame rebuilds the tree; the colours themselves are exact
-19_tab_stop.gos	24	visible	the focus ring never lights up
-19_tab_stop.gos	32	invisible	a focusable box wraps a ui::button; the same pixels
-19_tab_stop.gos	37	visible	the ring again: a plain element takes focus tokens only with hover= or active=
+19_tab_stop.gos	37	invisible	a focusable box wraps a ui::button; the same pixels
 20_text_layout.gos	34	invisible	ui::text(..) is the binding's div().child(text), the same two-level element
 20_text_layout.gos	38	invisible	ui::styled_text wraps the StyledText in a div, the same nesting
 20_text_layout.gos	42	invisible	a Gossamer frame rebuilds the tree; the tree itself is the same

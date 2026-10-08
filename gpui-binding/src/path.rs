@@ -69,6 +69,31 @@ pub fn curve_to(handle: i64, x: f64, y: f64, ctrl_x: f64, ctrl_y: f64) {
     });
 }
 
+/// A cubic Bézier: the endpoint first, then the two control points — the same
+/// order [`curve_to`] uses for its one control.
+///
+/// The two are not interchangeable, and that is why this exists: a quadratic
+/// has a single control and cannot carry the outlines `lyon`'s
+/// `extra::rust_logo` produces, which are cubics. With only `curve_to` a
+/// program could describe a *nearby* logo and not the one upstream draws.
+pub fn cubic_to(
+    handle: i64,
+    x: f64,
+    y: f64,
+    ctrl1_x: f64,
+    ctrl1_y: f64,
+    ctrl2_x: f64,
+    ctrl2_y: f64,
+) {
+    edit(handle, |b| {
+        b.cubic_bezier_to(
+            point(px(ctrl1_x as f32), px(ctrl1_y as f32)),
+            point(px(ctrl2_x as f32), px(ctrl2_y as f32)),
+            point(px(x as f32), px(y as f32)),
+        )
+    });
+}
+
 pub fn arc_to(
     handle: i64,
     rx: f64,

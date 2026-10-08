@@ -5,40 +5,42 @@
 // two buttons at indices 4 and 5. Tab and Shift-Tab move focus between the
 // stops, and the focused box draws upstream's 3px blue ring.
 //
-// The focus *order* is real: the boxes carry `focusable tabstop=1 tabindex=N`
-// and Tab calls `gpui::focus_next()`, so GPUI's own tab machinery is what
-// moves. **That last part is now in doubt rather than disproved (round 70):** a
-// probe whose window registers no `~root` handle — `gpui::on_keys` is what installs
-// one, and it does not — found `gpui::focus_next` reaching no element at all in
-// eleven presses across two runs, while focusing a handle *directly* with
-// `gpui::focus` worked as soon as it was tried. Whether the walk works here, where
-// the root *is* registered, has not been measured since. The keys are real too, in the one shape the binding offers:
-// upstream's `KeyBinding::new("tab", Tab, None)` and
+// The focus *order* is real, and measured rather than asserted (round 91). The
+// boxes carry `focusable tabstop=1 tabindex=N`, Tab calls `gpui::focus_next()`,
+// and GPUI's own tab machinery is what moves — `tests/gui/fo1_tab_order.gos`
+// presses six times over a tree of this shape and reads the walk back in
+// `tab_index` order, the repeat of 2 immediately after the first 2 and the box
+// that is focusable but not a tab stop never. Until round 91 this did not work,
+// and the file said so: the binding handed GPUI a focus handle of its own, and
+// GPUI copies `tab_stop`/`tab_index` onto a handle only when it builds one
+// itself (gpui-0.2.2/src/elements/div.rs:1584), so every focusable element
+// entered the tab map as a non-stop and `Window::focus_next` found nothing to
+// move to. `tests/evidence/FO1.before.txt` is that measurement, and
+// `FO1.after.txt` its fix.
+//
+// The 3px blue ring is real for the same reason, and is what those two files
+// bought. Each box names itself with `id=` and asks `gpui::is_focused(id)` while
+// the frame is being built, so the border follows focus the moment
+// `gpui::focus_next` moves it. Upstream asks `item_handle.is_focused(window)` —
+// the same question, asked of a handle rather than of a name, which is the whole
+// of the difference and leaves the same pixels.
+//
+// The keys are real too, in the one shape the binding offers: upstream's
+// `KeyBinding::new("tab", Tab, None)` and
 // `KeyBinding::new("shift-tab", TabPrev, None)` cannot be registered from here,
 // so they are read as `key|<stroke>` events instead — and both arrive
 // distinctly, `key|tab` and `key|shift-tab`, because `gpui::on_keys` reports
 // gpui's unparsed stroke rather than just the key's name.
 //
-// Three deviations, all of them the binding's shape rather than a choice:
+// One deviation, on the binding's side rather than a choice:
 //
-//   * The ring never lights up. Upstream tests `item_handle.is_focused(window)`
-//     on every box; `gpui::is_focused(id)` instead looks the id up in a map of
-//     the focus handles the *binding* created (`focus_for`), which is filled in
-//     only for text fields and for the `~root` key handler behind
-//     `gpui::on_keys`. A `focusable()` div's handle is made inside GPUI and
-//     never reaches that map, and a plain element's id is the binding's own
-//     `gpui-auto-N`, which a program cannot name. Nothing in the frame can
-//     read focus, so the blue border is absent rather than faked.
 //   * The two buttons are a focusable box around a `ui::button`, not one
-//     element. Focus tokens are applied to plain elements only, and
-//     `ui::button` is a kind of its own with no focus order; the box carries
-//     `tab_index` and the button inside carries the click, which together are
-//     upstream's `div().id(..).focus(..).tab_index(..).on_click(..)`.
-//   * A plain element only receives focus tokens when its style also has
-//     `hover=` or `active=` — that is what gives it an id in the binding's
-//     renderer. The tab-stop boxes already carry upstream's hover; the button
-//     boxes and the non-stop box carry a `hover=` refinement that changes
-//     nothing, for that reason alone.
+//     element. `ui::button` is a kind of its own; the box carries the focus
+//     order and the ring and the black ground, and the button inside carries the
+//     click, which together are upstream's
+//     `div().id(..).tab_index(..).focus(..).on_click(..)`. Two levels where
+//     upstream has one, and the same pixels — `tests/evidence/pairs/census.tsv`
+//     holds the row.
 //
 // One token-order note: in GPUI `tab_index(..)` also sets `tab_stop` to true,
 // so the box that must *not* be a tab stop emits no `tabindex` at all, which
@@ -52,26 +54,47 @@ use ui
 /// Upstream's opening line, verbatim.
 const MESSAGE: &str = "Press `Tab`, `Shift-Tab` to switch focus."
 
+/// Upstream's `tab_stop_style`, in the style language: 3px of gpui's `blue()` where the box is
+/// focused, and the plain 1px black border it wears otherwise. Built afresh every frame, which is
+/// what lets it follow focus.
+fn ring(id: String) -> String {
+    if gpui::is_focused(id) {
+        "border=3 bordercolor=blue"
+    } else {
+        "border=1 bordercolor=black"
+    }
+}
+
 /// One of the boxes that is a tab stop: `tab_index` 1, 2, 3 and a repeat of 2,
-/// upstream's `hover(bg(black.opacity(0.1)))`, and the 3px blue ring that this
-/// port cannot draw (see the header).
-fn stop_item(tab_index: i64) -> ui::El {
-    ui::panel(f"h=40 w=full flex justify=center items=center border=1 bordercolor=black hover=bg:#0000001a focusable tabindex={tab_index} tabstop=1")
+/// upstream's `hover(bg(black.opacity(0.1)))`, and the 3px blue ring.
+///
+/// `id` is upstream's `("item", ix)` under a name a program can ask about — the
+/// ring is drawn from the answer to `gpui::is_focused`, so the box has to be
+/// nameable. It changes no pixel; it is what makes the question askable at all.
+fn stop_item(id: String, tab_index: i64) -> ui::El {
+    let border = ring(id)
+    ui::panel(f"h=40 w=full flex justify=center items=center {border} hover=bg:#0000001a id={id} focusable tabindex={tab_index} tabstop=1")
         .text(f"tab_index: {tab_index}", "")
 }
 
 /// The fourth handle: `cx.focus_handle()` with neither `tab_index` nor
 /// `tab_stop`, drawn at `opacity(0.4)` with the label `tab_stop: false`.
+///
+/// It carries no ring, and that is upstream's own doing rather than a limit
+/// here: its condition is `item_handle.tab_stop && item_handle.is_focused(window)`,
+/// and this handle's `tab_stop` is false, so it is never ringed even while it
+/// holds focus.
 fn loose_item() -> ui::El {
-    ui::panel("h=40 w=full flex justify=center items=center border=1 bordercolor=black opacity=0.4 hover=opacity:0.4 focusable tabstop=0")
+    ui::panel("h=40 w=full flex justify=center items=center border=1 bordercolor=black opacity=0.4 id=item3 focusable tabstop=0")
         .text("tab_stop: false", "")
 }
 
 /// Upstream's `button(id)`: a black `h_10 flex_1` box with `shadow_sm`, a
-/// `tab_index`, and a click. The tab stop is the box; the click is the button
-/// inside it — see the header.
+/// `tab_index`, and a click. The tab stop and the ring are the box; the click is
+/// the button inside it — see the header.
 fn tab_button(id: String, label: String, tab_index: i64) -> ui::El {
-    ui::panel(f"flex col flex=1 h=40 bg=black color=white border=1 bordercolor=black shadow=sm hover=opacity:1 focusable tabindex={tab_index} tabstop=1")
+    let border = ring(id)
+    ui::panel(f"flex col flex=1 h=40 bg=black color=white {border} shadow=sm id={id} focusable tabindex={tab_index} tabstop=1")
         .button(id, label, "flex=1 w=full")
 }
 
@@ -106,11 +129,11 @@ fn main() {
 
         ui::column("size=full p=16 gap=12 bg=white color=black")
             .text(message, "")
-            .child(stop_item(1))
-            .child(stop_item(2))
-            .child(stop_item(3))
+            .child(stop_item("item0", 1))
+            .child(stop_item("item1", 2))
+            .child(stop_item("item2", 3))
             .child(loose_item())
-            .child(stop_item(2))
+            .child(stop_item("item4", 2))
             .child(ui::row("gap=12 items=center")
                 .child(tab_button("el1", "Button 1", 4))
                 .child(tab_button("el2", "Button 2", 5)))
