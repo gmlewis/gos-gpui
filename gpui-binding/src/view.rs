@@ -1857,11 +1857,17 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 // A plain box only becomes interactive when it asks to be, so
                 // the common case keeps a stateless element. A `ctx=` counts as
                 // asking: a key context lives on a dispatch-tree node, and a node
-                // exists only for an element with an id.
+                // exists only for an element with an id. So does any of the focus
+                // tokens — `focusable`, `tabstop=`, `tabindex=` — because those are
+                // applied to interactive elements only, and a box that asks to be
+                // tabbed to and gets nothing is the fault `19_tab_stop` used to
+                // write down as "a plain element only receives focus tokens when
+                // its style also has `hover=` or `active=`".
                 None if hover.is_some()
                     || active.is_some()
                     || focus.is_some()
-                    || style::key_context(&el.style).is_some() =>
+                    || style::key_context(&el.style).is_some()
+                    || style::wants_focus(&el.style) =>
                 {
                     let interactive = apply_focus_order(
                         apply_interactions(
@@ -2427,7 +2433,24 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
     }
 }
 
-/// Applies the focus-order tokens to an already identified element.
+/// Applies the focus-order tokens — `focusable`, `tabstop=` and `tabindex=` — to an already
+/// identified element.
+///
+/// **`tab_stop` and `tab_index` are written onto the focus handle, and that is not a detail.**
+/// They used to be applied to the *element* alone, and GPUI reads them off the element only on the
+/// path this crate does not take: `gpui-0.2.2/src/elements/div.rs:1584` copies `tab_stop` and
+/// `tab_index` onto a handle **only when there is no tracked handle and it makes one itself**
+/// ("If there's an explicit focus handle we're tracking, use that. Otherwise create a new handle").
+/// A handle this crate makes starts at `tab_stop: false` (`window.rs:277`, `FocusHandle::new`), so
+/// with a tracked handle supplied the element's own `tab_stop`/`tab_index` went nowhere, every
+/// focusable element entered gpui's tab map as a non-stop, and `Window::focus_next`
+/// (`window.rs:1413-1422`, `TabStopMap::next`) found nothing to move to — which is exactly what
+/// `tests/gui/fo1_tab_order.gos` measured: six presses, focus never leaving `~root`. Writing the
+/// two through the handle — `FocusHandle::tab_stop`/`tab_index` write to the shared `FocusRef`, so
+/// the handle the registry already holds is updated too — is what makes the tab order exist.
+///
+/// The tokens are gathered before anything is applied, because their order in the string is the
+/// program's business and `tabindex=` may precede `focusable=`.
 fn apply_focus_order<T: StatefulInteractiveElement + 'static>(
     el: T,
     spec: &str,
@@ -2436,30 +2459,48 @@ fn apply_focus_order<T: StatefulInteractiveElement + 'static>(
     cx: &mut App,
 ) -> T {
     let mut el = el;
+    let mut focusable = false;
+    let mut tab_stop = None;
+    let mut tab_index = None;
     for (key, value) in style::tokens(spec) {
         let v = value.as_deref().unwrap_or("");
-        el = match key.as_str() {
-            // **The binding's own handle, not gpui's.** `focusable()` only sets a flag on gpui's
-            // internal interactivity, and gpui then makes a focus handle of its own — one
-            // `gpui::is_focused` cannot see, because it reads back the handles *this* crate keeps.
-            // Tracking our own handle is enough for gpui to use it: div.rs:1584 does exactly that
-            // ("If there's an explicit focus handle we're tracking, use that. Otherwise create a new
-            // handle"), so clicking still focuses the element and the tab map still gets an entry.
-            //
-            // **`focusable()` stays, and the handle is *added* to it** — round 65 thought it could
-            // replace it, and round 69's probe disproved that: with the flag gone, `gpui::focus_next`
-            // found no tab stop at all and `is_focused` still said no, so both halves of the row failed
-            // together. gpui's own tab machinery keys on that flag (`div.rs:1584`), and the tracked
-            // handle is what makes the element's focus *ours* rather than one gpui keeps to itself.
-            "focusable" if v != "0" && v != "false" => el
-                .focusable()
-                .track_focus(&focus_for(win, id, cx)),
-            "tabstop" => el.tab_stop(v != "0"),
-            "tabindex" => el.tab_index(v.parse::<isize>().unwrap_or(0)),
-            _ => el,
-        };
+        match key.as_str() {
+            "focusable" => focusable = focusable || (v != "0" && v != "false"),
+            "tabstop" => tab_stop = Some(v != "0"),
+            "tabindex" => tab_index = Some(v.parse::<isize>().unwrap_or(0)),
+            _ => {}
+        }
     }
-    el
+    if let Some(stop) = tab_stop {
+        el = el.tab_stop(stop);
+    }
+    if let Some(index) = tab_index {
+        el = el.tab_index(index);
+    }
+    if !focusable {
+        // Nothing to track and nothing to be tracked by: gpui's tab machinery keys on the
+        // `focusable` flag, and a `tabindex=` on an element nothing can focus is inert in gpui too.
+        return el;
+    }
+    // **The binding's own handle, not gpui's.** `focusable()` only sets a flag on gpui's internal
+    // interactivity, and gpui then makes a focus handle of its own — one `gpui::is_focused` cannot
+    // see, because it reads back the handles *this* crate keeps. Tracking our own handle is enough
+    // for gpui to use it: div.rs:1584 does exactly that, so clicking still focuses the element and
+    // the tab map still gets an entry.
+    //
+    // **`focusable()` stays, and the handle is *added* to it** — round 65 thought it could replace
+    // it, and round 69's probe disproved that: with the flag gone, `gpui::focus_next` found no tab
+    // stop at all and `is_focused` still said no, so both halves of the row failed together. gpui's
+    // own tab machinery keys on that flag, and the tracked handle is what makes the element's focus
+    // *ours* rather than one gpui keeps to itself.
+    let mut handle = focus_for(win, id, cx);
+    if let Some(stop) = tab_stop {
+        handle = handle.tab_stop(stop);
+    }
+    if let Some(index) = tab_index {
+        handle = handle.tab_index(index);
+    }
+    el.focusable().track_focus(&handle)
 }
 
 /// Applies the `hover=` / `active=` / `focus=` refinements to an already identified

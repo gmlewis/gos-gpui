@@ -355,6 +355,29 @@ pub fn rotation(spec: &str) -> Option<f32> {
         .and_then(|value| value.parse::<f32>().ok())
 }
 
+/// Whether `spec` asks for any of the focus-order tokens: `focusable`, `tabstop=` or `tabindex=`.
+///
+/// A plain box in this binding is a stateless element until it asks to be otherwise, and the focus
+/// tokens are applied to interactive elements only. Without this, a box whose style says
+/// `focusable tabindex=2 tabstop=1` and nothing else was rendered as a plain box: no id, no
+/// handle, no place in the tab order. `19_tab_stop` worked around it by giving every such box a
+/// `hover=` refinement that changed nothing, and wrote the workaround down as a visible deviation
+/// from upstream. This is the check that lets the workaround go.
+///
+/// A bare `focusable` counts. So does `focusable=false`, which does *not*: the token's value is
+/// read the same way [`crate::view`]'s focus-token pass reads it, so the two cannot disagree about
+/// whether an element asked.
+pub fn wants_focus(spec: &str) -> bool {
+    tokens(spec).into_iter().any(|(key, value)| match key.as_str() {
+        "focusable" => value
+            .as_deref()
+            .map(|v| v != "0" && v != "false")
+            .unwrap_or(true),
+        "tabstop" | "tabindex" => true,
+        _ => false,
+    })
+}
+
 /// The `id=<name>` token in `spec`, if it carries one.
 ///
 /// An id is what makes an element addressable from the program: the leaves that

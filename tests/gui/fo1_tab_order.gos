@@ -1,0 +1,180 @@
+// FO1 — the tab order moves focus, in `tab_index` order, and only between tab stops.
+//
+// This is the check behind `19_tab_stop`'s two visible deviations — its header says "the ring never
+// lights up" and "a plain element only receives focus tokens when its style also has `hover=` or
+// `active=`". Neither can be closed while `gpui::focus_next()` reaches nothing, and until this
+// probe was written nothing in the tree said whether it did: `MR5`'s probe walks the tab order,
+// finds nothing eight times, and passes anyway, because its claim is about a handle of this
+// crate's own being focusable at all. The register's `MR5` row records the gap in as many words —
+// "**the tab order does not work**: `gpui::focus_next` reached no element in eleven presses across
+// two runs" — and calls it a defect belonging to no row.
+//
+// The measured cause, and the reason this is a binding change and not an example one: the style
+// token `focusable` is applied as `.focusable().track_focus(&focus_for(win, id, cx))`, and GPUI
+// copies `tab_stop` and `tab_index` onto a focus handle **only when it makes one itself**
+// (`gpui-0.2.2/src/elements/div.rs:1584`: "if there's an explicit focus handle we're tracking, use
+// that. Otherwise create a new handle"). A handle this binding made starts at `tab_stop: false`
+// (`window.rs:277`, `FocusHandle::new`), so every focusable element entered the tab map as a
+// non-stop and `Window::focus_next` — `self.rendered_frame.tab_stops.next(..)`
+// (`window.rs:1413-1422`) — found nothing to move to. `tabstop=` and `tabindex=` were parsed and
+// applied to the *element*, where they are read only on the path GPUI does not take.
+//
+// So this probe is the red the row needed, and it is the same shape as `19_tab_stop`: five boxes
+// (indices 1, 2, 3, a repeat of 2, and one that is focusable but not a tab stop) and two button
+// boxes at indices 4 and 5. Six presses must visit six tab stops in `tab_index` order — the
+// repeat of 2 immediately after the first 2, and the non-stop box never — with `gpui::focused()`
+// and `gpui::is_focused(..)` agreeing at every step.
+//
+// Pass means, in order:
+//
+//   1. the walk visits exactly `fo1.a, fo1.b, fo1.d, fo1.c, fo1.b1, fo1.b2` — upstream's own
+//      ordering, since GPUI sorts tab stops by `tab_index` and breaks a tie by insertion order;
+//   2. the non-stop box is never the answer, at any step;
+//   3. at every step exactly one element claims focus, and it is the one `gpui::focused()` named.
+
+use gpui
+use std::process
+
+/// The six ids the walk must visit, in order.
+const EXPECTED: &str = "fo1.a,fo1.b,fo1.d,fo1.c,fo1.b1,fo1.b2"
+
+/// How many elements claim focus this frame: the seven boxes and the window's own `~root` handle,
+/// which `gpui::on_keys` installs and focuses before anything else moves — upstream starts on its
+/// `app` root handle for the same reason. Exactly one may claim it at any step; a binding that
+/// answered `is_focused` too liberally would pass a walk it should fail.
+fn claims() -> i64 {
+    let mut n = 0
+    if gpui::is_focused("~root") {
+        n = n + 1
+    }
+    if gpui::is_focused("fo1.a") {
+        n = n + 1
+    }
+    if gpui::is_focused("fo1.b") {
+        n = n + 1
+    }
+    if gpui::is_focused("fo1.c") {
+        n = n + 1
+    }
+    if gpui::is_focused("fo1.d") {
+        n = n + 1
+    }
+    if gpui::is_focused("fo1.e") {
+        n = n + 1
+    }
+    if gpui::is_focused("fo1.b1") {
+        n = n + 1
+    }
+    if gpui::is_focused("fo1.b2") {
+        n = n + 1
+    }
+    n
+}
+
+fn main() {
+    let outcome = gpui::run("", 800.0, 600.0, || {
+        // `19_tab_stop` turns the keyboard on, which is what installs the window's `~root` handle
+        // and puts focus on it before anything else. The probe starts from the same place.
+        gpui::on_keys(true)
+
+        let f = gpui::frame()
+
+        let root = gpui::column("size=full p=16 gap=12 bg=white color=black")
+        gpui::child(root, gpui::text("Press `Tab`, `Shift-Tab` to switch focus.", ""))
+
+        // Each box asks `gpui::is_focused` about its own name, which is the whole of what
+        // `19_tab_stop` cannot do: its boxes carry no `id=`, so a program has nothing to ask about
+        // and the 3px blue ring is absent rather than faked. The style is rebuilt every frame, so
+        // the ring follows focus the moment `gpui::focus_next` moves it.
+        //
+        // Seven separate `if`s rather than a helper, because this language refuses a `&str`
+        // parameter (`error[GP0054]`) and the name is the only thing that differs between them.
+        let ra = if gpui::is_focused("fo1.a") { "border=3 bordercolor=blue" } else { "border=1 bordercolor=black" }
+        let a = gpui::panel(f"h=40 w=full flex justify=center items=center {ra} id=fo1.a focusable tabindex=1 tabstop=1 hover=bg:#0000001a")
+        gpui::child(a, gpui::text("tab_index: 1", ""))
+        let rb = if gpui::is_focused("fo1.b") { "border=3 bordercolor=blue" } else { "border=1 bordercolor=black" }
+        let b = gpui::panel(f"h=40 w=full flex justify=center items=center {rb} id=fo1.b focusable tabindex=2 tabstop=1 hover=bg:#0000001a")
+        gpui::child(b, gpui::text("tab_index: 2", ""))
+        let rc = if gpui::is_focused("fo1.c") { "border=3 bordercolor=blue" } else { "border=1 bordercolor=black" }
+        let c = gpui::panel(f"h=40 w=full flex justify=center items=center {rc} id=fo1.c focusable tabindex=3 tabstop=1 hover=bg:#0000001a")
+        gpui::child(c, gpui::text("tab_index: 3", ""))
+        let re = if gpui::is_focused("fo1.e") { "border=3 bordercolor=blue" } else { "border=1 bordercolor=black" }
+        let e = gpui::panel(f"h=40 w=full flex justify=center items=center {re} opacity=0.4 id=fo1.e focusable tabstop=0")
+        gpui::child(e, gpui::text("tab_stop: false", ""))
+        let rd = if gpui::is_focused("fo1.d") { "border=3 bordercolor=blue" } else { "border=1 bordercolor=black" }
+        let d = gpui::panel(f"h=40 w=full flex justify=center items=center {rd} id=fo1.d focusable tabindex=2 tabstop=1 hover=bg:#0000001a")
+        gpui::child(d, gpui::text("tab_index: 2", ""))
+
+        let row = gpui::row("gap=12 items=center")
+        let rb1 = if gpui::is_focused("fo1.b1") { "border=3 bordercolor=blue" } else { "border=1 bordercolor=black" }
+        let b1 = gpui::panel(f"flex col flex=1 h=40 bg=black color=white {rb1} id=fo1.b1 focusable tabindex=4 tabstop=1 hover=opacity:1")
+        gpui::child(b1, gpui::button("fo1.b1", "Button 1", "flex=1 w=full"))
+        let rb2 = if gpui::is_focused("fo1.b2") { "border=3 bordercolor=blue" } else { "border=1 bordercolor=black" }
+        let b2 = gpui::panel(f"flex col flex=1 h=40 bg=black color=white {rb2} id=fo1.b2 focusable tabindex=5 tabstop=1 hover=opacity:1")
+        gpui::child(b2, gpui::button("fo1.b2", "Button 2", "flex=1 w=full"))
+        gpui::child(row, b1)
+        gpui::child(row, b2)
+        gpui::child(root, row)
+        gpui::root(root)
+
+        // One press, then six readings — each press is carried out at the start of the frame
+        // after it was raised, so the reading that follows it is the one that shows its effect.
+        if f == 4 {
+            gpui::focus_next()
+        }
+
+        if f >= 5 && f <= 10 {
+            let who = gpui::focused()
+            let claimed = claims()
+            println(f"FO1 step {f - 4}: gpui::focused() says \"{who}\", {claimed} element(s) claim focus")
+
+            if claimed != 1 {
+                println(f"FAIL FO1 {claimed} elements claim focus at step {f - 4}; exactly one should")
+                gpui::quit()
+                return
+            }
+            if who == "" {
+                println("FAIL FO1 gpui::focus_next() put focus nowhere — the tab order is empty")
+                gpui::quit()
+                return
+            }
+            if !gpui::is_focused(who) {
+                println(f"FAIL FO1 gpui::focused() says \"{who}\" and gpui::is_focused(\"{who}\") denies it")
+                gpui::quit()
+                return
+            }
+            if who == "fo1.e" {
+                println("FAIL FO1 the tab order landed on the box that is focusable but not a tab stop")
+                gpui::quit()
+                return
+            }
+            let walked = gpui::state_text("fo1.walked", "")
+            if walked == "" {
+                gpui::set_text("fo1.walked", who)
+            } else {
+                gpui::set_text("fo1.walked", f"{walked},{who}")
+            }
+            gpui::focus_next()
+        }
+
+        if f == 11 {
+            let seen = gpui::state_text("fo1.walked", "")
+            println(f"FO1 the walk was: {seen}")
+            if seen == *EXPECTED {
+                println("OK FO1 six presses visited the six tab stops in tab_index order, the repeat of 2 after the first 2, and the non-stop box never")
+                gpui::quit()
+                return
+            }
+            println(f"FAIL FO1 the walk was \"{seen}\" where upstream's order is \"{EXPECTED}\"")
+            gpui::quit()
+            return
+        }
+
+        gpui::animate()
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL FO1 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}
