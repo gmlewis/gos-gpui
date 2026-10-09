@@ -4,11 +4,11 @@
 // linux: the container's window manager places windows itself — see below.
 //
 // The check has to go through `open_window`, and that is the point of the row:
-// `place=center` was read, stored, and then compared in an `if` whose two arms
-// were the same expression, so a window opened with it landed exactly where its
-// x and y said instead of in the middle of the display. The first window could
-// never have shown that — `run` centres it by habit, whatever the spec says — so
-// this probe opens a *second* window at x=7, y=9 with `place=center` and asks the
+// `place=center` must reach the placement, not be read, stored and then compared
+// in an `if` whose two arms are the same expression — which leaves a window opened
+// with it exactly where its x and y say instead of in the middle of the display. The
+// first window cannot show that — `run` centres it by habit, whatever the spec says —
+// so this probe opens a *second* window at x=7, y=9 with `place=center` and asks the
 // child itself where it landed.
 //
 // Pass means:
@@ -18,13 +18,13 @@
 //   * the options it was opened with say `place=center`, and name a display
 //
 // The first assertion is deliberately the one that uses nothing this binding
-// added in round 17: at HEAD the probe fails on it with an address in a message,
+// added for this row: the probe fails on it with an address in a message,
 // rather than being abandoned at an unresolved name and timing out.
 //
 // Why the container cannot witness it. gpui's X11 backend hands the rectangle to
 // `XCreateWindow` — the requested origin, plus two pixels — but sets no ICCCM
 // position hints, so the window manager is entitled to place the window itself,
-// and openbox does. Measured there on 2026-10-07, over seven frames and steady in
+// and openbox does. Measured there over seven frames and steady in
 // every one: a child opened with `place=at` at x=7, y=9 reports x=169, y=151, and
 // one opened with `place=center` at the same x and y reports x=85, y=443. Neither
 // is what it was asked for. So the container can see that a window moved and never
@@ -40,10 +40,10 @@ use std::process
 ///
 /// One view callback serves every window (the one `gpui::run` was given), and
 /// `window::allocate` gives the window `run` opened the first id, 1, so anything
-/// else is a window this program opened. The child used to have a callback of its
+/// else is a window this program opened. The child is not given a callback of its
 /// own passed to `gpui::open_window`; that call returns before the window is
 /// drawn, and a callback handed to a binding function is valid only for that
-/// call, so on the compiled tiers the child's view answered an error.
+/// call, so the child's view would answer an error on the compiled tiers.
 fn child_view() {
     let cf = gpui::frame()
 

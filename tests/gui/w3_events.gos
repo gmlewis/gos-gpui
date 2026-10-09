@@ -37,10 +37,10 @@ fn drain(own: String) -> (i64, i64) {
 ///
 /// One view callback serves every window — the one `gpui::run` was given — and
 /// `window::allocate` gives the window `run` opened the first id, 1, so anything
-/// else is a window this program opened. The child used to have a callback of its
+/// else is a window this program opened. The child is not given a callback of its
 /// own passed to `gpui::open_window`; that call returns before the window is
 /// drawn, and a callback handed to a binding function is valid only for that
-/// call, so on the compiled tiers the child's view answered an error.
+/// call, so the child's view would answer an error on the compiled tiers.
 fn child_view() {
     let cf = gpui::frame()
     let mine, foreign = drain("w3.child")

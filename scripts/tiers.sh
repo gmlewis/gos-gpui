@@ -70,8 +70,8 @@ fi
 # its header with `// noted: expected`, exactly as `scripts/probes.sh` reads it. Its whole point is to make
 # the binding note something, so the note is the result rather than a finding — but only for a program
 # that has asked for it by name, and the notes are still printed either way.
-# Found by running it: the probe is green on all five tiers and `tiers` still exited 1, which would have
-# read as "the channel is broken" when the channel was doing exactly what the probe asked.
+# Without this the probe is green on all five tiers and `tiers` still exits 1, which
+# reads as "the channel is broken" when the channel is doing exactly what the probe asked.
 expects_noted=0
 [ -n "$(sed -n '1,20p' "$prog" | sed -n 's|^// noted: *expected.*|1|p' | head -1)" ] && expects_noted=1
 
@@ -89,13 +89,13 @@ gui_tier() {
   : > "$log"
   timeout -k 5 "$timeout_s" "$@" > "$log" 2>&1
   local status=$?
-  # `-x` matches the process *name*, not the whole command line. `-f` was wrong here: the pattern
+  # `-x` matches the process *name*, not the whole command line. `-f` is wrong here: the pattern
   # "learn-gpui" appears in the command line of anything running from this directory — including the
-  # shell that invoked this script — so a plain `pkill -f learn-gpui` killed its own caller mid-run.
-  # Observed: `scripts/tiers.sh` exiting 144 (128 + SIGTERM's neighbour) with its transcript truncated
-  # part-way through a tier, which read like a probe that had hung.
+  # shell that invoked this script — so a plain `pkill -f learn-gpui` kills its own caller mid-run,
+  # exiting 144 (128 + SIGTERM's neighbour) with its transcript truncated part-way through a tier,
+  # which reads like a probe that had hung.
   pkill -x gos-runner 2>/dev/null
-  pkill -x learn-gpui 2>/dev/null
+  pkill -x gos-gpui 2>/dev/null
   echo "=== $label (exit $status) ==="
   cat "$log"
   echo
@@ -134,7 +134,7 @@ for tier in "${tiers[@]}"; do
       echo "=== build (debug) ==="
       if CC="$PWD/tools/cc-gpui.sh" gos build "$prog" 2>&1; then
         if [ "$windows" = 1 ]; then
-          gui_tier "build -> ./target/debug/learn-gpui" ./target/debug/learn-gpui
+          gui_tier "build -> ./target/debug/gos-gpui" ./target/debug/gos-gpui
         else
           echo "=== built, NOT RUN (headless mode) ==="
           echo
@@ -149,7 +149,7 @@ for tier in "${tiers[@]}"; do
       echo "=== build --release ==="
       if CC="$PWD/tools/cc-gpui.sh" gos build --release "$prog" 2>&1; then
         if [ "$windows" = 1 ]; then
-          gui_tier "release -> ./target/release/learn-gpui" ./target/release/learn-gpui
+          gui_tier "release -> ./target/release/gos-gpui" ./target/release/gos-gpui
         else
           echo "=== built, NOT RUN (headless mode) ==="
           echo

@@ -6,26 +6,26 @@
 // `pattern_slash(colour, width, interval)` is the `slash=` style token:
 // `slash=#ff0000,4.5,4.5`.
 //
-// Two things the pair's captures found here, both now gone:
+// Two details the tiles turn on:
 //
 //   * **The border belongs to the container, not to the tile.** Upstream puts
 //     `border_1().border_color(blue)` on the `flex_col` that holds the slash
 //     tiles — and on the two standalone bars — and gives the tiles themselves no
-//     border at all. This port drew one on every tile as well, so each 54x18
-//     square wore its own blue outline and the column read as four separate
-//     boxes with white between them; the 256px column showed a blue rule between
-//     the red, green, blue and yellow bands. 11,137 pixels, every one of them 64
-//     levels or more away from upstream's — the whole of both columns.
+//     border at all. A border on every tile would make each 54x18
+//     square wear its own blue outline, so the column would read as four separate
+//     boxes with white between them, and the 256px column as a blue rule between
+//     the red, green, blue and yellow bands — 11,137 pixels, every one of them 64
+//     levels or more away from upstream's, the whole of both columns.
 //   * Upstream's tile size is `56.0 / 6.0`, which is `9.333333` to the last
-//     digit an `f32` keeps; the port wrote `9.333`, which is a different `f32`
-//     by about 350 ulps. A stripe is 9.333333px wide for upstream and 9.333px
-//     here, so the two patterns drift apart by a hundredth of a pixel across the
-//     256px tile. It was not visible in the captures — the border was what
-//     differed — but the number is upstream's now.
+//     digit an `f32` keeps; `9.333` is a different `f32` by about 350 ulps.
+//     With `9.333` a stripe is 9.333px wide instead of upstream's 9.333333px,
+//     so the two patterns drift apart by a hundredth of a pixel across the 256px
+//     tile. The port writes upstream's own `9.333333`, so a stripe and the tile
+//     agree with upstream to the last digit the `f32` keeps.
 //
 // The green column's fill is `hsla(0.3333333333,1,0.25,0.16)`, which is
-// `green().opacity(0.16)` exactly. Written as `#00800029` (alpha 41/255) it was
-// not, and a hex alpha is a byte; see `gpui::hsla`.
+// `green().opacity(0.16)` exactly — not the `#00800029` (alpha 41/255) the hex
+// spelling would give, since a hex alpha is a byte; see `gpui::hsla`.
 
 use gpui
 use std::process

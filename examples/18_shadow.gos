@@ -16,15 +16,15 @@
 //   * Colours are written as `hsla(h, s, l, a)` rather than as hex. Upstream
 //     writes `hsla(..)` directly and this binding accepts the same spelling,
 //     argument for argument, so nothing is quantised and the two composite
-//     identically. Until the pair's captures were compared this port wrote the
-//     nearest `#rrggbbaa` instead: `hsla(0.0, 0.5, 0.5, 0.3)` became `#bf40404d`
-//     (alpha 77/255 = 0.302, not 0.3), `hsla(0.0, 0.0, 0.0, 0.3)` became
-//     `#0000004d`, and the shapes' 10% hairline `hsla(0.0, 0.0, 0.0, 0.1)`
-//     became `#0000001a` (alpha 26/255 = 0.102, not 0.1). **A hex alpha is a
-//     byte**, so none of those three is the value upstream passes, and the
-//     captures showed the difference on every shape's edge and in every shadow's
-//     falloff — 12,460 pixels, up to 3 levels apart. The hue, saturation and
-//     lightness halves were already exact; only the alpha was not.
+//     identically. The hex spelling nearest each value is `#bf40404d` for
+//     `hsla(0.0, 0.5, 0.5, 0.3)` (alpha 77/255 = 0.302, not 0.3), `#0000004d`
+//     for `hsla(0.0, 0.0, 0.0, 0.3)`, and `#0000001a` for the shapes' 10%
+//     hairline `hsla(0.0, 0.0, 0.0, 0.1)` (alpha 26/255 = 0.102, not 0.1). **A
+//     hex alpha is a byte**, so none of those three is the value upstream
+//     passes: the difference shows on every shape's edge and in every shadow's
+//     falloff — 12,460 pixels, up to 3 levels apart, and all of it alpha. The
+//     hue, saturation and lightness halves are exact, so what a hex spelling
+//     cannot reproduce is the alpha alone.
 //   * An `El`'s style is fixed when the element is built, whereas upstream's
 //     `Div` takes `.shadow(..)` as a further builder step. The shape helpers
 //     here therefore take their shadow spec as an argument. The element tree
@@ -34,10 +34,10 @@
 //   * As in every port here, a Gossamer frame rebuilds the tree rather than
 //     re-rendering a retained `Entity<Shadow>`.
 //
-// No binding API is missing for this example. Note that the placeholder this
-// replaced claimed the style language had `shadow=xs..2xl` presets only; the
-// custom form exists (see `shadow=` in gpui-binding/src/style.rs), which is
-// what makes the port possible.
+// No binding API is missing for this example. The style language has a custom
+// `shadow=` form, not only the `shadow=xs..2xl` presets
+// (`shadow=` in gpui-binding/src/style.rs), and it is that custom form which
+// makes the port possible.
 
 use gpui
 use std::process

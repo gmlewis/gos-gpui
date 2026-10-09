@@ -15,7 +15,7 @@
 //   * a window opened windowed says so, and reports no restore size
 //   * resizing it raises a bounds event, and the window reports the new size
 //
-// The first assertion is the one with teeth at HEAD, and it is a *behaviour* rather
+// The first assertion is the one with teeth here, and it is a *behaviour* rather
 // than an unresolved name: `window_field` answers 0.0 for a field it does not know,
 // so a program asking for the inner size got a window with no interior.
 
@@ -32,11 +32,11 @@ fn main() {
             let inner_w = gpui::window_field("inner_w")
             let inner_h = gpui::window_field("inner_h")
 
-            // The chain is ordered so that nothing round 19 added is *called* before
-            // the assertion that can fail without it. Everything below the first
-            // `else` is inside that branch for exactly that reason: a probe that
-            // touches a new name in its first statement is abandoned at that name at
-            // HEAD, and a timeout is a much weaker transcript than a wrong answer.
+            // The chain is ordered so that a name which may not resolve is *called*
+            // only after the assertion that can fail without it. Everything below the
+            // first `else` is inside that branch for exactly that reason: a probe that
+            // touches such a name in its first statement is abandoned at that name,
+            // and a timeout is a much weaker transcript than a wrong answer.
             //
             // It is also one exclusive chain, ending in the verdict: `gpui::quit()`
             // asks the app to stop, it does not abort the callback that called it, so

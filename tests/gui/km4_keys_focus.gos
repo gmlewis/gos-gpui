@@ -6,9 +6,9 @@
 // A key event goes to the focused element and to the elements around it on the
 // dispatch path. `gpui::on_keys(true)` makes the *window* that element, so a program
 // can have shortcuts without building a widget — but only if the window actually has
-// focus. It used to take focus only while `gpui::frame() <= 2`, so a program that
-// turned the keyboard on at any later frame got a listener, no focus, and keystrokes
-// that went nowhere: shortcuts dead, with no error to show for it.
+// focus. Taking focus only while `gpui::frame() <= 2` leaves a program that
+// turns the keyboard on at any later frame with a listener, no focus, and keystrokes
+// that go nowhere: shortcuts dead, with no error to show for it.
 //
 // Pass means the window holds focus a few frames after the program asks for the
 // keyboard at a frame well past the second one. `gpui::is_focused("~root")` is the

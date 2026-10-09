@@ -12,9 +12,9 @@
 #
 # # Why this exists
 #
-# On 2026-10-06 the owner of this machine asked that nothing pop up on their screen while they
-# work, and `scripts/window-guard.sh` made that the default. The runtime tiers — running a
-# program, not merely compiling it — went with it, because on this Mac a run *is* a window.
+# The owner of this machine has asked that nothing pop up on their screen while they
+# work, and `scripts/window-guard.sh` makes that the default. The runtime tiers — running a
+# program, not merely compiling it — go with it, because on this Mac a run *is* a window.
 #
 # This is the way back. `gosbox:2` is a Linux image with Xvfb, a window manager, a software
 # Vulkan device and LLVM 22, so a GPUI window opens onto a virtual display that belongs to the
@@ -30,12 +30,12 @@
 #                   grows to ~130MB once a build tier has run — that is cargo's cache, kept on
 #                   purpose, and it is in the cache directory and never in this tree)
 #   docker-home/    /root, so the cargo and runner caches survive between runs
-#   gossamer-068/   /gos, the pristine toolchain source the binding builds against
-#   linux068/       /tool, the Linux `gos` and its runtime archive
+#   gossamer-070/   /gos, the pristine toolchain source the binding builds against
+#   linux070/       /tool, the Linux `gos` and its runtime archive
 #
-# The toolchain is chosen by `GOSBOX_TOOLCHAIN` (default `linux068`) and the source by
-# `GOSBOX_GOSSAMER` (default `gossamer-068`), so a second toolchain can be exercised without
-# editing this file. Both track the pin in `project.toml`, which moved to 0.68.0 in round 88: the
+# The toolchain is chosen by `GOSBOX_TOOLCHAIN` (default `linux070`) and the source by
+# `GOSBOX_GOSSAMER` (default `gossamer-070`), so a second toolchain can be exercised without
+# editing this file. Both must match the `gossamer-version` pin in `project.toml`: the
 # container has to build the binding against the version the project asks for, or cargo stops at
 # version resolution before any of this matters.
 #
@@ -43,11 +43,10 @@
 #
 # `gos build` links the binary itself and its linker plan has no key for linker arguments, so a
 # GPUI binary comes out with the windowing symbols undefined. `tools/cc-gpui.sh` is a `cc` that
-# supplies them; it is read by `gos` through `$CC`. It lives under `tools/`, which used to be
-# excluded from the stage — so the container could run a window but never link one. It is now
-# staged (everything under `tools/` but the 5.9GB `tools/upstream/` checkout), and `inbox` sets
-# `CC` and `GOS_LINUX_LIBS` for every run, which is what lets `build` and `build --release` be
-# witnessed here instead of skipped.
+# supplies them; it is read by `gos` through `$CC`. It lives under `tools/`, which is staged
+# (everything under `tools/` but the 5.9GB `tools/upstream/` checkout) so the container can link
+# a window as well as run one, and `inbox` sets `CC` and `GOS_LINUX_LIBS` for every run, which is
+# what lets `build` and `build --release` be witnessed here instead of skipped.
 #
 # `GOS_LINUX_LIBS` is passed because `cc-gpui.sh` puts its libraries *before* the objects, and
 # Debian's `ld` defaults to `--as-needed`: without `-Wl,--no-as-needed` a library nothing has
@@ -68,8 +67,8 @@ cd "$(dirname "$0")/.."
 
 CACHE="${GOSBOX_CACHE:-$HOME/.cache/learn-gpui}"
 IMAGE="${GOSBOX_IMAGE:-gosbox:2}"
-TOOLCHAIN="${GOSBOX_TOOLCHAIN:-linux068}"
-GOSSAMER="${GOSBOX_GOSSAMER:-gossamer-068}"
+TOOLCHAIN="${GOSBOX_TOOLCHAIN:-linux070}"
+GOSSAMER="${GOSBOX_GOSSAMER:-gossamer-070}"
 STAGE="$CACHE/docker-stage"
 DHOME="$CACHE/docker-home"
 
@@ -89,16 +88,14 @@ docker info >/dev/null 2>&1 || die "Docker is not running"
 # it, cargo's fingerprints — cannot land in the working tree. `--delete` keeps it exactly the tree
 # as it stands, so a run can never silently use yesterday's program.
 #
-# **`--delete` is not enough, and the binding is where it showed.** `$DHOME` is a persistent
+# **`--delete` is not enough, and the binding is where it shows.** `$DHOME` is a persistent
 # volume, and the runner cache inside it is keyed on the `[rust-bindings]` path declared in
 # `project.toml` — the same string in every checkout of this project. So a second tree staged here
 # does not get a second cache entry, and `rsync -a` (which preserves mtimes, and must, or every run
 # would rebuild) hands the runner the second tree's binding sources with **older** mtimes than the
-# build it already has. It keeps the build. Measured round 103, on `mr4_stop_propagation.gos`,
-# which is green in the working tree and red against `329133c`: the working tree staged straight
-# after a `329133c` run and without touching its binding ran the **`329133c`** binding, three times
-# over; touching `gpui-binding/src/*.rs` and staging again ran the working tree's, with nothing
-# else changed. The same trap produced a false red on that probe earlier in the round.
+# build it already has. It keeps the build, so the staged tree runs the binding of whichever tree
+# staged last — a probe green in one tree reads red in the other — until `gpui-binding/src/*.rs`
+# is touched and the tree staged again.
 #
 # The hash below is what makes the guarantee at the top of this comment true for the binding as
 # well. It is taken before and after the copy, and a binding that **changed** is touched so the
@@ -166,17 +163,17 @@ incmd() { inbox bash -lc "export PATH=$CONTAINER_PATH; $1"; }
 # the same for the container's, which is *not* the Mac's: `/root` is a persistent volume, so a lock
 # left by a container that was killed mid-build survives to hang the next run.
 #
-# Measured the hard way in round 87: a throwaway container killed at a 120s timeout left
-# `runners/eb43bebcecce/.gos-build.lock` holding pid 40, after which two runs of a probe that had
-# just been green answered `exited 124 — no verdict` and printed nothing at all.
+# A throwaway container killed at its timeout leaves `runners/<hash>/.gos-build.lock` behind, and
+# the next runs of a probe that had just been green answer `exited 124 — no verdict` and print
+# nothing at all.
 #
-# **`kill -0` is the wrong test, and round 96 measured why.** The lock holds a pid from
-# whichever container made it; this reaper runs in a *fresh* container, whose own low pids are
-# taken by the display server and the window manager. A lock holding 40 therefore looked
-# "alive" to `kill -0 40` because *this* container's pid 40 existed, and it was never reaped —
-# every probe in the suite then answered `cache i/o error: another gos process holds … for >5
-# min` and the run came back **0/49**. So the pid has to be checked against `/proc/<pid>/cmdline`
-# and be a `gos`; anything else, including an empty cmdline for a pid that is gone, is stale.
+# **`kill -0` is the wrong test.** The lock holds a pid from whichever container made it; this
+# reaper runs in a *fresh* container, whose own low pids are taken by the display server and the
+# window manager. A lock holding 40 therefore reads as "alive" to `kill -0 40` because *this*
+# container's pid 40 exists, and it is never reaped — every probe in the suite then answers
+# `cache i/o error: another gos process holds … for >5 min` and the run comes back **0/49**. So
+# the pid has to be checked against `/proc/<pid>/cmdline` and be a `gos`; anything else, including
+# an empty cmdline for a pid that is gone, is stale.
 reap_locks() {
   inbox bash -lc 'for l in /root/.cache/gossamer/runners/*/.gos-build.lock; do
       [ -f "$l" ] || continue
@@ -203,12 +200,12 @@ verdict() {
   return 0
 }
 
-# A **compile** tier's transcript is a pass on different terms, and demanding `^OK ` of it was a
-# bug in this script: `gos check` answers `check: ok (N items typed)` and a build answers
-# `build: NB native executable at …`, neither of which is the running program's `OK ` verdict. So
-# the rule for those tiers is the one that is actually about them — the command exited 0 and the
-# transcript carries no error — and it is deliberately not weaker: an `error[` or a `FAIL ` still
-# fails it, and a *run* tier never reaches this function.
+# A **compile** tier's transcript is a pass on different terms: `gos check` answers
+# `check: ok (N items typed)` and a build answers `build: NB native executable at …`, neither of
+# which is the running program's `OK ` verdict, so demanding `^OK ` of them fails them. The rule
+# for those tiers is the one that is actually about them — the command exited 0 and the transcript
+# carries no error — and it is deliberately not weaker: an `error[` or a `FAIL ` still fails it,
+# and a *run* tier never reaches this function.
 compile_verdict() {
   local log="$1"
   grep -qi "error\[\|^FAIL \|panicked\|build failed\|linker failed" "$log" && { echo "errored"; return 1; }
@@ -249,7 +246,7 @@ case "$cmd" in
     rc=0
     for p in "$@"; do
       out="$(incmd "gos check '$p' 2>&1 | tail -20")"
-      if echo "$out" | grep -q "check: ok"; then
+      if echo "$out" | grep "check: ok" >/dev/null; then
         echo "ok     $p"
       else
         echo "FAIL   $p"; echo "$out" | sed 's/^/       /'; rc=1
@@ -387,12 +384,11 @@ case "$cmd" in
       # Every probe gets its own container (`inbox` is `docker run --rm`), and `/root` is a
       # persistent volume — so **any** build lock still on disk when this container starts
       # belongs to a container that no longer exists, and is stale by construction. Reaping once
-      # per sweep is not enough and round 101 measured what that costs: a probe that timed out
-      # mid-sweep left `runners/*/.gos-build.lock` behind, and every probe after it answered an
-      # empty transcript and `failed twice` — the sweep came back **32/52** with 13 skips and
-      # every failure above `cl9_clipboard` in alphabetical order, which is a lock, not a
-      # regression. The blunt rule is safe *here* and nowhere else: nothing in this container is
-      # running `gos` at the moment this line runs, because the line is the thing that starts it.
+      # per sweep is not enough: a probe that times out mid-sweep leaves `runners/*/.gos-build.lock`
+      # behind, and every probe after it answers an empty transcript and `failed twice` — failures
+      # clustered alphabetically after the one that timed out are a lock, not a regression. The
+      # blunt rule is safe *here* and nowhere else: nothing in this container is running `gos` at
+      # the moment this line runs, because the line is the thing that starts it.
       run_one() {
         log="$(mktemp -t gosbox.XXXXXX)"
         incmd "rm -f /root/.cache/gossamer/runners/*/.gos-build.lock; timeout -k 5 $timeout_s gos run --main-thread '$p'" > "$log" 2>&1

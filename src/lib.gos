@@ -1,0 +1,331 @@
+// `ui` — a chainable way to describe a window.
+//
+// The `gpui` binding answers `i64` handles into a per-frame arena. Handles are
+// plain integers in Gossamer, so this module gives them a name of their own —
+// `El`, a `newtype` over `i64` — and hangs the chaining methods on that. The
+// result reads the way GPUI's own Rust builder does:
+//
+//     ui::column("gap=10 p=20")
+//         .text("hello", "font=2xl")
+//         .child(ui::row("gap=8")
+//             .button("inc", "+1", "px=14 py=8")
+//             .button("reset", "reset", "px=14 py=8"))
+//         |> ui::root
+//
+// Two things are worth noticing, because they are the language doing the work
+// rather than the binding:
+//
+//   * `.child(..)` answers its receiver, so a chain never needs a temporary.
+//   * A method whose name matches a leaf — `.text`, `.button`, `.input` — is
+//     shorthand for `.child(ui::text(..))`, which is what takes the `ui::`
+//     prefix off every leaf inside a chain.
+
+use gpui
+
+/// A handle to one element, distinct from every other `i64`.
+pub newtype El = i64
+
+impl El {
+    // ---- nesting ------------------------------------------------------
+
+    /// Hang `child` under this element.
+    pub fn child(&self, child: El) -> El {
+        let parent: i64 = self.into()
+        let kid: i64 = child.into()
+        gpui::child(parent, kid).into()
+    }
+
+    /// Hang a whole run of elements under this one, in order — the shape a
+    /// `map` or a collected run wants to end in:
+    ///
+    ///     ui::row("gap=8").children(#[0, 1, 2].map(|i| chip(i)))
+    pub fn children(&self, nodes: Vec<El>) -> El {
+        let parent: i64 = self.into()
+        let handles: Vec<i64> = nodes.map(handle_of)
+        gpui::children(parent, handles).into()
+    }
+
+    // ---- leaves -------------------------------------------------------
+
+    pub fn text(&self, content: String, style: String) -> El {
+        self.child(text(content, style))
+    }
+
+    pub fn button(&self, id: String, label: String, style: String) -> El {
+        self.child(button(id, label, style))
+    }
+
+    pub fn checkbox(&self, id: String, label: String, checked: bool, style: String) -> El {
+        self.child(checkbox(id, label, checked, style))
+    }
+
+    pub fn input(&self, key: String, placeholder: String, style: String) -> El {
+        self.child(input(key, placeholder, style))
+    }
+
+    pub fn slider(&self, key: String, min: f64, max: f64, style: String) -> El {
+        self.child(slider(key, min, max, style))
+    }
+
+    pub fn progress(&self, value: f64, style: String) -> El {
+        self.child(progress(value, style))
+    }
+
+    pub fn icon(&self, path: String, style: String) -> El {
+        self.child(icon(path, style))
+    }
+
+    pub fn image(&self, path: String, style: String) -> El {
+        self.child(image(path, style))
+    }
+
+    /// An image with the loading and fallback subtrees GPUI swaps in for it; see
+    /// `ui::image_request`.
+    pub fn image_request(&self, path: String, style: String, loading: Option<El>, fallback: Option<El>) -> El {
+        self.child(image_request(path, style, loading, fallback))
+    }
+
+    /// Text with per-byte-range highlights; see `ui::styled_text`.
+    pub fn styled_text(&self, content: String, highlights: Vec<String>, style: String) -> El {
+        self.child(styled_text(content, highlights, style))
+    }
+
+    pub fn rect(&self, style: String) -> El {
+        self.child(rect(style))
+    }
+
+    pub fn divider(&self, style: String) -> El {
+        self.child(divider(style))
+    }
+
+    pub fn spacer(&self, size: f64) -> El {
+        self.child(spacer(size))
+    }
+
+    pub fn draw(&self, painter: String, phase: f64, style: String) -> El {
+        self.child(draw(painter, phase, style))
+    }
+
+    /// Report pointer events for this element. `kinds` is any of `down`,
+    /// `up`, `move`, `click`, `right`, `scroll`, `exit`; each raises
+    /// `"<id>|<kind>"` and writes `<id>.x` / `<id>.y` into the state store,
+    /// relative to this element's top-left corner.
+    ///
+    /// Three of the kinds write more than a point: `down`, `up` and `click`
+    /// also put the platform's own click count in `<id>.count` — 2 for the
+    /// second press of a double click — and `scroll` puts the wheel's delta in
+    /// `<id>.dx` / `<id>.dy`, with `<id>.scroll_lines` saying whether that is a
+    /// count of lines or of pixels.
+    ///
+    /// Any kind word may carry a trailing `!`, which asks for the report **and**
+    /// for the event to stop where it landed: `"down!"` reports the press and
+    /// keeps it from going on, and `"down! up"` reports both and stops only the
+    /// press. What a stop withholds the event from is the element's
+    /// **ancestors** — gpui dispatches to the child before the parent — so it is
+    /// how a control handles its own presses without the panel around it
+    /// reacting too. `El::on_mouse_window` takes the same `!` and stops among
+    /// the window's own listeners instead.
+    ///
+    /// An element whose style carries `group=<name>` is a **member** of that
+    /// group, and `gpui::group_hovered("<name>")` answers whether the pointer is
+    /// over any member of it. That is the reading half of gpui's `group_hover`,
+    /// which refines one element's style while another is hovered; it is the
+    /// half a program can act on. A member needs an `id=` of its own, and gets a
+    /// readable rectangle the way `bounds` does, so `gpui::element_bounds`
+    /// answers for it by that id.
+    ///
+    /// Three more are the **drag** states, and they are two ends of one
+    /// gesture rather than three of a kind. `drag` makes this element a
+    /// *source*: gpui arms a real drag once the pointer has moved more than its
+    /// own `DRAG_THRESHOLD` past the press, carries this element's id as the
+    /// payload, and draws the element under the pointer while it is in flight.
+    /// `over` and `drop` make it a *target*: `over` raises `"<id>|over"` while a
+    /// drag is inside it and `"<id>|out"` when it leaves, writing
+    /// `<id>.over` — the state, true while the payload is over it — and `drop`
+    /// raises `"<id>|drop"` when the release lands inside it. All four write the
+    /// payload to `<id>.drag_value`, so a target knows *what* is over it, and
+    /// `drag`/`over`/`out`/`drop` are the four words `kinds` reads.
+    pub fn on_mouse(&self, kinds: String, id: String) -> El {
+        let handle: i64 = self.into()
+        gpui::on_mouse(handle, kinds, id).into()
+    }
+
+    /// Report pointer events for this element **wherever the pointer is**, not
+    /// only while it is over the element. `kinds` is any of `down`, `up`,
+    /// `move`, `scroll` and `exit`, and each raises `"<id>|<kind>"` exactly as
+    /// `on_mouse` does.
+    ///
+    /// `exit` is the one that means something different here: at element level
+    /// it is the pointer leaving *the element*, and at window level — this call
+    /// — it is the pointer leaving *the window*.
+    ///
+    /// A kind word may carry a trailing `!`, as in `El::on_mouse`, and here it
+    /// stops among the window's listeners: the press stops being offered to the
+    /// window listeners registered *before* this one, and an element's own
+    /// listener is not touched at all.
+    ///
+    /// This is how a drag is kept alive after the pointer has left the element
+    /// it began on — upstream's own instrument for the data table's scrollbar.
+    /// A press anywhere in the window is reported, so gate it yourself against
+    /// this element's rectangle, which is what `gpui::element_bounds` reads
+    /// back.
+    pub fn on_mouse_window(&self, kinds: String, id: String) -> El {
+        let handle: i64 = self.into()
+        gpui::on_mouse_window(handle, kinds, id).into()
+    }
+
+    /// Paint a run of built paths — each entry in `backgrounds` lines up with
+    /// the path at the same index, and is a colour or a `grad=…` token.
+    pub fn paths(&self, handles: Vec<i64>, backgrounds: Vec<String>, style: String) -> El {
+        self.child(paths(handles, backgrounds, style))
+    }
+
+    /// A virtualised list. Its rows come from the row builder handed to
+    /// `gpui::run_with_rows`; only the rows on screen are built.
+    pub fn list(&self, id: String, count: i64, row_height: f64, style: String) -> El {
+        self.child(list(id, count, row_height, style))
+    }
+}
+
+/// The handle inside an `El`, for a run of them.
+pub fn handle_of(el: El) -> i64 { el.into() }
+
+// ---- containers -------------------------------------------------------
+
+pub fn column(style: String) -> El { gpui::column(style).into() }
+
+pub fn row(style: String) -> El { gpui::row(style).into() }
+
+pub fn panel(style: String) -> El { gpui::panel(style).into() }
+
+pub fn stack(style: String) -> El { gpui::stack(style).into() }
+
+pub fn scroll(style: String) -> El { gpui::scroll(style).into() }
+
+// ---- leaves -----------------------------------------------------------
+
+pub fn text(content: String, style: String) -> El { gpui::text(content, style).into() }
+
+/// Text with per-byte-range highlights: `"0-1 bold"`, `"2-3 italic"`.
+pub fn styled_text(content: String, highlights: Vec<String>, style: String) -> El {
+    gpui::text_styled(content, highlights, style).into()
+}
+
+pub fn button(id: String, label: String, style: String) -> El {
+    gpui::button(id, label, style).into()
+}
+
+pub fn checkbox(id: String, label: String, checked: bool, style: String) -> El {
+    gpui::checkbox(id, label, checked, style).into()
+}
+
+/// Raise every keystroke the window receives as `"<id>|<unparsed>"`. See
+/// `gpui::observe_keystrokes`.
+pub fn observe_keystrokes(id: String) {
+    gpui::observe_keystrokes(id)
+}
+
+/// The name of the current keyboard layout. See `gpui::keyboard_layout`.
+pub fn keyboard_layout() -> String {
+    gpui::keyboard_layout()
+}
+
+/// A full text editor: caret, selection, clipboard, IME, undo-free editing.
+/// The widget lives in the binding — see `gpui::editor`.
+pub fn editor(key: String, placeholder: String, style: String) -> El {
+    gpui::editor(key, placeholder, style).into()
+}
+
+pub fn input(key: String, placeholder: String, style: String) -> El {
+    gpui::input(key, placeholder, style).into()
+}
+
+pub fn slider(key: String, min: f64, max: f64, style: String) -> El {
+    gpui::slider(key, min, max, style).into()
+}
+
+pub fn progress(value: f64, style: String) -> El { gpui::progress(value, style).into() }
+
+pub fn icon(path: String, style: String) -> El { gpui::icon(path, style).into() }
+
+pub fn image(path: String, style: String) -> El { gpui::image(path, style).into() }
+
+/// An image that draws one of two subtrees in the picture's place: `loading`
+/// while the load is in flight and past GPUI's `LOADING_DELAY` (200ms), and
+/// `fallback` if the load failed. `None` for either means the image draws
+/// nothing there, which is what a plain `ui::image` does for both.
+///
+/// This is GPUI's own `Img::with_loading` / `with_fallback`, decided from the
+/// loader's real state rather than from a closure. Handed over, not chained on:
+/// the binding draws them under this element's style, so they must **not** also
+/// be attached with `.child(..)`.
+///
+/// `gpui::image_state(id)` reads back which of the four it drew — `image`,
+/// `loading`, `fallback` or `blank` — and `gpui::image_evict(path)` throws the
+/// loaded bytes away so the next frame loads again.
+pub fn image_request(path: String, style: String, loading: Option<El>, fallback: Option<El>) -> El {
+    gpui::image_request(path, style, subtree_of(loading), subtree_of(fallback)).into()
+}
+
+/// A subtree handle, or `0` for "none" — the binding's own spelling of it.
+fn subtree_of(el: Option<El>) -> i64 {
+    let mut handle: i64 = 0
+    if let Some(node) = el {
+        handle = handle_of(node)
+    }
+    handle
+}
+
+pub fn rect(style: String) -> El { gpui::rect(style).into() }
+
+pub fn divider(style: String) -> El { gpui::divider(style).into() }
+
+pub fn spacer(size: f64) -> El { gpui::spacer(size).into() }
+
+pub fn draw(painter: String, phase: f64, style: String) -> El {
+    gpui::draw(painter, phase, style).into()
+}
+
+/// A virtualised list. Its rows come from the row builder handed to
+/// `gpui::run_with_rows` — which is why a program that draws one starts with
+/// `run_with_rows` rather than `run`.
+pub fn list(id: String, count: i64, row_height: f64, style: String) -> El {
+    gpui::list(id, count, row_height, style).into()
+}
+
+/// A painted surface. Build its paths with `gpui::path_fill` /
+/// `gpui::path_line_to` / `gpui::path_build`, then hand them over here.
+pub fn paths(handles: Vec<i64>, backgrounds: Vec<String>, style: String) -> El {
+    gpui::paint_paths(handles, backgrounds, style).into()
+}
+
+/// Raise an event from inside a frame. See `gpui::emit`.
+pub fn emit(id: String, payload: String) {
+    gpui::emit(id, payload)
+}
+
+/// Install an application menu. See `gpui::set_menus`.
+pub fn set_menus(name: String, items: Vec<String>) {
+    gpui::set_menus(name, items)
+}
+
+/// Open another window. It is drawn by the same view `gpui::run` was given,
+/// told apart with `gpui::window_id`. See `gpui::open_window`.
+pub fn open_window(title: String, x: f64, y: f64, w: f64, h: f64, options: String) {
+    gpui::open_window(title, x, y, w, h, options)
+}
+
+/// Report pointer events for a whole element. See `El::on_mouse`.
+pub fn on_mouse(element: El, kinds: String, id: String) -> El {
+    let handle: i64 = element.into()
+    gpui::on_mouse(handle, kinds, id).into()
+}
+
+// ---- the last step ----------------------------------------------------
+
+/// Name `el` as the window's root for this frame. A frame is a chain, so this
+/// is its last link: `… |> ui::root`.
+pub fn root(el: El) {
+    let handle: i64 = el.into()
+    gpui::root(handle)
+}

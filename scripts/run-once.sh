@@ -9,9 +9,8 @@
 # while it was rebuilding the runner, the next one blocks on
 # `~/.cache/gossamer/runners/<hash>/.gos-build.lock` for five minutes and then
 # errors. Under a timeout that is indistinguishable from a program that hangs —
-# `exit 124`, nothing on stdout — and it produced several false readings in this
-# project's ledger before it was understood, which is why
-# `scripts/unlock-stale-build.sh` exists.
+# `exit 124`, nothing on stdout — which is why `scripts/unlock-stale-build.sh`
+# exists.
 #
 # Always prefer this, or `scripts/tiers.sh` / `scripts/probes.sh`, over typing
 # `gos run` directly.

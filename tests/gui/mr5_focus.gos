@@ -49,20 +49,20 @@ fn main() {
             println("MR5 step 1: neither button is focused before the tab order moves")
         }
 
-        // **Walk the tab order rather than assume where it starts.** The first version of this probe
-        // expected `focus_next` to land on the first button, and it landed somewhere else — the window
-        // has a `~root` handle of its own (`gpui::is_focused`'s doc names it as one of the elements this
-        // binding can see). What the row needs is that the buttons are *in* the order, in order, and
-        // visible to `is_focused` when they are reached — so this presses until it has seen both.
+        // **Walk the tab order rather than assume where it starts.** `focus_next` does not
+        // necessarily land on the first button: the window has a `~root` handle of its own
+        // (`gpui::is_focused`'s doc names it as one of the elements this binding can see). What the
+        // row needs is that the buttons are *in* the order, in order, and visible to `is_focused`
+        // when they are reached — so this presses until it has seen both.
         if f >= 4 && f <= 14 && steps < 8 {
             steps = steps + 1
             gpui::set_int("mv5.steps", steps)
             // `gpui::focused()` names whatever holds focus, so this run can tell two very different
             // failures apart: an **empty tab order** (nobody takes focus) and **focus arriving on a
-            // button that `is_focused` does not report** (which would be MR5's own clause failing). The
-            // first version of this probe could not: `is_focused` only answers about ids a program
-            // already knows, and its `~root` guess was vacuous — that handle exists only when the
-            // program calls `gpui::on_keys`, which this probe does not.
+            // button that `is_focused` does not report** (which would be MR5's own clause failing).
+            // `is_focused` only answers about ids a program already knows, and a `~root` guess is
+            // vacuous — that handle exists only when the program calls `gpui::on_keys`, which this
+            // probe does not.
             let who = gpui::focused()
             println(f"MR5 after {steps} focus_next: \"{who}\" holds focus")
             if who == *FIRST {

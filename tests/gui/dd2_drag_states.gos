@@ -9,8 +9,8 @@
 //
 // # What this exists for
 //
-// `DD2` is "drag threshold, drag-over/move states and drop-target feedback". It was open for a
-// reason that is worth writing down, because the reason was wrong.
+// `DD2` is "drag threshold, drag-over/move states and drop-target feedback". The reason it was
+// held open is worth writing down, because it is wrong.
 //
 // The register said: "`InteractiveElement::on_drag_move` (`elements/div.rs:282`) is a method on
 // `Interactivity`, gpui's internal per-element state, so the binding cannot register one through
@@ -49,22 +49,22 @@
 // target as `<id>.drag_value` on over, out and drop alike, read out of `cx.active_drag` through
 // `DragMoveEvent::drag` (`:70`) and, on the drop, handed in as the listener's own argument.
 //
-// # What the first red was, and what it was not
+// # What the red looks like, and what it is
 //
-// The first run of this probe raised `src|drag` twice and heard nothing at all from the target:
-// no `over`, no `out`, no `drop`, and no payload. The reading that suggested itself was that the
-// X server had merged two motions into one, so the move that *armed* the drag was also the move
-// that entered the target — a move too late for a listener that runs on the capture pass
-// (`elements/div.rs:282-296`) of the very event whose bubble pass arms the drag (`:2151-2175`).
+// A `src|drag` raised twice with nothing heard at all from the target — no `over`, no `out`, no
+// `drop`, and no payload — suggests that the X server merged two motions into one, so that the
+// move which *arms* the drag is also the move that enters the target, too late for a listener that
+// runs on the capture pass (`elements/div.rs:282-296`) of the very event whose bubble pass arms
+// the drag (`:2151-2175`).
 //
-// That was wrong, and a window-level `move` listener on the source is what said so: gpui was
-// handed **eight** moves for the eight the probe posted, in order, with both motions of the first
-// gesture among them. The moves arrived and the drag was armed; what never happened was the
-// report. `window::current()` is `0` inside a listener gpui calls after the frame that registered
-// it — only the frame itself runs inside `window::with` (`gpui-binding/src/app.rs:52`) — so a
-// reporter that reads its window there writes into the window that does not exist, and the probe,
-// which is a frame, never sees it. Every other reporter in `view.rs` is handed a captured `win` by
-// its caller for exactly this reason; these two read their own. They do not now.
+// That reading is wrong, and a window-level `move` listener on the source is what says so: gpui is
+// handed **eight** moves for the eight the probe posts, in order, with both motions of the first
+// gesture among them. The moves arrive and the drag is armed; what does not happen is the report.
+// `window::current()` is `0` inside a listener gpui calls after the frame that registered it —
+// only the frame itself runs inside `window::with` (`gpui-binding/src/app.rs:51`) — so a reporter
+// that reads its window there writes into the window that does not exist, and the probe, which is
+// a frame, never sees it. Every other reporter in `view.rs` is handed a captured `win` by its
+// caller for exactly this reason.
 //
 // # What is asserted, and against what
 //
@@ -306,16 +306,15 @@ fn main() {
         // read on its own. A drag posted as one motion from the source to the target would arm and
         // enter on the same event, and a binding that confused the two would still pass.
         //
-        // The first version of this probe posted the whole gesture in one invocation and read
-        // nothing at all from the target, and the diagnosis that suggested itself was that X
-        // compresses motion events — a plausible story, and wrong. A window-level `move` listener
-        // on the source, counting every move gpui was handed, said **eight** for the eight the
-        // probe posted, in order, with the two motions of the first gesture among them. The moves
-        // arrived. What did not was the report: the `over` and `drop` listeners read their window
-        // from `window::current()`, which is `0` inside a listener gpui calls after the frame that
-        // registered it — see the note on `report_drop` in `gpui-binding/src/view.rs`. The
-        // instrument stayed long enough to say so and is gone; the shape it left behind is this
-        // one.
+        // A gesture posted as one invocation reads nothing at all from the target, and the
+        // diagnosis that suggests itself is that X compresses motion events — a plausible story,
+        // and wrong. A window-level `move` listener on the source, counting every move gpui is
+        // handed, says **eight** for the eight the probe posts, in order, with the two motions of
+        // the first gesture among them. The moves arrive. What does not is the report: the `over`
+        // and `drop` listeners read their window from `window::current()`, which is `0` inside a
+        // listener gpui calls after the frame that registered it — see the note on `report_drop`
+        // in `gpui-binding/src/view.rs`. The instrument that said so is gone; the shape it left
+        // behind is this one.
         let phase = gpui::state_int("phase", 0)
         if f == 6 && phase == 1 {
             gpui::set_int("phase", 2)

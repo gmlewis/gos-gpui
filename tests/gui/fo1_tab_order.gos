@@ -1,10 +1,9 @@
 // FO1 — the tab order moves focus, in `tab_index` order, and only between tab stops.
 //
-// This is the check behind `19_tab_stop`'s two visible deviations — the ones its header used to
-// record in as many words: "the ring never lights up" and "a plain element only receives focus
-// tokens when its style also has `hover=` or `active=`". Both are gone now, and this probe is what
-// closed them. Neither could be closed while `gpui::focus_next()` reached nothing, and until this
-// probe was written nothing in the tree said whether it did: `MR5`'s probe walks the tab order,
+// This is the check behind `19_tab_stop`'s two visible deviations — "the ring never lights up" and
+// "a plain element only receives focus tokens when its style also has `hover=` or `active=`".
+// Neither can be closed while `gpui::focus_next()` reaches nothing, and nothing in the tree says
+// whether it does: `MR5`'s probe walks the tab order,
 // finds nothing eight times, and passes anyway, because its claim is about a handle of this
 // crate's own being focusable at all. The register's `MR5` row records the gap in as many words —
 // "**the tab order does not work**: `gpui::focus_next` reached no element in eleven presses across
@@ -115,9 +114,9 @@ fn main() {
         gpui::child(b2, gpui::button("fo1.b2", "Button 2", "flex=1 w=full"))
         // Linked to the root in the order upstream stacks them, and every one of them: the tree is
         // the whole of what this probe checks, and a box that is described but never linked is not
-        // in it. The first version of this file left these five off — it linked only the row — and
-        // reported the walk as `fo1.b1,fo1.b2,fo1.b1,…` with a confident note about handles that do
-        // not exist. The boxes were orphans; nothing had ever rendered them.
+        // in it. Left off — linked only the row — the five report the walk as `fo1.b1,fo1.b2,fo1.b1,…`
+        // with a confident note about handles that do not exist: the boxes are orphans, and nothing
+        // renders them.
         gpui::child(root, a)
         gpui::child(root, b)
         gpui::child(root, c)

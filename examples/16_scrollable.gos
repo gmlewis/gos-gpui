@@ -8,19 +8,19 @@
 // `overflow=x` is `overflow_x_scroll()`. This is the example to run if
 // scrolling in the binding looks wrong — the two axes are independent here.
 //
-// One deviation, and the pair's own capture is what found it:
+// One deviation:
 //
 //   * upstream writes its two translucent fills as `blue().opacity(0.05)` and
-//     `green().opacity(0.1)`, which are gpui's own `hsla` values; this port wrote
-//     them as `#0000ff0d` and `#0080001a`. **A hex colour's alpha is a byte**, so
+//     `green().opacity(0.1)`, which are gpui's own `hsla` values; the hex spelling
+//     `#0000ff0d` / `#0080001a` is not. **A hex colour's alpha is a byte**, so
 //     `0d` is 13/255 = 0.050980 and `1a` is 26/255 = 0.101961 — not 0.05 and
-//     0.1. The green box is 63,263 pixels of the window and every one of them
-//     was 1-2 levels off; the captures say so ((212,228,225) upstream against
-//     (211,226,225) here). `hsla(<h>,<s>,<l>,<a>)` is now a spelling the binding
+//     0.1. The green box is 63,263 pixels of the window, and every one of them
+//     would be 1-2 levels off: (212,228,225) upstream against
+//     (211,226,225) for the hex. `hsla(<h>,<s>,<l>,<a>)` is a spelling the binding
 //     accepts and it is gpui's `hsla` argument for argument, so the alpha is the
 //     f32 upstream passes and the two composite identically.
 //
-// The colours above are now exactly `blue().opacity(0.05)` and
+// The colours above are exactly `blue().opacity(0.05)` and
 // `green().opacity(0.1)` / `.opacity(0.2)`; see `gpui::hsla`.
 
 use gpui

@@ -11,9 +11,9 @@
 //     line count and the line an offset is on; the gutter is *drawn*, which needs a window.
 //
 // So this is the shared floor those three stand on, and it is worth having on its own: a Gossamer
-// program keeps its text in the store — round 48 showed the store *is* the document — and today it
-// cannot ask where a line begins, what word is under an offset, or where the caret lands one line
-// down. What it cannot do either way is paint, and that half stays in the rows' doubt.
+// program keeps its text in the store — the store *is* the document — and the arithmetic here is
+// what answers where a line begins, what word is under an offset, and where the caret lands one
+// line down. What it cannot do either way is paint, and that half stays in the rows' doubt.
 //
 // **Offsets are UTF-8 byte offsets**, the same as `gpui::styled_text`'s highlight ranges — and every
 // answer is snapped to a character boundary, so an offset in the middle of a multi-byte character

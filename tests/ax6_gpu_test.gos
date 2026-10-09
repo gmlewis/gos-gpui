@@ -1,11 +1,10 @@
 // AX6 — GPU and device information to the program.
 //
-// Headless: `gos test tests`. The row's obstacle says "`GpuSpecs` exists on `Window` but is
-// unexposed". **That is wrong, and this round corrected it**: `Window::gpu_specs()` is `pub`
+// Headless: `gos test tests`. `Window::gpu_specs()` is `pub`
 // (`gpui-0.2.2/src/window.rs:4377`) and answers `Option<GpuSpecs>`, a public struct with public
 // fields (`gpui.rs:302-311`: `is_software_emulated`, `device_name`, `driver_name`, `driver_info`).
-// What is true is that only a live window can answer — the call goes straight through to the
-// platform window (`window.rs:4378`) — so the binding samples it once during a frame and keeps it.
+// Only a live window can answer — the call goes straight through to the platform window
+// (`window.rs:4378`) — so the binding samples it once during a frame and keeps it.
 //
 // **Pass means the record is empty until a frame has asked**, and that the names are exact. That
 // second half matters more than it looks: a program printing its environment reads these fields and

@@ -229,8 +229,8 @@ capture () {  # capture <pgrep-pattern> <out.png> <label> [window-timeout-s]
     # ships, refuses to parse a `case` inside a command substitution that is
     # piped into something else. Same test, one bash older.)
     pid=$(pgrep -f "$pattern" 2>/dev/null | while IFS= read -r p; do
-            ps -p "$p" -o comm= 2>/dev/null | grep -qF -- "$exe" || continue
-            ps -p "$p" -o args= 2>/dev/null | grep -qF -- "$pattern" && printf '%s\n' "$p"
+            ps -p "$p" -o comm= 2>/dev/null | grep -F -- "$exe" >/dev/null || continue
+            ps -p "$p" -o args= 2>/dev/null | grep -F -- "$pattern" >/dev/null && printf '%s\n' "$p"
           done | head -1)
     [ -n "$pid" ] && break
     sleep 0.5

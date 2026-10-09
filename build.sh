@@ -2,20 +2,17 @@
 #
 # Build one of the examples into a standalone native binary.
 #
-#   ./build.sh 04            # -> target/debug/learn-gpui
+#   ./build.sh 04            # -> target/debug/gos-gpui
 #   ./build.sh 04 --release
 #   ./build.sh --print 04    # just resolve the argument
 #
-# NOTE: `gos build` used to miscompile this shape — the binary linked but
-# aborted at startup with a misaligned-pointer panic in the runtime. That is
-# fixed as of the released `gos` 0.68.0, so a native build renders
-# the same pixels `./run.sh` does. The *linker* half of the problem is still
-# real and is why the wrapper below is required.
-#
-# `gos build` links the binary itself and has no way to write `-framework …`
-# (macOS) or `-l…` for the windowing libraries (Linux) into that link line, so
-# a GPUI binary comes out with those symbols undefined. It does read $CC, so
-# tools/cc-gpui.sh supplies them on the way past.
+# NOTE: the *link* is what this wrapper exists for. `gos build` links the binary
+# itself and has no way to write `-framework …` (macOS) or `-l…` for the
+# windowing libraries (Linux) into that link line, so a GPUI binary comes out
+# with those symbols undefined. `gos build` does read $CC, so tools/cc-gpui.sh
+# supplies them on the way past and the wrapper below is what makes the link
+# succeed. Whether the linked binary then runs is a separate matter — see
+# "Building a native binary" in README.md.
 
 set -euo pipefail
 
@@ -23,8 +20,8 @@ cd "$(dirname "$0")"
 
 if [ $# -eq 0 ]; then
   echo "examples:"
-  # Only the numbered ports are examples; examples/status.gos and
-  # examples/ui/ are the shared scaffolding they import.
+  # Only the numbered ports are examples; examples/status.gos is scaffolding
+  # they import, and `ui` is the package at src/
   for file in examples/[0-9][0-9]_*.gos; do
     printf '  %s\n' "$(basename "$file" .gos)"
   done
@@ -46,7 +43,7 @@ fi
 
 # See run.sh for why the glob needs a `for` loop rather than an assignment.
 # Only the numbered ports are examples; examples/status.gos is scaffolding the
-# examples import, and examples/ui/ is the chaining layer.
+# examples import, and `ui` is the chaining layer (src/lib.gos).
 is_example() {
   case "$(basename "$1")" in
     [0-9][0-9]_*.gos) return 0 ;;

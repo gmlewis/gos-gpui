@@ -4,12 +4,12 @@
 // linux: the probe asks for ⌘-c, and the container's keyboard has no ⌘ — there the binding answers super-c, which is the right answer.
 //
 // One hole, in three sizes. gpui's `Keystroke` carries the whole stroke and the
-// modifier state — `modifiers`, `key` and `key_char` — but `gpui::on_keys(true)`
-// used to report only `key`, the name printed on the key. gpui maps **both** Tab
-// and Shift-Tab to the key `"tab"`, so the one place a program could read them
-// said they were the same keystroke. A shortcut that had to tell them apart
-// could not, and neither could one that cared whether shift or ⌘ was held: `a`
-// and `A` arrived identically.
+// modifier state — `modifiers`, `key` and `key_char` — and `key` alone is the name
+// printed on the key. gpui maps **both** Tab
+// and Shift-Tab to the key `"tab"`, so a reader that takes only `key`
+// says they are the same keystroke. A shortcut that has to tell them apart
+// cannot, and neither can one that cares whether shift or ⌘ is held: `a`
+// and `A` arrive identically.
 //
 // Pass means a program watching `gpui::on_keys(true)` sees `shift-tab` and `tab`
 // as different keystrokes, reads shift held for the first and not the second, and

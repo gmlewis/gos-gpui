@@ -1,0 +1,135 @@
+THE COMPILED TIERS CRASH — a minimal reproduction, measured 2026-10-09.
+
+This is the smallest program yet found that is green on both interpreters and
+aborts on both compiled tiers. It is 25 lines, it is not one of the ports, and
+it lives **outside this repository**: the toolkit check (`scripts/toolkit.sh`)
+writes it into a scratch project in /tmp whose only relationship to this tree is
+a dependency declaration in `project.toml`. So the crash is not a property of
+any example, of any `ui` chaining, or of the example set's size.
+
+THE PROGRAM (the scratch project's `src/main.gos`; `scripts/toolkit.sh` writes
+it, and regenerates it on every run):
+
+    use gpui
+    use std::process
+    use ui
+
+    fn handle(events: Vec<String>) {
+        for event in events {
+            let id, _data = gpui::event_parts(event)
+            if id == "ok" {
+                println("OK TOOLKIT clicked on frame {}", gpui::frame())
+                gpui::quit()
+            }
+        }
+    }
+
+    fn main() {
+        let outcome = gpui::run("toolkit", 320.0, 180.0, || {
+            gpui::take_events() |> handle
+            if !gpui::state_bool("armed", false) {
+                gpui::set_bool("armed", true)
+                gpui::delay("ok", 900)
+            }
+            ui::column("p=24 gap=12 size=full")
+                .text("toolkit works", "font=2xl color=#cdd6f4")
+                .button("ok", "close", "px=14 py=8 rounded=8 bg=#89b4fa")
+                |> ui::root
+        })
+
+        if let Err(problem) = outcome {
+            eprintln(f"gpui::run stopped with an error: {problem}")
+            process::exit(1)
+        }
+    }
+
+THE TRANSCRIPT — `./scripts/toolkit.sh`, 2026-10-09, `gosbox:2` (aarch64 Linux,
+llvmpipe software Vulkan, Xvfb), against the container's `gos` 0.68.0. The Mac's
+own tiers were not run for this measurement; the container shows nothing on the
+owner's screen.
+
+    === check ===
+    check: ok (5 items typed)
+    (exit 0)
+    === run ===
+    OK TOOLKIT clicked on frame 3
+    (exit 0)
+    === run --no-jit ===
+    OK TOOLKIT clicked on frame 3
+    (exit 0)
+    === build ===
+    build: 85024904B native executable at target/debug/toolkit-scratch (aarch64-unknown-linux-gnu)
+    === build -> ./target/debug/toolkit-scratch ===
+    (exit 135)          # 128 + SIGBUS
+    Bus error
+    === build --release ===
+    build: 25421432B native executable at target/release/toolkit-scratch (aarch64-unknown-linux-gnu)
+    === release -> ./target/release/toolkit-scratch ===
+    (exit 135)          # 128 + SIGBUS
+    Bus error
+
+WHAT IT ADDS TO `compiled-tier-sigbus.txt`. That file records the crash on the
+Mac, in the ports, and that it is layout-sensitive — one string literal flips a
+3-of-3 pass to a 3-of-3 crash. This reproduction adds two things:
+
+  1. It is **not** the ports. A program written for no other purpose, in a
+     scratch directory outside the tree, crashes the same way.
+  2. It **crosses platforms**. The 2026-10-09 macOS aborts were SIGBUS /
+     EXC_BAD_ACCESS / EXC_ARM_DA_ALIGN; this one is SIGBUS on aarch64 Linux, in
+     the same place in the stack: the native callback the render path invokes.
+
+WHERE IT IS. The macOS crash report's stack (in `compiled-tier-sigbus.txt`) runs
+through `gos_rt_callback_invoke`, `gossamer_binding::native::NativeCallback::
+invoke_raw`, `gossamer_binding::conv::PersistentCallback::invoke`, and
+`gpui_binding::app::Root::render`. So the fault is on the path that invokes a
+Gossamer closure from Rust — the binding's view callback — and not in the
+program's own arithmetic. That is why a program's behaviour does not predict it
+and its layout does.
+
+ITS STATUS. This is a toolchain fault on the native-callback path, not a fault in
+this binding's Rust. Two interpreters run the same program correctly; two AOT
+backends abort before a frame is drawn. It has not yet been reduced to a program
+that uses **no** binding at all: every reproduction so far needs the native
+callback a `[rust-bindings]` crate installs, so there is no binding-free `.gos` to
+hand to the toolchain's own test suite. Until there is, this file is the
+reduction, and `scripts/toolkit.sh` is the check that keeps it in view: it fails
+here, and it fails naming this.
+
+RERUN ON `gos` 0.70.0 — the same program, the same container, the same five
+tiers, 2026-10-09. This project moved its pin from 0.68.0 to 0.70.0 that day, so
+the fault was re-measured against the release it now pins rather than assumed to
+carry over. The toolchain under test was the `v0.70.0` tag, byte-identical to the
+checkout it was built from; `gos --version` answers `gos 0.70.0`; and the runner
+was rebuilt for this run — `runners/eb43bebcecce/staticlib/Cargo.toml` reaches
+`gossamer-binding` by path at `/gos/crates/gossamer-binding`, and its
+`libgos_static_bindings.a` carries this run's timestamp. **The fault is
+unchanged:**
+
+    === check ===
+    check: ok (5 items typed)
+    (exit 0, 77s)
+    === run (interpreter) ===
+    OK TOOLKIT clicked on frame 3
+    (exit 0, 2s)
+    === run --no-jit ===
+    OK TOOLKIT clicked on frame 3
+    (exit 0, 2s)
+    === build ===
+    build: 85258968B native executable at target/debug/toolkit-scratch (…)
+    (exit 0, 125s)
+    === build -> ./target/debug/toolkit-scratch ===
+    Bus error
+    (exit 135, 0s)
+    === build --release ===
+    build: 25413232B native executable at target/release/toolkit-scratch (…)
+    (exit 0)
+    === release -> ./target/release/toolkit-scratch ===
+    Bus error
+    (exit 135, 0s)
+
+So it is not one of the ownership faults 0.70.0's changelog is about — *Hardened
+codecs, one failure contract, and reclaimed weak references*: a `Vec` payload
+freed twice in compiled code, collections a function answers, weak references
+reclaimed — even though the macOS sighting is an alignment fault on a path a
+mis-freed value would also cross. The release does not fix it and the pin's move
+does not change what the check reports.

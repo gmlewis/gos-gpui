@@ -38,8 +38,8 @@ export GOSSAMER_ROOT="${GOSSAMER_ROOT:-/Users/glenn/src/github.com/danpozmanter/
 # The binding's notes are what a person would see as the banner inside the window.
 # Turning them on puts them on stderr too (`gpui: noted: …`), so this suite fails on
 # them exactly as it fails on any other output. Without this an example can draw an
-# empty, silent, wrong window and pass — which is what hid the data table's missing
-# rows (round 81), and the missing scrollbar after them.
+# empty, silent, wrong window and pass — a data table missing its rows, a scrollbar
+# that never appears: the banner is the only thing that says so.
 export GOSSAMER_NOTED_ERRORS=1
 
 timeout_s="${PROBE_TIMEOUT:-30}"
@@ -86,8 +86,8 @@ run_probe() {
   [ "$status" -eq 0 ] || return 1
   grep -q "^OK " "$log" || return 1
   grep -qi "^FAIL \|panicked\|error\[" "$log" && return 1
-  # A noted error is a failure: it is the banner, and the banner was invisible to
-  # every check here for days.
+  # A noted error is a failure: it is the banner, and without the notes on stderr
+  # the banner is invisible to every check here.
   if [ "$expects_noted" != 1 ] && grep -q "^gpui: noted:" "$log"; then
     return 1
   fi
@@ -134,9 +134,8 @@ for p in "${probes[@]}"; do
 
   # Once per probe, not once per run: a probe that is killed while `gos` is
   # rebuilding the runner leaves a build lock behind, and the probe after it then
-  # blocks on it for five minutes and reads as a hang. That is not hypothetical —
-  # it happened to `w4_requests` inside a batch, and passed the moment it was run
-  # alone.
+  # blocks on it for five minutes and reads as a hang. A probe blocked by a lock
+  # passes the moment it is run alone.
   "$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
 
   if run_probe "$p" "$noted"; then
@@ -145,12 +144,11 @@ for p in "${probes[@]}"; do
   fi
 
   # A failure is re-run once before it is believed, and **a pass on the retry is
-  # reported as flaky rather than as success**. The whole suite has come back
-  # mostly-failed after a long run of GUI probes and then passed unchanged, so a
-  # single timeout is not evidence of a regression — but silently retrying until
-  # green would hide the one thing worth knowing about it, which is that the probe
-  # is unreliable. Flaky counts as a pass and is named in the summary and on its
-  # own line.
+  # reported as flaky rather than as success**. A long run of GUI probes can come
+  # back mostly-failed and then pass unchanged, so a single timeout is not evidence
+  # of a regression — but silently retrying until green would hide the one thing
+  # worth knowing about it, which is that the probe is unreliable. Flaky counts as a
+  # pass and is named in the summary and on its own line.
   first="$(sed -n '1p' "$log")"
   "$(dirname "$0")/unlock-stale-build.sh" 2>/dev/null || true
   if run_probe "$p" "$noted"; then

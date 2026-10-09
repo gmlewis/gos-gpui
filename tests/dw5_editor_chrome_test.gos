@@ -6,9 +6,9 @@
 // language does not know would otherwise be a silently absent gutter, which is exactly the
 // failure `unknown_style_tokens` exists to make visible.
 //
-// Four of the six tokens are new with this row — `caret`, `sel`, `gutterbg`, `gutterfg` and
-// `softwrap`; `gutter` is new too. The red at HEAD for these is a wrong answer rather than
-// an unresolved name, because `unknown_style_tokens` has been there since TM5.
+// The six chrome tokens are `caret`, `sel`, `gutterbg`, `gutterfg`, `softwrap` and
+// `gutter`. A red here is a wrong answer rather than an unresolved name, because
+// `unknown_style_tokens` already exists.
 
 use gpui
 

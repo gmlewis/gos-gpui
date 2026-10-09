@@ -48,8 +48,8 @@
 // `dw7.slow` points at `/tmp/dw7-slow.pipe`, and the loading subtree is due only while a load
 // outlasts 200ms — which no file in this repo does, not even the 4.4MB GIF beside them: the
 // loader reads and decodes it well inside a frame, so a run against a real file records the
-// loading state as *never due* and says so. Measured, not guessed: the earlier revision of this
-// probe pointed this cell at `examples/assets/black-cat-typing.gif` and never once saw it.
+// loading state as *never due* and says so. Measured, not guessed: with
+// `examples/assets/black-cat-typing.gif` in this cell, the loading state is never once recorded.
 //
 // A fifo is the one source that is not instantaneous and is still just a path: `fs::read` on it
 // blocks until a writer arrives (`img.rs:601`), on the background executor (`app.rs:2018`), so

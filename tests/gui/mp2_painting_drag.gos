@@ -11,18 +11,17 @@
 // # What this exists for
 //
 // Two of `examples/13_painting.gos`'s documented deviations were about where the listening surface
-// is and what a move does while shift is held. Both were removed in round 93 and both are checked
-// here, against a real pointer, because neither can be seen in a photograph and neither is visible
-// to `gos check`.
+// is and what a move does while shift is held. Both are checked here, against a real pointer,
+// because neither can be seen in a photograph and neither is visible to `gos check`.
 //
-//   * **The surface's extent.** The port's surface used to be a fixed 900x520 box at the window
-//     origin, which reaches up under the header: a drag begun in the empty part of the header row
-//     drew a line here and draws nothing upstream. It is now in flow after the header, as upstream's
+//   * **The surface's extent.** A surface fixed at a 900x520 box at the window origin reaches up
+//     under the header: a drag begun in the empty part of the header row would draw a line there
+//     where upstream draws nothing. The surface is in flow after the header, as upstream's
 //     `size_full` canvas div is below its header row. The check posts a press above the header, one
 //     inside it and one below it, and requires the first two to raise nothing at all.
 //   * **Shift.** Upstream reads `ev.modifiers.shift` on each move and pulls the point onto the
 //     horizontal or vertical axis through the stroke's start, whichever it is furthest from. The
-//     modifiers now ride on the event (`gpui::pointer_mods`), so this can be done — and it can be
+//     modifiers ride on the event (`gpui::pointer_mods`), so this can be done — and it can be
 //     done *mid-drag*, which is the part a latch of the program's own could never have done.
 //
 // # What it is not
@@ -30,8 +29,8 @@
 // It is not `examples/13_painting.gos`. The tree below is the example's shape — the header in flow
 // at the padded root's corner, the surface in flow after it — and the handlers are the example's
 // handlers, but they are written here. What that means is that this checks the **binding** and the
-// **layout**, which are the two things the deviation bullets named; the example's own copy of the
-// snapping is upstream's line for line and is not separately exercised.
+// **layout**, which are the two things above; the example's own copy of the snapping is upstream's
+// line for line and is not separately exercised.
 //
 // # Why the geometry is written down rather than measured
 //
@@ -184,8 +183,8 @@ fn main() {
         //
         // Over a window of frames rather than one: the gesture is posted with this callback
         // blocked, so its events are queued before it returns, but *when* gpui hands them over is
-        // the platform's business and round 93 measured it can be the next iteration. The claim
-        // is about the events' content, not the frame they land in.
+        // the platform's business, and it can be the next iteration. The claim is about the events'
+        // content, not the frame they land in.
         if f >= 4 && f <= 5 {
             for event in gpui::take_events() {
                 let id, kind = gpui::event_parts(event.clone())
@@ -237,10 +236,9 @@ fn main() {
 /// upstream's handler and `examples/13_painting.gos`'s. The points go into `key` as `x, y, x, y, …`,
 /// the way the example keeps its strokes.
 ///
-/// The point and the modifier flag arrive as **arguments**, taken off the event by the frame's own
-/// closure, and that is not a style choice. `gpui::pointer_xy` returns a pair of floats, and round
-/// 93 measured that calling it from a module-level function — which this would otherwise be —
-/// faults under the JIT inside the callee. See "Notes and limits" in `README.md`.
+/// The point and the modifier flag arrive as **arguments**, taken off the event where it is
+/// drained; `gpui::pointer_xy` returns a pair of floats, so the frame's closure reads the pair
+/// and hands the two values down.
 fn extend_stroke(key: String, kind: String, x: f64, y: f64, shifted: bool) {
     if kind == "down" {
         gpui::set_float("start.x", x)

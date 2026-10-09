@@ -40,10 +40,10 @@
 //     re-rendering a retained `Entity<PaintingViewer>`.
 //
 // Reported to the parent as missing from the binding: stroke options (line
-// join / cap) and `paint_quad`. Modifier state on pointer events left this list
-// in round 93, with `gpui::pointer_mods` and `gpui::pointer_xy`; the Rust logo
-// left it in round 92, as "a `rust_logo` path" — what it actually needed was a
-// cubic Bézier, which the binding now has as `gpui::path_cubic_to`.
+// join / cap) and `paint_quad`. Modifier state on pointer events is not on this
+// list: it is `gpui::pointer_mods` and `gpui::pointer_xy`. Nor is the Rust logo,
+// which needed a cubic Bézier — `gpui::path_cubic_to` is what the binding has
+// for it.
 
 use gpui
 use std::math
@@ -567,20 +567,20 @@ fn main() {
             // Upstream's listener is the `size_full` div that holds the
             // canvas; this port keeps it at 900x520 so it does not lie over
             // the toolbar above it — not because the binding needs a pixel
-            // size, which it no longer does: the element handed to `on_mouse`
+            // size, which it does not: the element handed to `on_mouse`
             // *is* the box that listens. At the window origin the coordinates
             // it reports are window coordinates either way, being relative to
             // an element that sits at 0,0.
             // The header in flow at the padded root's corner, then the drawing
             // surface in flow *after* it — so the surface is the area below the
             // header, as upstream's `size_full` canvas div is below the header
-            // row in its `flex_col`. It used to be a fixed 900x520 at the window
-            // origin, which put the listening box under the header: a drag
-            // started in the empty part of the header row drew a line here and
-            // draws nothing upstream. What that cost was the *point*, which came
-            // out of the store relative to the surface's corner; the strokes are
-            // in window coordinates now, off the event, so the surface can sit
-            // where upstream's does without moving a single painted pixel.
+            // row in its `flex_col`. A fixed 900x520 at the window origin would
+            // put the listening box under the header: a drag
+            // started in the empty part of the header row would draw a line here
+            // and draws nothing upstream. What that costs is the *point*, which
+            // comes out of the store relative to the surface's corner; the
+            // strokes are read in window coordinates off the event, so the
+            // surface can sit where upstream's does without moving a painted pixel.
             .child(ui::row("ml=16 mr=16 mt=16 gap=8 justify=between items=center")
                 .text("Mouse down any point and drag to draw lines (Hold on shift key to draw straight lines)", "")
                 .child(ui::row("gapx=8")

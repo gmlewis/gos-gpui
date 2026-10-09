@@ -9,17 +9,17 @@
 //     `row_height`. **26.0** is upstream's own pitch, and the pair's captures are
 //     what say so: its rows' text sits 26 pixels apart, 26 = round(16 x 1.618),
 //     the line box of gpui's *default* text (this example's divs never ask for a
-//     size). The port declared 22.0 — its reading of the natural height — and the
-//     captures showed its rows exactly 22 apart, so the list was out of step with
-//     upstream's by four pixels a row and out of step with itself past the first
+//     size). The port declares 26.0, not 22.0 — the natural height — because a
+//     declared 22.0 puts the rows exactly 22 apart: four pixels a row out of
+//     step with upstream's pitch, and out of step with itself past the first
 //     screen.
 //   * the row is upstream's `div().id(ix).px_2().cursor_pointer().on_click(..)`
 //     with its text as the only child, and this binding's nearest equivalent is
-//     `ui::on_mouse(ui::text(..), "click", ..)`. It is *not* `ui::button`, which
-//     is what the port drew first: a button centres its label in the row and
-//     brings its own flex and chrome with it, where upstream's text sits at the
-//     row's left edge eight pixels in. Same pixels now, and the capture is what
-//     found the difference — the port's labels were 120-odd pixels to the right.
+//     `ui::on_mouse(ui::text(..), "click", ..)`. It is *not* `ui::button`: a
+//     button centres its label in the row and brings its own flex and chrome
+//     with it, where upstream's text sits at the row's left edge eight pixels
+//     in, so a button's label lands 120-odd pixels to the right — the same
+//     pixels only from `ui::text`.
 //   * upstream's builder is `uniform_list`'s own argument. Here it is handed to
 //     `gpui::run_with_rows` instead, because `run` is the only binding call that
 //     does not return — a callback handed to a binding function is valid for

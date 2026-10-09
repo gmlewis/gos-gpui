@@ -21,10 +21,10 @@ use std::process
 /// One view callback serves every window — the one `gpui::run` was given — and
 /// `window::allocate` hands out 1 first, then 2, then 3, so the ids are the
 /// windows' creation order. `run`'s own window is 1; anything else is a window
-/// this program opened. Both of these used to be callbacks of their own passed to
+/// this program opened. Neither of these is a callback of its own passed to
 /// `gpui::open_window`, which returns before the window is drawn — and a callback
-/// handed to a binding function is valid only for that call — so on the compiled
-/// tiers both windows' views answered an error.
+/// handed to a binding function is valid only for that call — so both windows'
+/// views would answer an error on the compiled tiers.
 fn child_view() {
     let cf = gpui::frame()
     if cf == 1 {

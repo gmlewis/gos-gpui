@@ -11,10 +11,9 @@
 //
 //     cx.set_menus(vec![Menu { name: "GPUI Typography".into(), items: vec![] }]);
 //
-// An empty menu is a name in the menu bar with nothing under it. Until round 101
-// `examples/22_text.gos` called nothing here and said so in a deviation bullet — "the binding owns
-// the macOS menu bar and exposes no API for it" — which had been false since `gpui::set_menus` was
-// built (MN1's round), and which made that name the one *visible* difference the pair had.
+// An empty menu is a name in the menu bar with nothing under it. The claim that the binding
+// "owns the macOS menu bar and exposes no API for it" is false — `gpui::set_menus` is that API —
+// and the empty name is the one *visible* difference the pair has.
 //
 // # What it measures, and what it is not
 //
@@ -41,9 +40,9 @@
 //
 // # The red
 //
-// Without the `set_menus` call below — which is what the port did until round 101 — the readback is
-// empty and the first check fails: `FAIL EX22 the platform was handed 0 line(s) of menu bar, not the
-// one empty menu upstream installs: #[]`. `tests/evidence/EX22.before.txt` is that transcript.
+// Without the `set_menus` call below, the readback is empty and the first check fails: `FAIL EX22
+// the platform was handed 0 line(s) of menu bar, not the one empty menu upstream installs: #[]`.
+// `tests/evidence/EX22.before.txt` is that transcript.
 
 use gpui
 use std::process
@@ -54,7 +53,7 @@ fn main() {
 
         // Upstream installs its menu before the window opens; `gpui::set_menus` is a request the
         // binding applies after the frame that asked for it, so frame 2 is the port's own place
-        // for it — the same line, in the same shape, that `examples/22_text.gos` now starts with.
+        // for it — the same line, in the same shape, that `examples/22_text.gos` starts with.
         if f == 2 {
             gpui::set_menus("GPUI Typography", #[])
         }

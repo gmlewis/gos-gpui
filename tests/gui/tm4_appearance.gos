@@ -17,9 +17,8 @@
 //
 // The third is the one with teeth. It is an exact comparison against the set the
 // reported appearance names, so a binding that installed the light defaults
-// before the first window and never corrected them — which is what this binding
-// used to do — fails on a dark desktop with every colour wrong at once, and the
-// failure names which.
+// before the first window and never corrected them fails on a dark desktop with
+// every colour wrong at once, and the failure names which.
 
 use gpui
 use std::process

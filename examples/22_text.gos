@@ -8,7 +8,7 @@
 // the grid's 11 columns lining up, the two colours of each specimen pair, and
 // where each specimen's line breaks.
 //
-// Verdict on the dead-code claim the placeholder rested on — it holds. The
+// The dead-code claim holds: the
 // `TextStyle` / `rem_size` apparatus really is unreachable:
 //
 //   * `Specimen::new` sets `text_style: None` and there is no setter for it,
@@ -29,7 +29,7 @@
 // inverted twin, the grid, and `colors.container` on the 240px panel. That
 // last one is the only default colour the example reads anywhere, and it is
 // `gpui::default_color("container")` here — so the port needs neither
-// `cx.text_context` nor `rem_size`, which is what the placeholder asked for.
+// `cx.text_context` nor `rem_size`.
 //
 // Deviations:
 //   * `cx.init_colors()` is not called: the binding runs it once at startup

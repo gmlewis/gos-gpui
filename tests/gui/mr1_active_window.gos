@@ -20,10 +20,10 @@ use std::process
 ///
 /// One view callback serves every window — the one `gpui::run` was given — and
 /// `window::allocate` gives the window `run` opened the first id, 1, so anything
-/// else is a window this program opened. This used to be a callback of its own
+/// else is a window this program opened. This is not a callback of its own
 /// passed to `gpui::open_window`; that call returns before the window is drawn,
-/// and a callback handed to a binding function is valid only for that call, so on
-/// the compiled tiers this window's view answered an error.
+/// and a callback handed to a binding function is valid only for that call, so
+/// this window's view would answer an error on the compiled tiers.
 fn second_view() {
     gpui::animate()
     let child = gpui::column("p=8 gap=4 size=full bg=#222222")

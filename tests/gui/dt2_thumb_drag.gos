@@ -9,16 +9,17 @@
 //
 // # What this exists for
 //
-// `examples/02_data_table.gos` carried a deviation saying that its scrollbar drag
+// The scrollbar drag `examples/02_data_table.gos` ports has two halves an element-level
+// reading gets wrong:
 //
-//     stops tracking when the pointer leaves the element, and puts the thumb's top under
-//     the pointer where upstream holds the point that was grabbed.
+//     it keeps tracking when the pointer leaves the element, and holds the point that was
+//     grabbed rather than putting the thumb's top under the pointer.
 //
-// Both halves are now closed, and the two things that close them are the two halves of the
-// sentence. The tracking is closed by listening on the **window** rather than on the element:
+// Both halves are checked here, and the two things that check them are the two halves of the
+// gesture. The tracking is checked by listening on the **window** rather than on the element:
 // `gpui::on_mouse_window`, which is upstream's own instrument — `data_table.rs:323-366` hangs
 // its three handlers on `window.on_mouse_event(..)`, not on the thumb — and which is the
-// subject of `tests/gui/dd4_capture.gos`. The mapping is closed by transcribing upstream's
+// subject of `tests/gui/dd4_capture.gos`. The mapping is checked by transcribing upstream's
 // expression, `data_table.rs:355-364`, term for term:
 //
 // ```text
@@ -64,19 +65,19 @@
 // # The two negative controls
 //
 // `WINDOW_LEVEL` picks how the listener is registered. Set it to `false` and the same tree, the
-// same gesture and the same rule register with `gpui::on_mouse` instead — which is what the
-// example carried before round 98 — and the probe goes red in one way: the press is heard and
-// then nothing, because the moves happen where the thumb is not. It is the red recorded in
-// `tests/evidence/dt2.before.txt`.
+// same gesture and the same rule register with `gpui::on_mouse` instead — the element-level
+// reading, kept here as the first negative control — and the probe goes red in one way: the
+// press is heard and then nothing, because the moves happen where the thumb is not. It is the
+// red recorded in `tests/evidence/dt2.before.txt`.
 //
-// `RULE` picks the mapping. Set it to `0` and the probe applies the rule the example carried
-// before: the pointer's own place in the viewport, with no grabbed point held, which is the
-// "puts the thumb's top under the pointer" half of the deviation. The settle then lands where
-// that rule asks rather than where upstream's does, and the probe goes red on the comparison —
-// by 549 pixels on the numbers below, which is not a rounding difference.
+// `RULE` picks the mapping. Set it to `0` and the probe applies a deliberately wrong reading:
+// the pointer's own place in the viewport, with no grabbed point held, which is the "puts the
+// thumb's top under the pointer" half of the drag. The settle then lands where that reading
+// asks rather than where upstream's does, and the probe goes red on the comparison — by 549
+// pixels on the numbers below, which is not a rounding difference.
 //
 // Neither control is a second copy of the rule under test: one removes the window-level
-// listener, the other replaces the mapping with the one that was actually there.
+// listener, the other replaces the mapping with that wrong reading.
 
 use gpui
 use std::os::exec
@@ -100,13 +101,12 @@ const VIEW_W: f64 = 300.0
 const VIEW_H: f64 = 400.0
 
 /// How the listener is registered: `true` for the example's `gpui::on_mouse_window`, `false`
-/// for `gpui::on_mouse`, which is what the example carried before round 98. The first
-/// negative control.
+/// for `gpui::on_mouse`, the element-level reading. The first negative control.
 const WINDOW_LEVEL: bool = true
 
-/// Which drag rule the probe applies: `1` is the example's, transcribing upstream; `0` is the
-/// rule the example carried before round 98 — the pointer's place in the viewport with no
-/// grabbed point held. The second negative control.
+/// Which drag rule the probe applies: `1` is the example's, transcribing upstream; `0` is a
+/// deliberately wrong reading — the pointer's place in the viewport with no grabbed point
+/// held. The second negative control.
 const RULE: i64 = 1
 
 /// Where the press lands: this far below the thumb's own top edge. Small, so that the point
@@ -158,7 +158,7 @@ fn clamp01(v: f64) -> f64 {
     clamp(v, 0.0, 1.0)
 }
 
-/// The rule `examples/02_data_table.gos` carries now, transcribed from its `main()`.
+/// The rule `examples/02_data_table.gos` uses, transcribed from its `main()`.
 ///
 /// It is upstream's expression (`data_table.rs:355-364`) with `max + h` standing in for
 /// `scroll_height` and `THUMB_H` for `SCROLLBAR_THUMB_HEIGHT`. `grab` is `drag_position`, which
@@ -169,15 +169,14 @@ fn now_offset(py: f64, grab: f64, table_y: f64, table_h: f64, max: f64) -> f64 {
     clamp(max * percentage, 0.0, (max + table_h) - THUMB_H)
 }
 
-/// The rule `examples/02_data_table.gos` carried *before* round 98, kept as this probe's
-/// negative control.
+/// A deliberately wrong reading of the drag, kept as this probe's negative control.
 ///
-/// The old `scrollbar()` hung its listener on a 16-pixel strip that wrapped the thumb and read
-/// the pointer's place *inside that strip* — which is the viewport — so the fraction was the
-/// pointer's own place in the viewport and nothing was held. Without it the check above would be
-/// a rule compared with itself, and a green would say only that arithmetic is arithmetic. With
-/// it, the probe shows on the same live numbers that it tells two rules apart, and that the one
-/// the example carried is one of the ones it tells apart.
+/// The `scrollbar()` this reading comes from hung its listener on a 16-pixel strip that wrapped
+/// the thumb and read the pointer's place *inside that strip* — which is the viewport — so the
+/// fraction was the pointer's own place in the viewport and nothing was held. Without it the
+/// check above would be a rule compared with itself, and a green would say only that arithmetic
+/// is arithmetic. With it, the probe shows on the same live numbers that it tells two rules
+/// apart, and that this reading is one of the ones it tells apart.
 fn was_offset(py: f64, thumb_y: f64, table_h: f64, max: f64) -> f64 {
     let percentage = clamp01((py - thumb_y) / table_h)
     max * percentage
@@ -257,9 +256,6 @@ fn main() {
         if f >= 4 {
             for event in gpui::take_events() {
                 let id, kind = gpui::event_parts(event.clone())
-                // Read off the event, in the frame's own closure: a pair-returning binding
-                // called from a module-level function faults under the JIT
-                // ("Notes and limits" in `README.md`).
                 let px, py = gpui::pointer_xy(event.clone())
                 if id == "thumb" {
                     let thumb_x = gpui::element_bounds("thumb", "x")
@@ -409,12 +405,12 @@ fn report() {
         println(f"ok     DT2 the drag held the point it grabbed: press {GRAB_INSIDE:.0} px into the thumb, dragged {DRAG_DOWN - GRAB_INSIDE:.0} px lower, and the list settled at {settled:.1} of {max:.1} -- exactly what upstream's mapping asks for")
     }
 
-    // 5. And the rule the example carried before, on the same numbers, lands somewhere else —
-    //    which is what makes the line above a finding rather than arithmetic agreeing with itself.
+    // 5. And a deliberately wrong reading, on the same numbers, lands somewhere else — which is
+    //    what makes the line above a finding rather than arithmetic agreeing with itself.
     if differs(want, wrong) {
-        println(f"ok     DT2 the rule the example carried before round 98 would have asked for {wrong:.1} instead, {want - wrong:.1} px away, so this check tells the two rules apart")
+        println(f"ok     DT2 the deliberately wrong reading would have asked for {wrong:.1} instead, {want - wrong:.1} px away, so this check tells the two rules apart")
     } else {
-        println(f"FAIL DT2 the rule the example carried before round 98 asks for {wrong:.1} too, so this check cannot tell the two rules apart")
+        println(f"FAIL DT2 the deliberately wrong reading asks for {wrong:.1} too, so this check cannot tell the two rules apart")
         bad = bad + 1
     }
 

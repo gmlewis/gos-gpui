@@ -257,8 +257,8 @@ fn main() {
         // own callback blocked, so its events are queued before it returns — but *when* gpui
         // hands them to the program is the platform's business, and the second gesture's
         // `keydown`/`keyup` put enough round trips in front of the moves that the first
-        // iteration after posting delivered only the `down`. Measuring it (round 93) found the
-        // moves one iteration later. What this check is about is the content of the events, not
+        // iteration after posting delivers only the `down`, and the moves arrive one
+        // iteration later. What this check is about is the content of the events, not
         // which frame they land in, so it collects over a window and asserts at the end.
         if f >= 7 && f <= 9 {
             for event in gpui::take_events() {

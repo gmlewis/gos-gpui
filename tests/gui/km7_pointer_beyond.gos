@@ -323,7 +323,7 @@ fn main() {
             // what `<id>.scroll_lines` records: a pixel delta and a line delta are different
             // units landing in one slot, so the unit is reported rather than assumed.
             if heard < 2 {
-                fail(f"the wheel was heard over the box {heard} times, not twice — the binding's `scroll` kind is registered at both levels (`gpui-binding/src/view.rs:3100`, `:2153`), so this is either xdotool's XTEST button events being dropped for `POINTER_EMULATED` (`platform/linux/x11/client.rs:1133-1135`) or the element not being under the pointer")
+                fail(f"the wheel was heard over the box {heard} times, not twice — the binding's `scroll` kind is registered at both levels (`gpui-binding/src/view.rs:2260`, `:3359`), so this is either xdotool's XTEST button events being dropped for `POINTER_EMULATED` (`platform/linux/x11/client.rs:1133-1135`) or the element not being under the pointer")
             }
             if !lines {
                 fail("the wheel's delta did not arrive as a line delta, so `<id>.dx`/`<id>.dy` are not in the unit this assertion is about")
@@ -357,7 +357,7 @@ fn main() {
             let exit_at = last(ids.clone(), "box|exit")
 
             if exit_at < 0 {
-                fail("the pointer left the box and the element-level `exit` was never heard — gpui gives an element the *transition* of its own hover (`gpui-binding/src/view.rs:3116`), and the move that crossed the edge was posted")
+                fail("the pointer left the box and the element-level `exit` was never heard — gpui gives an element the *transition* of its own hover (`gpui-binding/src/view.rs:3379`), and the move that crossed the edge was posted")
             } else {
                 // What the element's exit carries is the point the pointer was last *seen* at
                 // over that element, and the last thing seen there was the wheel. That is the
@@ -454,10 +454,10 @@ fn main() {
         // listener is on, which is deliberate. `gpui::on_mouse` and `gpui::on_mouse_window` both
         // wrap the element they are handed, and wrapping one element twice nests two wrappers
         // around one box; the binding folds and registers a wrapper per call, and no program has
-        // ever chained them on one element — `tests/gui/dt2_thumb_drag.gos:336` and
-        // `tests/gui/dd4_capture.gos:159` each pick one. So the full-size plain div carries
-        // `move` and `exit` heard anywhere in the window, and the box carries `scroll` and its
-        // own `exit`.
+        // ever chained them on one element — `tests/gui/dt2_thumb_drag.gos` and
+        // `tests/gui/dd4_capture.gos` each pick one in an `if WINDOW_LEVEL` branch. So the
+        // full-size plain div carries `move` and `exit` heard anywhere in the window, and the
+        // box carries `scroll` and its own `exit`.
         //
         // A div with no listener inserts no hitbox, so the full-size one being *under* the box is
         // not load-bearing — but it is painted first anyway, which is also the order that would

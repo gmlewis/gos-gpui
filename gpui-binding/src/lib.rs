@@ -155,7 +155,7 @@ gossamer_binding::register_module!(
     ///
     /// Calling it again for an id that is already running **reschedules** that timer to
     /// the new period — `gpui::tick("clock", 100)` turns a slow clock into a fast one.
-    /// It used to be ignored, so a program could start a clock and never change it; the
+    /// Ignoring it would let a program start a clock and never change it; the
     /// period in force is readable with [`gpui::tick_period`].
     fn tick(id: String, ms: i64) {
         store::request(store::Request::Tick { id, ms: ms.max(1) as u64 })
@@ -1600,8 +1600,7 @@ gossamer_binding::register_module!(
     /// `"stripes"` or `"prism"`; `phase` drives its animation.
     ///
     /// `prism` reproduces `gradient.rs`'s trapezoid — a filled path with a
-    /// linear gradient through it — so the set is four, not the three this doc
-    /// and the README used to name.
+    /// linear gradient through it — so the set is four.
     fn draw(painter: String, phase: f64, style: String) -> i64 {
         view::push(Kind::Canvas { painter, phase }, style, String::new())
     }
@@ -1957,19 +1956,16 @@ gossamer_binding::register_module!(
     /// Whether the element with this id currently holds focus.
     ///
     /// Only the elements this binding has a handle for are ever reported: an
-    /// `input`, an `editor`, and the `~root` handle `gpui::on_keys` installs.
-    /// **The editor was named here long before it was true** — it owns a
-    /// `FocusHandle` of its own and the registry held none of its, so this
-    /// answered `false` for a focused editor and `gpui::focused` answered `""`;
-    /// round 83 records the editor's own handle under its key, which is the fix
-    /// the sentence always described.
-    /// An element made focusable with the `focusable` token *used* to be invisible
-    /// here — GPUI builds that handle internally and never hands it over — so this
-    /// answered `false` for it even while it was focused. `MR5`'s change gives such an
-    /// element a handle of this crate's own as well, so it *should* be visible now;
-    /// **that is unverified**, because the probe that would confirm it found no focus
-    /// moving at all (`tests/evidence/MR5.probe.txt`), and [`gpui::focused`] is the
-    /// instrument that will say which of the two is true.
+    /// `input`, an `editor`, and the `~root` handle `gpui::on_keys` installs. The
+    /// editor's own handle is recorded under its key, which is what makes a focused
+    /// editor reported.
+    /// An element made focusable with the `focusable` token is invisible here while
+    /// it has only GPUI's own handle — GPUI builds that handle internally and never
+    /// hands it over. It is given a handle of this crate's own as well, so it *should*
+    /// be visible here too, but **that is unverified**: the probe that would confirm it
+    /// found no focus moving at all (`tests/evidence/MR5.probe.txt`), and
+    /// [`gpui::focused`] is the instrument that
+    /// will say which of the two is true.
     fn is_focused(id: String) -> bool {
         view::is_focused(&id)
     }
@@ -2136,11 +2132,11 @@ gossamer_binding::register_module!(
     /// is the point of a virtual list: a hundred thousand rows cost what the
     /// window holds.
     ///
-    /// The builder used to be this function's own last argument. A callback
+    /// The builder cannot be this function's own last argument: a callback
     /// handed to a binding function is valid for exactly that call — a compiled
     /// caller releases the registration the moment the function returns, freeing
     /// the closure's environment — and this function returns long before the list
-    /// lays out, so on the compiled tiers every row answered an error. `run` is
+    /// lays out, so on the compiled tiers every row would answer an error. `run` is
     /// the one binding call that does not return, so the builder lives there.
     fn list(id: String, count: i64, row_height: f64, style: String) -> i64 {
         view::push(
@@ -2205,10 +2201,10 @@ gossamer_binding::register_module!(
     ///         }
     ///     })
     ///
-    /// It used to take a view callback of its own. A callback handed to a binding
+    /// It takes no view callback of its own: a callback handed to a binding
     /// function is released the moment that function returns to its caller, and
     /// this one returns before the new window is ever drawn — so on the compiled
-    /// tiers a second window's view answered an error and drew nothing. One
+    /// tiers a second window's view would answer an error and draw nothing. One
     /// callback, every window, distinguished by id, is the shape that works on
     /// every tier.
     fn open_window(title: String, x: f64, y: f64, w: f64, h: f64, options: String) -> () {
@@ -2306,11 +2302,11 @@ gossamer_binding::register_module!(
     /// one that asked once is not trapped: closing the revived window ends the
     /// app, as closing any last window does.
     ///
-    /// This replaced `on_window_closed(handler)`, a callback run with no window
+    /// This exists instead of `on_window_closed(handler)`, a callback run with no window
     /// in existence. A callback handed to a binding function is released when
-    /// that function returns, so on the compiled tiers the handler failed; and
-    /// the shape was wrong besides, because it asked for program code to run at
-    /// the one moment the binding cannot run any.
+    /// that function returns, so on the compiled tiers the handler would fail; and
+    /// a callback is the wrong shape anyway, because it would ask for program code to
+    /// run at the one moment the binding cannot run any.
     fn revive_window(title: String, x: f64, y: f64, w: f64, h: f64, options: String) -> () {
         app::set_revive(app::PendingOpen { title, x, y, w, h, options, revival: true })
     }
@@ -2720,16 +2716,16 @@ gossamer_binding::register_module!(
     /// Route every keystroke to the program as a `"key|<stroke>"` event, and every
     /// release as `"keyup|<stroke>"`.    ///
     /// `<stroke>` is gpui's unparsed keystroke — the whole thing, modifiers
-    /// included: `"shift-tab"`, `"cmd-c"`, `"a"`, `"up"`. It used to be only the
-    /// key's name, and gpui maps **both** Tab and Shift-Tab to the name `"tab"`,
-    /// so a program had no way to tell the two apart; the modifiers under
+    /// included: `"shift-tab"`, `"cmd-c"`, `"a"`, `"up"`, not the bare key name. gpui
+    /// maps **both** Tab and Shift-Tab to the name `"tab"`, so the key's name alone
+    /// could not tell the two apart; the modifiers under
     /// `~key.*` below say the same thing one bit at a time.
     ///
     /// The window itself takes focus to receive them, and it does so **on the frame
-    /// you turn this on** — whatever frame that is. It used to take focus only while
-    /// the window was in its first two frames, so a program that enabled the keyboard
-    /// later got a listener and no focus, and a key event with no focus is delivered
-    /// to nothing: its shortcuts were dead with no error to show for it.
+    /// you turn this on** — whatever frame that is, not only while the window is in
+    /// its first two frames: a program that enables the keyboard
+    /// later would otherwise get a listener and no focus, and a key event with no focus
+    /// is delivered to nothing: its shortcuts dead with no error to show for it.
     ///
     /// Once it has focus the window keeps it until you give it up — `on_keys(false)`
     /// and then `true` takes it again. Clicking into a text field moves focus there
@@ -2814,7 +2810,7 @@ gossamer_binding::register_module!(
     /// desktop; and the platform's own window chrome is not repainted, because the
     /// palette is the one a *program* reads and draws with — put it in a style string.
     ///
-    /// It used to record a name nothing consulted, so a program could name a theme and
+    /// Recording a name nothing consults would let a program name a theme and
     /// get the platform's colours anyway.
     ///
     /// A name the binding does not know is refused: the choice stands and the program

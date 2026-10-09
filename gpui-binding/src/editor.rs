@@ -342,8 +342,8 @@ fn css(colour: Hsla) -> String {
 /// The editor draws itself, and a box that draws itself cannot be reached by `bg=`/`color=` — those
 /// colour the element the editor sits in, not the glyphs the editor puts on top of it. So these four
 /// get a token vocabulary of their own, read from the same style string the element was given, and
-/// every one of them defaults to the value upstream's `examples/input.rs` hard-codes: an editor that
-/// sets nothing looks exactly as it did before this vocabulary existed.
+/// every one of them defaults to the value upstream's `examples/input.rs` hard-codes, so an editor that
+/// sets nothing looks exactly as that example does.
 ///
 /// Per `(window, key)` like the text itself: two windows may draw the same key in different colours.
 #[derive(Clone)]
@@ -665,7 +665,7 @@ struct TextEditor {
     /// nowhere to go, so `up`/`down` keep bubbling. The caret, the selection, the clipboard, the undo
     /// history, the marked range and the input-handler registration are the same code either way,
     /// which is the point: a field that is not a text editor is a field that cannot hold a composing
-    /// word, and before this flag existed `ui::input` was exactly that.
+    /// word, which is why `ui::input` runs on this engine too.
     single_line: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
@@ -677,8 +677,8 @@ struct TextEditor {
     /// turned into an offset without re-splitting the text.
     last_lines: Vec<(usize, usize)>,
     /// The byte range of each *drawn row*, which is a line when the editor does not wrap and a
-    /// piece of one when it does. With wrapping off this is [`Self::last_lines`] and every offset
-    /// arithmetic below behaves exactly as it did before wrapping existed.
+    /// piece of one when it does. With wrapping off this is [`Self::last_lines`], so every offset
+    /// arithmetic below treats each row as a line.
     last_rows: Vec<(usize, usize)>,
     /// The height one line was laid out at, so a click can be turned into a line
     /// number without a window to ask.
@@ -1126,8 +1126,8 @@ impl TextEditor {
             "c" if command => self.copy(cx),
             "x" if command => self.cut(window, cx),
             "v" if command => self.paste(window, cx),
-            // The two the row is about: they used to fall through every arm below and reach
-            // `gpui::on_keys`, so the editor had no undo at all.
+            // The two undo keys: without these arms they would fall through every arm below and reach
+            // `gpui::on_keys`, so the editor would have no undo at all.
             "z" if command && modifiers.shift => self.redo(cx),
             "z" if command => self.undo(cx),
             "home" if modifiers.shift && !command => self.select_home(cx),

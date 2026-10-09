@@ -6,8 +6,8 @@
 # that happens as it opens — and then no more frames at all, so `gpui::animate()`
 # never delivers a second one and every probe that needs to reach a later frame
 # reads as `exit 124` and silence. That is indistinguishable from the bug the probe
-# is looking for, and on 2026-10-06 it made one round's entire tier run and probe
-# suite look like a catastrophic regression when nothing was wrong at all.
+# is looking for: a locked screen through a run makes the whole tier run and probe
+# suite look like a catastrophic regression when nothing is wrong at all.
 #
 #   ./scripts/screen-awake.sh      # exit 0 when the screen is awake, 3 when locked
 #

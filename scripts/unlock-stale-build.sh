@@ -25,9 +25,8 @@ while IFS= read -r lock; do
   esac
   # "is this pid alive" is not the question — "is this pid a `gos`" is. A recorded pid that the
   # system has since handed to something else answers `ps -p` happily, and the lock survives to
-  # cost the next run five minutes. Round 96 found the container-side twin of this: see
-  # `reap_locks` in `scripts/gosbox.sh`.
-  if ! ps -p "$pid" -o command= 2>/dev/null | grep -q 'gos'; then
+  # cost the next run five minutes. `reap_locks` in `scripts/gosbox.sh` is the container-side twin.
+  if ! ps -p "$pid" -o command= 2>/dev/null | grep 'gos' >/dev/null; then
     echo "unlock: reaping stale build lock $lock (pid $pid is not a running gos)" >&2
     rm -f "$lock"
   fi

@@ -14,7 +14,7 @@
 // close *itself*, so the flow starts on its own and the only thing a person does is answer the sheet:
 // click **Discard**.
 //
-// The row's obstacle was "needs CL1 + CL4; nothing today", and both are now done — CL1's guard and CL4's
+// The row's obstacle was "needs CL1 + CL4; nothing today", and both exist — CL1's guard and CL4's
 // queued platform prompt — so this row needs no binding work at all. It is the *flow* that is being
 // checked, and it has five steps that have to happen in order:
 //
@@ -26,9 +26,9 @@
 //
 // The guard is state and an event, not a callback: `gpui::guard_close(true)` arms it, a refused close
 // arrives as the event `gpui::close_requested()` names, and the program answers on the frame it reads
-// that event. `on_window_should_close(decide)` could not work — a callback handed to a binding function
-// is valid only for that call, and the guard is consulted long after it returned, so on the compiled
-// tiers it answered an error and every close went through.
+// that event. `on_window_should_close(decide)` cannot work — a callback handed to a binding function
+// is valid only for that call, and the guard is consulted long after it returns, so on the compiled
+// tiers it answers an error and every close goes through.
 //
 // Pass means all five, in that order, in the transcript. Clicking Cancel or Save is not a failure of
 // the check but a different answer: the guard keeps the window up and asks again, which is what an
@@ -63,8 +63,8 @@ fn main() {
                 if !gpui::state_bool("dirty", true) {
                     // The verdict is printed *here*, while the window is still alive. Printed after
                     // `gpui::run` returns it is lost: stdout is block-buffered when it is a pipe, and
-                    // the process goes away with the last window before anything flushes it. Measured
-                    // on the first run of this probe, whose two closing lines never appeared.
+                    // the process goes away with the last window before anything flushes it, so two
+                    // closing lines never appear.
                     println("CL2 step 5: the guard allowed the close — nothing is unsaved now")
                     println("OK CL2 the close was refused while unsaved, the question was raised and answered, and the guard has released the window")
                     gpui::allow_close()
@@ -85,9 +85,9 @@ fn main() {
                 println("CL2 a sheet came up: {}", event)
             } else if id == "prompt" {
                 let asked = f"{gpui::state_int("prompt", 0)}"
-                // The button's **name**, not only its index. The first run of this probe printed
-                // "that answer keeps the window up" for both Save and Cancel, and the person reading the
-                // transcript — this run's own owner — had to correct the record. A probe that cannot say
+                // The button's **name**, not only its index. Printing "that answer keeps the window up"
+                // for both Save and Cancel leaves the person reading the
+                // transcript — this run's own owner — to correct the record. A probe that cannot say
                 // which button was pressed is a probe whose evidence somebody has to take on trust.
                 let label = if payload == f"{asked}|0" {
                     "Save"

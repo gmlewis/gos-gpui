@@ -42,17 +42,17 @@
 //     `text_sm` line box (14px font at GPUI's φ=1.618034 line height → 22.65,
 //     rounded to 23) plus `py_0p5()`'s 2px twice plus the 1px `border_b_1` is
 //     28, and the captures show upstream's alternating row tints exactly 28
-//     apart — 56 between every other one. This port declared 22.0, and 22 was
-//     what its rows measured: the binding wraps each row in
-//     `div().h(px(row_height))`, so the declared figure *is* the pitch. An
-//     earlier reading of 22.0 was simply wrong, and it put 41 rows on screen
-//     where upstream shows 33.
+//     apart — 56 between every other one. The port declares 28.0, because the
+//     declared figure *is* the pitch: the binding wraps each row in
+//     `div().h(px(row_height))`, so a declared height is what the rows measure.
+//     To declare 22.0 instead is to ask for rows upstream does not have — 41 on
+//     screen where upstream shows 33.
 //   * The body cells carry `shrink=0`, which upstream does not write. Upstream's
 //     columns keep their declared widths and run off the right edge of the box;
 //     the binding's cells, in the same flex row, shrink to fit instead, and the
 //     whole table was 55-62% of its own column widths. `shrink=0` is the port's
 //     way of asking for what upstream's layout does of its own accord — see the
-//     note on `cell` below for what was measured. Invisible: the two now land on
+//     note on `cell` below for what was measured. Invisible: the two land on
 //     the same columns to the pixel.
 //   * As in every port here, a Gossamer frame describes the whole tree again
 //     rather than re-rendering a retained `Entity<DataTable>`.
@@ -464,9 +464,6 @@ fn main() {
         // the press sets and the release clears, which is upstream's `ev.dragging()`.
         for event in gpui::take_events() {
             let id, kind = gpui::event_parts(event.clone())
-            // Read here, in the frame's own closure, and not in a function of its own:
-            // a pair-returning binding called from a module-level function faults under
-            // the JIT. See "Notes and limits" in `README.md`.
             let px, py = gpui::pointer_xy(event.clone())
             if id == "thumb" {
                 let thumb_x = gpui::element_bounds("thumb", "x")

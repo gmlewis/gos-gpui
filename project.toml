@@ -1,11 +1,20 @@
 [project]
-id = "example.com/learn-gpui"
+id = "github.com/gmlewis/gos-gpui"
 version = "0.1.0"
-gossamer-version = "^v0.68.0"
+gossamer-version = "^v0.70.0"
+license = "Apache-2.0"
+authors = ["Glenn Lewis"]
 
-[dependencies]
+# The `ui` chaining layer is this package's root module, so a project that
+# depends on `gos-gpui` writes `use ui` and reaches `ui::column`, `ui::row`, …
+# directly. The examples in this repository reach the same file through
+# `examples/ui/mod.gos`, which is a symlink to it.
+[lib]
+name = "ui"
+path = "src/lib.gos"
 
-# The `gpui` binding crate wraps Zed's GPU-accelerated UI framework behind a
-# flat, Gossamer-friendly ABI. See gpui-binding/src/lib.rs.
+# The framework underneath. A depending project's own toolchain builds this
+# crate as part of its runner, so `use gpui` works for it too — one dependency
+# declaration brings both modules.
 [rust-bindings]
 gpui-binding = { path = "gpui-binding" }

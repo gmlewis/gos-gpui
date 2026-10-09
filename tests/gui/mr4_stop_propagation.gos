@@ -20,19 +20,20 @@
 // breaking out of each the moment `cx.propagate_event` goes false. Elements register in paint
 // order — a parent paints its own listeners before its children's (`elements/div.rs:1863` before
 // `:1870`) — so the reverse order is **child-first**, and what a stop withholds the event from is
-// the *ancestors*. `App::stop_propagation` (`app.rs:1712`) was always there to be called; what the
-// binding lacked was any way to say "this element, and not the box around it". `gpui::on_mouse`
+// the *ancestors*. `App::stop_propagation` (`app.rs:1712`) is there to be called; what is missing
+// is any way to say "this element, and not the box around it". `gpui::on_mouse`
 // takes a list of kinds and there is no way to write "everything except this one" in a list.
 //
-// A kind word may now carry a trailing `!`. `"down!"` is `down` — `kinds.contains("down")` is still
+// A kind word may carry a trailing `!`. `"down!"` is `down` — `kinds.contains("down")` is still
 // true of it — with one listener option set, and the `!` is on the kind rather than on the element
 // because an element may want its own press reported and the presses *inside* it left alone.
 //
 // # The three readings
 //
-//   * the child hears its press — which it did before this round too, and which is here so that a
-//     probe that heard nothing at all cannot pass;
-//   * the parent does not hear that press — the clause, and the one red at 329133c;
+//   * the child hears its press — which is here so that a probe that heard nothing at all cannot
+//     pass;
+//   * the parent does not hear that press — the clause, and the one red in
+//     `tests/evidence/MR4.stop.before.txt`;
 //   * the parent hears a **second** press, on the same child, and a third one placed past the
 //     child's own rectangle — so that "the parent is silent" cannot be the answer. The third is
 //     the control: it is the same listener, the same frame, the same window, and it answers. The

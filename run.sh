@@ -19,8 +19,8 @@ cd "$(dirname "$0")"
 
 if [ $# -eq 0 ]; then
   echo "examples:"
-  # Only the numbered ports are examples; examples/status.gos and
-  # examples/ui/ are the shared scaffolding they import.
+  # Only the numbered ports are examples; examples/status.gos is scaffolding
+  # they import, and `ui` is the package at src/
   for file in examples/[0-9][0-9]_*.gos; do
     printf '  %s\n' "$(basename "$file" .gos)"
   done
@@ -42,7 +42,7 @@ fi
 # pathname expansion on the right-hand side of a plain assignment, so
 # `file="examples/$1"*.gos` would leave the asterisk in the string.
 # Only the numbered ports are examples; examples/status.gos is scaffolding the
-# examples import, and examples/ui/ is the chaining layer.
+# examples import, and `ui` is the chaining layer (src/lib.gos).
 is_example() {
   case "$(basename "$1")" in
     [0-9][0-9]_*.gos) return 0 ;;

@@ -39,8 +39,10 @@ work here is not done until it does both — see
 - **A test suite and the tooling to run it**, including a container that runs a
   GUI program with no window on your screen. See [Testing](#testing).
 
-`examples/status.gos` and `examples/ui/` are the shared scaffolding those
-programs import — they are not examples, and `run.sh` will not accept them.
+`examples/status.gos` is scaffolding the examples import — it is not an example,
+and `run.sh` will not accept it. The chaining layer `ui` now lives in the package
+at [`src/lib.gos`](src/lib.gos); the examples reach it through
+`examples/ui/mod.gos`, which is a symlink to that file.
 
 ## Before you build on this
 
@@ -51,30 +53,52 @@ native dialogs, OS file drop, async — that no Gossamer program can reach throu
 it. Each is listed there with its reason. A limit you read about costs you a
 minute; one you discover costs you a day.
 
-**There is no supported way to depend on this from your own project yet.** The
-binding — `gpui-binding`, which is where `gpui::` comes from — is an ordinary
-Rust crate, and `[rust-bindings]` can name it. But `ui`, the module that makes a
-tree pleasant to build, is a **file inside `examples/`**, not a library: a program
-of your own that writes `use ui` gets `error[GR0005]: module 'ui' does not exist`.
-Using this from a project of your own therefore means copying
-[`examples/ui/mod.gos`](examples/ui/mod.gos) into it and keeping it in step by
-hand. That is the single largest thing standing between this and a toolkit, and
-it is not yet solved.
+**Add it to your project with one declaration.** A project of your own writes a
+single entry in its `project.toml` and copies nothing out of this repository:
 
-**Licence: not yet stated.** There is no `LICENSE` file in this repository, so
-the terms it is offered under are undetermined. Assume nothing until one is
-added.
+```toml
+[dependencies]
+"github.com/gmlewis/gos-gpui" = { path = "/path/to/this/checkout", module = "ui" }
+```
+
+That one entry brings **both** modules. `use ui` reaches the chaining layer —
+its root module, renamed `ui` by the `module = "ui"` key — and `use gpui`
+reaches the binding, which the package's own `[rust-bindings]` entry declares
+and your toolchain builds as part of your runner. Nothing else is needed.
+
+`scripts/toolkit.sh` is the check for exactly this: it stands up that project
+**outside this repository**, in `/tmp`, whose only relationship to this tree is
+the line above, and runs it on every tier this machine can run.
+
+Once the repository is published, the intended form names a released tag rather
+than a local path:
+
+```toml
+"github.com/gmlewis/gos-gpui" = { git = "https://github.com/gmlewis/gos-gpui", tag = "v0.1.0", module = "ui" }
+```
+
+Gossamer accepts `git` / `tag` (and `branch` / `rev`), `version` for a registry,
+and `tarball` + `sha256`; the `git` form is the documented one and is what
+`gos build` and `gos run` resolve against. **It is not exercised by this
+repository's own checks yet** — a `git` source must be an `https`/`ssh` URL, so
+it cannot be pointed at a local checkout, and there is no published tag. The
+`path` form above is the one `scripts/toolkit.sh` proves on every run.
+
+**Licence: Apache-2.0.** [`LICENSE`](LICENSE) is the Apache License, Version
+2.0, and `project.toml` declares `license = "Apache-2.0"`. GPUI itself is
+Apache-2.0, so the terms line up; the binding links GPUI rather than vendoring
+it, and the ported examples are the crate's own, copied in unmodified.
 
 ## Requirements
 
 - **macOS on Apple silicon or Intel, or Linux on X11.** GPUI renders through
   Metal on macOS and through Vulkan or GLES on Linux. These examples were
-  written and verified on an M2 Max; the Linux configuration is described below
-  and has not been run end to end.
+  written and verified on an M2 Max; the Linux configuration is described below,
+  and has been exercised only headless, in a container.
 - **macOS:** Xcode command-line tools (`xcode-select --install`).
 - **Linux:** the build and runtime packages listed under
   [On Linux](#on-linux).
-- **Gosammer 0.68.0** — `gos --version` (the version `project.toml` pins).
+- **Gossamer 0.70.0** — `gos --version` (the version `project.toml` pins).
 - **A Rust toolchain.** GPUI needs a recent stable `rustc` and a Cargo that
   understands edition 2024, so 1.85 is the floor for the binding crate.
   Building `gos` itself from source wants 1.95 — see its
@@ -87,14 +111,28 @@ turns on GPUI's `runtime_shaders` feature instead, so the shader source is
 handed to Metal when the window is created. See
 [`gpui-binding/Cargo.toml`](gpui-binding/Cargo.toml).
 
-**The first run is slow.** `gos run` against a project with `[rust-bindings]`
-builds a per-project runner with Cargo, and that means compiling GPUI — a few
-hundred crates, several minutes. The result is cached per machine under
-`$XDG_CACHE_HOME/gossamer/runners/`, so every run after the first starts
-immediately. A debug-profile GPUI is unoptimised, which shows in the animation
-examples.
+**The first run is slow, and the wait is a one-time compile.** `gos run` against
+a project with `[rust-bindings]` builds a per-project runner with Cargo, and that
+means compiling GPUI. Measured on an M2 Max with the Cargo registry already warm
+and the runner cache empty, `07_hello_world` — the smallest example — takes
+**about two and a half minutes**: roughly 80 seconds to build the runner, then 50
+more to compile and link the binary. Every run after that starts immediately: the
+same build again takes about a second. The result is cached per machine under
+`$XDG_CACHE_HOME/gossamer/runners/`, cargo's own `target/` included — budget about
+8 GB for it. A machine that has never built anything with Cargo pays the registry
+download on top of the two and a half minutes. A debug-profile GPUI is
+unoptimised, which shows in the animation examples.
 
 ## Run an example
+
+Start with the smallest one — a window and a label, which is all you need to see
+that the toolchain works before you spend the first-run compile on anything else:
+
+```sh
+./run.sh 07                       # or: ./run.sh examples/07_hello_world.gos
+```
+
+then any of the others:
 
 ```sh
 ./run.sh 04                       # or: ./run.sh examples/04_gif_viewer.gos
@@ -109,7 +147,7 @@ gos run --main-thread examples/04_gif_viewer.gos
 `--main-thread` is not optional, on either platform. GPUI drives a native event
 loop — AppKit on macOS, X11 on Linux — and both insist on the process main
 thread; `gos run` otherwise executes the program on its own `gos-vm` thread.
-Gosammer has the flag precisely for native libraries that mandate the main
+Gossamer has the flag precisely for native libraries that mandate the main
 thread. Without it GPUI stops with `must construct App on main thread`.
 
 The argument can be a number, a name, or a path; `--print` resolves it without
@@ -130,7 +168,7 @@ misbehaves here, running the upstream example for it separates three cases:
 
 | upstream | here | so the fault is |
 |---|---|---|
-| works | misbehaves | the binding, or the Gosammer toolchain |
+| works | misbehaves | the binding, or the Gossamer toolchain |
 | misbehaves | misbehaves | gpui itself |
 | works | works | your own change |
 
@@ -150,8 +188,8 @@ handful its examples reach for — `anyhow`, `env_logger`, `log`, `lyon`,
 needs for let-chains. `image_gallery` is skipped: it imports `reqwest_client`,
 a zed-workspace crate that is not published.
 
-**This will not reproduce the toolchain bugs in [Notes and limits](#notes-and-limits).**
-Those abort inside `gossamer-runtime`, from Gossamer-generated code; the Rust
+**This will not reproduce the compiled-tier `SIGBUS` in [Notes and limits](#notes-and-limits).**
+That aborts inside `gossamer-runtime`, from Gossamer-generated code; the Rust
 examples never touch that path. What upstream comparison is *for* is everything that renders wrong
 or behaves oddly without crashing — a widget missing, a layout off, a list not
 scrolling, a key not arriving.
@@ -159,7 +197,7 @@ scrolling, a key not arriving.
 ## On Linux
 
 The Gossamer side is platform-neutral — every `.gos` file, including
-`examples/ui/mod.gos`, runs unchanged. What differs is all in the binding crate
+[`src/lib.gos`](src/lib.gos), runs unchanged. What differs is all in the binding crate
 and the two scripts, and it is already wired up:
 
 - [`gpui-binding/Cargo.toml`](gpui-binding/Cargo.toml) takes gpui's **X11
@@ -180,7 +218,7 @@ and the two scripts, and it is already wired up:
 
 `gos run` needs no LLVM: the [install page](https://gossamer-lang.org/docs/install/)
 is explicit that only `gos build` wants LLVM 18–22. So the minimum is `gos`
-0.68.0, a Rust toolchain, and GPUI's Linux build dependencies.
+0.70.0, a Rust toolchain, and GPUI's Linux build dependencies.
 
 Of GPUI's dependency tree, only `x11`, `freetype-sys` and
 `yeslogic-fontconfig-sys` shell out to `pkg-config`, and the last of those is
@@ -195,44 +233,61 @@ plus, at runtime, a Vulkan driver (`mesa-vulkan-drivers`, or your GPU vendor's)
 and `libxkbcommon-x11-0`. Add `libfontconfig1-dev` if a build actually asks for
 it. Mint ships fonts; the examples set sizes and weights but never families.
 
-### What is not verified
+### What has been run, and what has not
 
-The Linux path has not been run end to end — it was written from the source and
-the dependency graph, on a Mac. Open questions, in rough order of risk:
+The Linux path **has** been run, headless. `scripts/gosbox.sh` and
+`scripts/toolkit.sh` stage this tree into `gosbox:2` — aarch64 Debian with Xvfb,
+a window manager, a software Vulkan device (llvmpipe) and LLVM 22 — so a GPUI
+window opens onto a virtual display that never reaches a screen. A project
+**outside this tree**, related to it by one dependency declaration, resolves on
+`gos check`, runs its window, draws a label and a button, and handles a click,
+on **both interpreter tiers**; the transcript is in
+[`tests/evidence/compiled-tier-sigbus-minimal.txt`](tests/evidence/compiled-tier-sigbus-minimal.txt).
+Its two compiled tiers link and then abort with the SIGBUS of
+[Notes and limits](#notes-and-limits) — the same fault seen on the Mac, which is
+how that bug is known not to be macOS-only. So the backend builds and runs; what
+runs it is a software rasteriser, not a GPU.
 
-1. Whether GPUI 0.2.2's Linux backend builds and runs at all. Zed develops on
-   Linux, so it should; 0.2.2 is a snapshot, so it is not certain.
-2. Vulkan versus GLES. `blade-graphics` ships `vulkan/`, `gles/` and `metal/`
-   backends. A machine with working Mesa/Vulkan is the happy path.
-3. The exact package list above, which is derived from reading build scripts
-   rather than from a build. Whatever the compiler asks for wins.
-4. Whether the toolchain bugs in [Notes and limits](#notes-and-limits)
-   reproduce on x86_64.
-5. Your session type. Mint 22.3 Cinnamon is X11 by default, which is what this
+What that does **not** settle, in rough order of risk:
+
+1. A real GPU. llvmpipe is a software Vulkan device, so "it renders" here is not
+   "it renders on an Intel/AMD/NVIDIA driver". The `blade-graphics` backends
+   (`vulkan/`, `gles/`, `metal/`) are all compiled in, but only the software one
+   has been exercised.
+2. x86_64. The container is aarch64. Nothing here is architecture-specific, but
+   the layout-sensitive compiled-tier bug is exactly the kind of thing that could
+   differ, and it has only been seen on aarch64 and Apple silicon.
+3. The exact package list above, which is still derived from reading build
+   scripts rather than from a `apt-get install` on a clean Mint. It is the list
+   that produced the container image; whatever the compiler asks for still wins.
+4. Your session type. Mint 22.3 Cinnamon is X11 by default, which is what this
    configuration targets; a Wayland session would need the `wayland` feature
    back.
 
 **Do not cross-compile.** `gos build --target x86_64-unknown-linux-gnu` from
-macOS needs an external sysroot and sits outside Gosammer's support contract.
+macOS needs an external sysroot and sits outside Gossamer's support contract.
 Build natively on each machine from the same repo; the runner cache is
 per-machine and regenerates cleanly.
 
 ## Building a native binary
 
 ```sh
-./build.sh 07                  # a native binary, same pixels as ./run.sh 07
+./build.sh 07                  # a native binary
 ./build.sh 07 --release        # and optimised
 ```
 
-**Both build tiers work.** `gos build` used to produce a binary that aborted
-before the window appeared, with a misaligned-pointer panic inside the runtime
-(`c_abi/bufio.rs`); as of the released `gos` 0.68.0 it links and
-renders, and `07_hello_world` draws its swatches at the same panel geometry and
-the same colours as `gos run` and as upstream — see
-[Notes and limits](#notes-and-limits).
+**The build tiers link; whether the binary runs is a layout lottery.** `gos build`
+produces a native binary and links it, but the compiled tiers carry the
+**layout-sensitive** `SIGBUS` of [Notes and limits](#notes-and-limits): a program
+that runs perfectly under the interpreter can still abort before its window
+appears, and a single changed string literal can flip one program from
+three-of-three-pass to three-of-three-crash. The headless Linux container aborts
+on `07_hello_world` and on the toolkit check's scratch program alike. So a
+compiled binary that runs is the common case and not a guarantee;
+`./scripts/tiers.sh <program>` is how you find out which way yours falls, and
+`./build.sh` is the path that gets you there.
 
-One half of the old problem was real and is still there to be solved. `gos build`
-links the binary itself, and its
+`gos build` links the binary itself, and its
 linker plan can only emit `-L` and `-l` — there is no manifest key for
 `-framework`, and `-lAppKit` does not resolve because AppKit is a framework
 rather than a `libAppKit.tbd`. Left alone the link fails with a wall of
@@ -266,7 +321,7 @@ fn main() {
 }
 ```
 
-Three Gosammer features do the work here, and none of them needed anything from
+Three Gossamer features do the work here, and none of them needed anything from
 the Rust side:
 
 - **`.` chaining.** `ui::El` is a `newtype` over the binding's `i64` handle, and
@@ -290,8 +345,9 @@ GPUI, and GPUI schedules the next frame.
 
 ## The `ui` module
 
-`examples/ui/mod.gos` is the ergonomic layer. It is small and worth reading —
-it is where the chaining lives.
+[`src/lib.gos`](src/lib.gos) is the ergonomic layer — the package's root module,
+which a depending project reaches as `ui`. It is small and worth reading — it is
+where the chaining lives.
 
 ### Containers
 
@@ -353,7 +409,7 @@ a per-frame arena, which is why `ui` exists; a program can also use it directly.
 | | |
 |---|---|
 | `gpui::animate()` | ask for another frame as soon as this one is on screen. Call it while you want a frame loop; stop calling it to move. |
-| `gpui::animation(id, ms, easing)` | start a clock that runs from 0 to 1 over `ms`; `gpui::animation_phase(id)` is where it is, which is what a painter takes — `gpui::draw("bars", gpui::animation_phase("grow"), …)`. While one runs the frames come by themselves. `gpui::animation_pause` / `_resume` / `_stop` hold it, carry it on and take it away; `gpui::animation_state(id)` is `"none"`/`"running"`/`"paused"`/`"done"`, `gpui::animation_easings()` the curves, and `gpui::easing_at(name, t)` one of them applied. |
+| `gpui::animation(id, ms, easing)` | start a clock that runs from 0 to 1 over `ms`; `gpui::animation_phase(id)` is where it is, which is what a painter takes — `gpui::draw("bars", gpui::animation_phase("grow"), …)`. While one runs the frames come by themselves. `gpui::animation_pause` / `gpui::animation_resume` / `gpui::animation_stop` hold it, carry it on and take it away; `gpui::animation_state(id)` is `"none"`/`"running"`/`"paused"`/`"done"`, `gpui::animation_easings()` the curves, and `gpui::easing_at(name, t)` one of them applied. |
 | `gpui::tick(id, ms)` | raise the event `id` every `ms` milliseconds. Calling it again for a running id **reschedules** it; `gpui::tick_stop(id)` ends it. `gpui::tick_period(id)` answers the period, or `0`. |
 | `gpui::delay(id, ms)` | raise the event `id` **once**, `ms` milliseconds from now. Ask again for an id already waiting to restart the wait; `gpui::delay_cancel(id)` takes it back, and `gpui::delay_pending(id)` says whether one is waiting. |
 | `gpui::task(id, ms)` | do slow work off the UI thread for `ms`, then raise `id` and leave a summary under `"<id>.result"`. The window keeps painting while it runs. `gpui::task_result(id)` reads the summary and is `""` until the work is done; `gpui::task_running(id)` says whether it is still in flight; `gpui::task_cancel(id)` stops it — no event, no result, and only that one id. While the work runs it raises `"<id>.progress"` and `gpui::task_progress(id)` is the number those events are about, `0.0` to `1.0`, so a progress bar is `gpui::draw("bars", gpui::task_progress("id"), …)`. **What the work *is*** is a Rust-side job: no callback a program can write is ever run off the UI thread (see the ledger's `## Unreachable`). |
@@ -362,7 +418,7 @@ a per-frame arena, which is why `ui` exists; a program can also use it directly.
 | `gpui::set_app_name(name)` | name the application, as the macOS menu bar shows it — the bold word at the left, and the one in the Apple menu's `Force Quit …`. It is the *application's* name and not the menu's: upstream's `set_menus` example shows `set_menus` because its binary is called that, and `text.rs` shows `text` while naming its own menu "GPUI Typography". Every port runs under the shared `gos-runner`, so a port whose bar is visible declares the name here. **Call it before `gpui::run`** — macOS reads the name before the bar is first drawn — and it does nothing on Linux, which has no such bar. |
 | `gpui::on_keys(true)` | route keystrokes to the program as `"key\|<stroke>"` events, and releases as `"keyup\|<stroke>"`. |
 | `gpui::emit(id, payload)` | raise one event for an id you name — upstream's `cx.emit`. |
-| `gpui::subscribe(topic, id)` / `unsubscribe(topic, id)` | ask the event id `id` to hear `topic`. A subscription is an *event id*, not a callback: the program handles its events once a frame, and a topic arrives in the same place as everything else. Subscribing twice is subscribing once, and a subscription belongs to a window. `gpui::subscribers(topic)` and `topics()` read the roster back. |
+| `gpui::subscribe(topic, id)` / `gpui::unsubscribe(topic, id)` | ask the event id `id` to hear `topic`. A subscription is an *event id*, not a callback: the program handles its events once a frame, and a topic arrives in the same place as everything else. Subscribing twice is subscribing once, and a subscription belongs to a window. `gpui::subscribers(topic)` and `gpui::topics()` read the roster back. |
 | `gpui::publish(topic, payload)` | raise `"<id>\|<payload>"` for every subscriber of `topic`, and answer how many heard it. A topic nobody is on raises nothing — a signal nobody is listening for is not an error. |
 | `gpui::bind_keys(spec)` | bind keystrokes to the program's own event names: `"cmd-s=save; cmd-shift-z=redo"`. Each bound stroke raises `"<name>"`, in the window that asked. |
 | `gpui::keymap()` | what is bound, as `"<stroke>:<name>"`, in the order it was bound. |
@@ -401,7 +457,13 @@ you want both).
 | `ui::on_mouse(el, kinds, id)` | `"id\|kind"` | the pointer kinds `down`, `up`, `move`, `click`, `right`, `scroll` and `exit`, and the four drag words `drag`, `over`, `out` and `drop`. The point is under `<id>.x` / `<id>.y`, element-relative; a `!` on a kind word — `"down!"` — reports it **and** stops it there, so the element the event landed on keeps the panel around it from hearing it too |
 | `ui::on_mouse_window(el, kinds, id)` | `"id\|kind"` | the same kinds, reported wherever the pointer is rather than only while it is over the element — which is how a drag is followed after it leaves the element it began on. `exit` means the pointer left *the window* here, where at element level it means it left *the element* |
 
-Three readings come with the mouse kinds and are not events at all. `gpui::mouse_position()` is
+Four readings come with the mouse kinds and are not events at all. `gpui::pointer_xy(event)` is
+the point a **pointer event** happened at, in the window's coordinates — the same number
+upstream's `MouseDownEvent::position` holds, and the one to paint with. It is the per-event
+reading, where the store's `<id>.x` / `<id>.y` is the per-element one: the store keeps one
+`<id>.x` per element and every event overwrites it, so a frame that several moves coalesced into
+can only report the last of them, while the event itself carries its own point. The two are the
+same number only for an element at the window's own origin. `gpui::mouse_position()` is
 the pointer's own point in the frame being built. `gpui::group_hovered(name)` answers whether the
 pointer is over **any** element whose style carries `group=<name>` — a card that reacts while the
 pointer is over anything inside it — and it is the reading half of gpui's own `group_hover`, which
@@ -420,10 +482,10 @@ does.
 
 | | |
 |---|---|
-| `gpui::state_int(key, default)` / `set_int(key, value)` | |
-| `gpui::state_float(key, default)` / `set_float(key, value)` | |
-| `gpui::state_bool(key, default)` / `set_bool(key, value)` | |
-| `gpui::state_text(key, default)` / `set_text(key, value)` | |
+| `gpui::state_int(key, default)` / `gpui::set_int(key, value)` | |
+| `gpui::state_float(key, default)` / `gpui::set_float(key, value)` | |
+| `gpui::state_bool(key, default)` / `gpui::set_bool(key, value)` | |
+| `gpui::state_text(key, default)` / `gpui::set_text(key, value)` | |
 | `gpui::forget(key)` | drop one key, whatever type it holds |
 | `gpui::list_push(key, value)` | append |
 | `gpui::list_len(key)` | |
@@ -431,7 +493,7 @@ does.
 | `gpui::list_set(key, index, value)` | |
 | `gpui::list_insert(key, index, value)` | |
 | `gpui::list_remove(key, index)` | |
-| `gpui::list_all(key)` / `list_replace(key, values)` | |
+| `gpui::list_all(key)` / `gpui::list_replace(key, values)` | |
 | `gpui::list_clear(key)` | |
 
 Calling `set_int` from inside the view needs no notification at all: the tree
@@ -527,7 +589,7 @@ for event in gpui::take_events() {
 | `gpui::hide()` | put the whole application away, as the platform's Hide does — the program does not stop, and a person brings it back from the dock |
 | `gpui::refresh()` | ask the platform to re-read its windows, after a display change |
 | `gpui::keyboard_layout()` | which keyboard layout is in use, by its platform identity |
-| `gpui::ask_active_window()` / `active_window()` | which of the program's windows the platform calls active; the answer arrives on the next frame, and `0` means none of ours |
+| `gpui::ask_active_window()` / `gpui::active_window()` | which of the program's windows the platform calls active; the answer arrives on the next frame, and `0` means none of ours |
 | `gpui::reveal(path)` | show a path in the file manager |
 | `gpui::open_with_system(path)` | hand a path to the platform's handler for its kind |
 | `gpui::open_url(url)` | open a URL in the browser |
@@ -577,9 +639,9 @@ See the ledger's `## Unreachable`.
 
 `gpui::focus` works on any element this binding has a handle for: an `input`, an `editor`, a `button`, or
 anything whose style asks to be `focusable`. An id with no handle does nothing and says nothing — ask
-`gpui::focused()` on the next frame to see whether it took. **The tab order is a separate matter:** a probe in
-round 70 found `gpui::focus_next()` reaching no element at all, so `tabstop=` and `tabindex=` are applied to
-the element but their *ordering* has not been seen to work.
+`gpui::focused()` on the next frame to see whether it took. **The tab order is a separate matter:**
+`gpui::focus_next()` has not been seen to reach an element at all, so `tabstop=` and `tabindex=` are
+applied to the element but their *ordering* does not currently work.
 
 ### What the machine is
 
@@ -628,7 +690,7 @@ if head != "" {
 | `gpui::prompt_current()` | the one whose turn it is, as `"<id>\|<title>\|<message>"`, or `""` |
 | `gpui::prompt_buttons()` | its labels, in order — the index of one is what `prompt_answer` takes |
 | `gpui::prompt_answer(id, button)` | answer it, and answer whether that was the one whose turn it was |
-| `gpui::prompt_cancel(id)` / `prompts_clear()` | drop one, or all — cancelling is not answering |
+| `gpui::prompt_cancel(id)` / `gpui::prompts_clear()` | drop one, or all — cancelling is not answering |
 | `gpui::prompts()` | everything waiting, in order, as `"<id>\|<title>"` |
 
 An answer raises `"prompt\|<id>\|<button>"` in the window that asked, so a program hears it in the
@@ -656,8 +718,8 @@ if gpui::history_can_undo("notes") {
 |---|---|
 | `gpui::history_watch(key)` | start recording `key`; the text it holds now is the baseline |
 | `gpui::history_unwatch(key)` | stop, dropping the history |
-| `gpui::history_undo(key)` / `history_redo(key)` | step back or forward, and answer whether there was a step |
-| `gpui::history_can_undo(key)` / `history_can_redo(key)` | |
+| `gpui::history_undo(key)` / `gpui::history_redo(key)` | step back or forward, and answer whether there was a step |
+| `gpui::history_can_undo(key)` / `gpui::history_can_redo(key)` | |
 | `gpui::history_depth(key)` | how many steps back it is possible to go |
 
 A **run of typing is one step**, not one per keystroke: insertions in a row coalesce, deletions in
@@ -688,7 +750,7 @@ gpui::run("My App", 900.0, 600.0, f"pos={at}", || { … })
 
 | | |
 |---|---|
-| `gpui::settings_set(path, key, value)` / `settings_get(path, key)` | one string; writing one key leaves the others |
+| `gpui::settings_set(path, key, value)` / `gpui::settings_get(path, key)` | one string; writing one key leaves the others |
 | `gpui::settings_forget(path, key)` | drop one key |
 | `gpui::remember_window_state(path, key, x, y, w, h)` | the four numbers a window's bounds are |
 | `gpui::saved_bounds(path, key)` | `"x,y,w,h"`, or `""` when nothing whole is stored |
@@ -699,6 +761,123 @@ A **half-written** window state is nothing: if any of the four is missing or is
 not a number, `saved_bounds` is `""` and `saved_field` is `0.0`, so a window opens
 where it was told to rather than at 0,0. `pos=x,y` places a window itself;
 `place=center` after it wins, and `gpui::open_window` already takes x and y.
+
+### Everything else the binding registers
+
+The tables above are the calls a program reaches for by name. They are not the
+whole surface — the binding registers 257 functions — so the rest are grouped
+below. `scripts/docs.sh` holds this list to the binding in **both** directions: a
+registered function that is in no table and matches no line here is a failure,
+and so is a line here that matches nothing, which is what a rename leaves behind.
+
+Every one of these is a real call with a doc comment in
+`gpui-binding/src/lib.rs`; the list is here so that a reader who cannot find a
+name in the tables knows it exists, and so the check has something to hold.
+
+```text
+# The window-scoped form of a call: the same function with the window named.
+# `gpui::set_int` writes the store for the window asking; `gpui::set_int_in`
+# writes it for the window id you name. A program driving one window never needs
+# these; the multi-window ports do.
+*_in
+
+# The `ui` chaining layer's own element constructors. They are registered here
+# because a `ui` call is a `gpui` call with the plumbing done, but a program
+# reaches them as `ui::name` — see "The `ui` module" above, which documents each.
+button
+checkbox
+children
+column
+divider
+editor
+icon
+image
+input
+list
+panel
+progress
+rect
+row
+scroll
+slider
+spacer
+stack
+text
+
+# Drawing a shape by hand: the `path_*` builder walks a subpath, and
+# `paint_paths` fills or strokes the one it built.
+path_*
+paint_paths
+
+# Images loaded from disk, over and above `ui::image`.
+image_evict
+image_missing
+image_request
+image_state
+
+# Lists of numbers, and the list surface that is not in the table above.
+list_all_float
+list_push_float
+list_range
+list_scroll_to
+
+# Menus and windows, beyond the calls in the tables above.
+menu_accelerators
+menu_bad
+menu_slots
+active_window
+allow_close
+close_requested
+close_window
+guard_close
+keep_alive
+resize_window
+revive_window
+run_with_rows
+send_key
+toggle_fullscreen
+window_bounds_state
+window_closed_event
+window_option
+zoom_window
+
+# Text, its size, and the clipboard.
+font_families
+line_height
+set_rem_size
+text_advance
+text_em_width
+text_line_height
+text_width
+clipboard_kind
+clipboard_text
+set_clipboard_text
+
+# The rest of the surface, each with its own doc comment in `lib.rs`.
+appearance
+clear_noted_errors
+default_color_for
+display_count
+display_field
+event_id
+focus_prev
+highlight_properties
+noted_errors
+observe_appearance
+observe_keystrokes
+observe_window_bounds
+on_mouse
+on_mouse_window
+scroll_max_offset
+scroll_offset
+scroll_to
+set_window_title
+style_refinements
+theme
+theme_override
+unknown_style_tokens
+unknown_window_tokens
+```
 
 ## The style language
 
@@ -885,8 +1064,7 @@ GPUI expresses with a generic, a trait, an owned payload or a callback that
 outlives its call has to be redesigned before it can cross at all. See
 [What this cannot do](#what-this-cannot-do).
 
-Two things worth knowing about it, both learned the hard way while writing it.
-The check must run with `GOSSAMER_IN_RUNNER` **removed** rather than emptied — the
+Two things worth knowing about it. The check must run with `GOSSAMER_IN_RUNNER` **removed** rather than emptied — the
 toolchain tests it with `var_os(..).is_some()` and skips the whole binding
 dispatch when it is set, so a check started from inside a running program cannot
 resolve the binding's own modules. And it must be a **separate invocation** from
@@ -913,7 +1091,7 @@ Knowing these keeps a difference from being mistaken for a bug:
 - **`ui::list` takes an explicit row height**; upstream's `uniform_list`
   derives it from the first row laid out.
 - **`gpui::run` is called with `--main-thread`**, which upstream has no
-  equivalent of — it is a Gosammer requirement, not a GPUI one.
+  equivalent of — it is a Gossamer requirement, not a GPUI one.
 
 ## The five tiers
 
@@ -933,12 +1111,11 @@ five:
 `./scripts/tiers.sh <program>` runs one program on all five tiers and prints the
 transcript. Reach for it whenever a change might be backend-sensitive.
 
-Two reasons to take that seriously. A shape the interpreter compiles happily —
-a `Vec<T>` whose `T` is a binding struct — panics under the JIT, and `gos check`
-never complains. And a program that runs perfectly under the interpreter has
-been seen to abort on the compiled tiers depending on the **length of a string
-literal** in it. Neither is visible from a single tier; see
-[Notes and limits](#notes-and-limits).
+Two reasons to take that seriously. `gos check` is a type checker and not a
+run, so it says nothing about whether a program survives one. And a program
+that runs perfectly under the interpreter has been seen to abort on the
+compiled tiers depending on the **length of a string literal** in it. Neither
+is visible from a single tier; see [Notes and limits](#notes-and-limits).
 
 ## Testing
 
@@ -990,7 +1167,12 @@ With a window up, `screencapture -x -o -l<window-number> out.png` captures it, a
 ./scripts/docs.sh          # the docs still describe the code
 ./scripts/pair-census.sh   # every documented deviation has a verdict, and every verdict a deviation
 ./scripts/update-api       # is the binding still in step with the pinned gpui?
+./scripts/toolkit.sh       # can a stranger build on this? — see "Before you build on this"
 ```
+
+`toolkit.sh --no-run` is the headless half — licence, dependency declaration,
+docs, the "cannot do" section and CI — and it says so in its verdict rather than
+claiming a whole toolkit; without the flag it also runs the window.
 
 `pair-census.sh` reads [`tests/evidence/pairs/census.tsv`](tests/evidence/pairs/census.tsv)
 and checks it against the examples themselves, in both directions. Every
@@ -1060,12 +1242,21 @@ is reachable.
 
 Two changes, in the order of what they unlock.
 
-1. **A callback that outlives the binding call.** This one change would open the
-   largest block by far: drag and drop, subscriptions, async, custom assets and
-   input handlers all wait on it. It was considered and rejected once, because the
-   mechanism for retaining a callback is not in the toolchain this project pins.
-   If you are reading this with a `gos` newer than 0.68.0, it is worth checking
-   again — it is the highest-value thing anyone could do here.
+1. **A callback the compiled side keeps alive past the binding call.** This one
+   change would open the largest block by far: drag and drop, subscriptions,
+   async, custom assets and input handlers all wait on it. It is not the handle
+   that is missing — `gos` 0.70.0 ships `gossamer_binding::PersistentCallback`,
+   which owns a strong reference to a Gossamer callable and can be re-invoked
+   later — it is the **registration**. A compiled caller emits
+   `gos_rt_binding_callback_release` as soon as the binding function that
+   received the callback returns, and `PersistentCallback::from_handle` states
+   the consequence in as many words: "the handle is valid only during the binding
+   call that received it". So this binding can hold a callback across exactly one
+   kind of call — one that never returns — which is why `gpui::run` works, and
+   why `cb_fn` appears twice in [`lib.rs`](gpui-binding/src/lib.rs) and nowhere
+   else. What to look for in a later `gos` is a registration the compiled side
+   honours past the call: keep it until the binding says it is done. That is the
+   highest-value thing anyone could do here.
 2. **Several hundred more binding functions, and about a dozen new mechanism
    blocks** — on the order of 25,000 more lines of binding Rust, against the
    ~14,500 in [`gpui-binding/src/`](gpui-binding/src/) today. Roughly a fifth of
@@ -1093,45 +1284,30 @@ Two changes, in the order of what they unlock.
 - **The row builder runs during layout.** A `list` callback is invoked while
   GPUI is laying out, not while your view is building, so keep it to reads and
   element descriptions.
-- **Three toolchain bugs, found while writing these.** All three are Gosammer's
-  rather than the binding's, and all three are open or only partly closed in `gos`
-  0.68.0.
+- **A `SIGBUS` on the compiled tiers that is not your program's fault.** A
+  program that runs perfectly under the interpreter can still abort with
+  `SIGBUS` (`EXC_BAD_ACCESS`, `EXC_ARM_DA_ALIGN`) before the window appears —
+  and **which** programs do depends on the *layout* of the compiled code, not on
+  what they do. Two records cover it:
+  [`tests/evidence/compiled-tier-sigbus.txt`](tests/evidence/compiled-tier-sigbus.txt)
+  shows the layout sensitivity on the Mac: changing one string literal — the
+  window title in a keys/focus probe — turns a three-of-three pass into a
+  three-of-three crash, and changing it back turns it round again.
+  [`tests/evidence/compiled-tier-sigbus-minimal.txt`](tests/evidence/compiled-tier-sigbus-minimal.txt)
+  is the smallest reproduction: a 25-line program in a scratch project
+  **outside this tree**, whose only tie to it is a dependency declaration,
+  aborts on both compiled tiers (exit 135) and passes on both interpreters — so
+  it is not the ports, and it is not one platform. Both records put the fault in
+  the same frame: the native callback the render path invokes. It is
+  reproducible, it is layout-sensitive, and it is understood only as far as the
+  symptom.
 
-  *On the JIT tier* (`gos run`), a `for` loop that carries an element handle and
-  calls a helper per iteration mis-compiles. The program aborts with
-  `misaligned pointer dereference` in `c_abi/bufio.rs`. `gos run --no-jit` runs
-  the same program correctly, which is how the tier was pinned down. The
-  examples avoid the shape by collecting a run of siblings and hanging them off
-  a container at once — `ui::row(..).children((0..n).map(build).collect())` —
-  which is tidier anyway.
-
-  The same tier has a second, narrower version of it: **a binding function that
-  returns a pair, called from a module-level function, faults under the JIT** with
-  `gossamer: fault inside JIT-compiled body '<fn>'` and exit 127. `gpui::pointer_xy`
-  is the one such function here, so the examples read the point off the event
-  *inside the frame's own closure* and pass it down as an argument. Several of
-  them carry a comment saying so; that is why. `gos run --no-jit` is unaffected,
-  and the compiled tiers call it correctly.
-
-  *On the native tier* (`gos build`), the same shape used to abort before any
-  window appeared, reproducing on a twenty-line program with no `ui` module and
-  surviving `gos clean`. **That is fixed** as of the released `gos` 0.68.0: `./build.sh 07` links and renders, and the swatches land where the
-  interpreter puts them. So `build.sh` is now a supported path alongside
-  `run.sh` — with the caveat that its linker plan still needs `$CC` pointed at
-  `tools/cc-gpui.sh`, which `build.sh` does.
-
-  *On the compiled tiers*, a program that runs perfectly under the interpreter
-  can still abort with `SIGBUS` (`EXC_BAD_ACCESS`, `EXC_ARM_DA_ALIGN`) before the
-  window appears — and **which** programs do depends on the *layout* of the
-  compiled code, not on what they do. The recorded reproduction is
-  [`tests/evidence/compiled-tier-sigbus.txt`](tests/evidence/compiled-tier-sigbus.txt):
-  changing one string literal — the window title in a keys/focus probe — turns a
-  three-of-three pass into a three-of-three crash, and changing it back turns it
-  round again. It is reproducible, it is layout-sensitive, and it is understood
-  only as far as the symptom. **This is the one thing in this repository that is
-  known to be wrong and not yet fixed**; treat a compiled-tier abort as this bug
-  until you have shown otherwise, and prefer `--no-jit` and the interpreter when
-  you need to know whether your own change is at fault.
+  **This is the one thing in this repository that is known to be wrong and not
+  yet fixed**; treat a compiled-tier abort as this bug until you have shown
+  otherwise, and prefer `--no-jit` and the interpreter when you need to know
+  whether your own change is at fault. `scripts/toolkit.sh` is the check that
+  keeps it in view: it runs a scratch program on every tier this machine can
+  reach, and it fails here, naming this.
 - **Every frame is rebuilt from scratch.** GPUI is hybrid immediate/retained,
   and this binding takes the immediate half: a custom `Render` impl re-invokes
   the Gossamer callback and describes the whole window again, rather than

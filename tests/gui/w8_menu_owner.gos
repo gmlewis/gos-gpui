@@ -5,9 +5,9 @@
 // without a click, because `gpui::installed_menu()` answers for the window whose callback is running — so
 // window 2 can be asked what menu it was given, and a witness in window 1 can compare.
 //
-// Before the fix the second window's `set_menus` landed on the first window: window 2's own record stayed empty
-// and window 1's named the second menu. So the check is exactly that each window reports its **own** menu, and
-// that the two differ.
+// The second window's `set_menus` lands on the second window, not the first: if it landed on the first, window
+// 2's own record would stay empty and window 1's would name the second menu. So the check is exactly that each
+// window reports its **own** menu, and that the two differ.
 //
 // The *action* half of the row — that clicking an item delivers it to the window whose menu it was — is not
 // exercised here: a menu click cannot be synthesized. What this does show is the half a program can see.
@@ -21,10 +21,10 @@ use std::process
 ///
 /// One view callback serves every window — the one `gpui::run` was given — and
 /// `window::allocate` gives the window `run` opened the first id, 1, so anything
-/// else is a window this program opened. The second window used to have a callback
+/// else is a window this program opened. The second window is not given a callback
 /// of its own passed to `gpui::open_window`; that call returns before the window is
 /// drawn, and a callback handed to a binding function is valid only for that call,
-/// so on the compiled tiers the second window's view answered an error.
+/// so the second window's view would answer an error on the compiled tiers.
 fn second_view() {
     if gpui::frame() == 1 {
         gpui::set_menus("w8.second", #["events:second"])

@@ -8,8 +8,8 @@
 //
 // The register lists MR3 as "partly", so the first two tests are the premise: they say
 // which of its named tokens already exist. The third is the increment, and its first
-// assertion calls nothing this round adds — `unknown_style_tokens` has been there since
-// TM5 — so the red at HEAD is a wrong answer rather than an unresolved name.
+// assertion calls nothing new — `unknown_style_tokens` already exists — so a red
+// here is a wrong answer rather than an unresolved name.
 
 use gpui
 

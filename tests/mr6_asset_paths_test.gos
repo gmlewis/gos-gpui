@@ -1,8 +1,8 @@
 // MR6 — where an asset path resolves.
 //
 // Headless: `gos test tests`. The row is "`ui::` module completeness and doc parity", and of its
-// three clauses two turn out not to be gaps at all: `ui::scroll` takes a style, so `id=panel` in
-// that style is what `gpui::scroll_offset("panel")` already reads (rounds 5–8 built that), and
+// three clauses two are not gaps at all: `ui::scroll` takes a style, so `id=panel` in
+// that style is what `gpui::scroll_offset("panel")` already reads, and
 // `ui::editor` multi-line is **DW1's row**, not this one — the editor widget's own text model.
 //
 // What is left is the clause the register names as the defect: **an `image` or `icon` path
@@ -25,7 +25,7 @@ fn without_a_root_a_path_is_left_alone() {
     gpui::asset_root("")
     assert(
         gpui::asset_path("logo.png") == "logo.png",
-        f"a program that declares no root keeps the old behaviour: {gpui::asset_path("logo.png")}",
+        f"a program that declares no root leaves the path alone: {gpui::asset_path("logo.png")}",
     )
 }
 

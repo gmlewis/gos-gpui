@@ -11,12 +11,12 @@
 //
 // # What this exists for
 //
-// `examples/03_drag_drop.gos` carried a deviation saying its ghost is armed by the press where
-// upstream waits for gpui's drag threshold, and giving two reasons it could not be otherwise:
-// that the binding's `move` events carry no threshold, and that "a move listener stops at the
-// edge of the element that raised it, so a drag that leaves the square quickly could raise no
-// `move` at all". The first is true and is *why* the port computes the threshold itself; the
-// second is **false**, and this probe is what refutes it.
+// The claim that `examples/03_drag_drop.gos`'s ghost must be armed by the press, where upstream
+// waits for gpui's drag threshold, gives two reasons it could not be otherwise: that the binding's
+// `move` events carry no threshold, and that "a move listener stops at the edge of the element
+// that raised it, so a drag that leaves the square quickly could raise no `move` at all". The
+// first is true and is *why* the port computes the threshold itself; the second is **false**, and
+// this probe is what refutes it.
 //
 // gpui dispatches a mouse move to every listener registered on this window, and each listener
 // decides for itself with `hitbox.is_hovered(window)` — which is true for **every** hitbox under
@@ -39,7 +39,7 @@
 // ```
 //
 // (`elements/div.rs:2149-2174`.) Three things about it are worth pinning down and all three are
-// checked below: it is **2.0** and not the "~4px" the example's bullet claimed; the comparison is
+// checked below: it is **2.0**, not "~4px"; the comparison is
 // strictly greater, so a move of exactly 2.0 px does not arm; and it is the **magnitude** of the
 // offset, so a move of 2 px across and 2 px down arms even though neither axis passes 2 on its own.
 //
@@ -48,9 +48,8 @@
 // It is not `examples/03_drag_drop.gos`. The tree below is the example's shape — a full-window
 // listener at the bottom of a stack, a square over it that hears only `down`, a drop target over
 // that — and the arming rule is upstream's, but the handlers are written here. What that means is
-// that this checks the **binding** and the **arithmetic**, which are the two things the deviation
-// bullet named; the example's own copy of the rule is the same rule and is not separately
-// exercised.
+// that this checks the **binding** and the **arithmetic**, which are the two things above; the
+// example's own copy of the rule is the same rule and is not separately exercised.
 //
 // # Why the points are exact and the tolerance is a twentieth of a pixel
 //
@@ -196,14 +195,8 @@ fn main() {
         //
         // Over a window of frames rather than one: the gesture is posted with this callback
         // blocked, so its events are queued before it returns, but *when* gpui hands them over is
-        // the platform's business and round 93 measured it can be the next iteration. The claim
-        // is about the events' content and their order, not the frame they land in.
-        //
-        // The `pointer_xy` calls are **here**, in the frame's own closure, and not inside the
-        // helpers they feed. That is round 93's finding, met a second time this round inside a
-        // function called `drain`: a pair-returning binding called from a module-level function
-        // faults under the JIT (`gossamer: fault inside JIT-compiled body 'drain'`, exit 127).
-        // See "Notes and limits" in `README.md`.
+        // the platform's business and can be the next iteration. The claim is about the events'
+        // content and their order, not the frame they land in.
         let which = if f >= 4 && f <= 6 { "a" } else if f >= 8 && f <= 10 { "b" } else if f >= 12 && f <= 14 { "c" } else { "" }
         if which != "" {
             for event in gpui::take_events() {
@@ -285,10 +278,7 @@ fn origin_y() -> f64 {
 /// One pointer event of the gesture called `which`, as the full-window listener saw it: the
 /// point it carried, and — for an arming gesture — whether the drag had been armed before it.
 ///
-/// The point and the modifiers arrive as **arguments**, taken off the event by the frame's own
-/// closure, and that is not a style choice: `gpui::pointer_xy` returns a pair of floats and round
-/// 93 measured that calling it from a module-level function faults under the JIT inside the
-/// callee. See "Notes and limits" in `README.md`.
+/// The point and the modifiers arrive as **arguments**, taken off the event where it is drained.
 fn pointer_event(which: String, kind: String, x: f64, y: f64) {
     if kind != "move" {
         return

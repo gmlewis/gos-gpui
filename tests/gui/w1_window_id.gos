@@ -21,10 +21,10 @@ use std::process
 /// (`window::allocate` hands out the first id before any other window can ask),
 /// so `1` is the parent and anything else is a window this program opened.
 ///
-/// It used to be a callback of its own passed to `gpui::open_window`. A callback
+/// It is not a callback of its own passed to `gpui::open_window`. A callback
 /// handed to a binding function is valid for exactly that call, and `open_window`
-/// returns before the new window is ever drawn, so on the compiled tiers the
-/// child's view answered an error and the child drew nothing.
+/// returns before the new window is ever drawn, so on the compiled tiers a view
+/// passed that way would answer an error and the child would draw nothing.
 fn child_view() {
     if !gpui::state_bool("w1.child.reported", false) {
         gpui::set_bool("w1.child.reported", true)

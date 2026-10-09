@@ -1,0 +1,72 @@
+# The checks that run without being asked.
+#
+# The headless subset of this repository's gates, on every push and pull
+# request. Nothing here opens a window: the container (`scripts/gosbox.sh`) is
+# how a GUI program is exercised, and a runner that opens a window is exactly
+# what this job must not do. Anything that needs `DSH_ALLOW_WINDOWS` is excluded
+# by construction.
+#
+# Gossamer publishes no prebuilt binaries, so the job builds `gos` from the tag
+# in `GOSSAMER_VERSION`; keep that tag in step with the `gossamer-version` pin
+# in `project.toml`.
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  headless:
+    runs-on: ubuntu-latest
+    env:
+      GOSSAMER_VERSION: v0.70.0
+      GOSSAMER_ROOT: ${{ github.workspace }}/gossamer
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+
+      # GPUI's Linux build dependencies, as README "On Linux" lists them. `gos
+      # test tests` builds the binding, which links X11 and freetype.
+      - name: GPUI's Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libxcb1-dev libxext-dev libxrender-dev \
+            libxcursor-dev libxinput-dev libfreetype-dev
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo and the runner
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            gossamer/target
+            ~/.cache/gossamer
+          key: ${{ runner.os }}-${{ env.GOSSAMER_VERSION }}-${{ hashFiles('gpui-binding/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.GOSSAMER_VERSION }}-
+
+      # Gossamer publishes no prebuilt binaries yet; the documented install is a
+      # source build. `gos` is self-contained, so its release dir goes on PATH.
+      - name: Build gos
+        run: |
+          git clone --depth 1 --branch "$GOSSAMER_VERSION" \
+            https://github.com/gossamer-lang/gossamer "$GOSSAMER_ROOT"
+          cargo build --manifest-path "$GOSSAMER_ROOT/Cargo.toml" --workspace --release
+          echo "$GOSSAMER_ROOT/target/release" >> "$GITHUB_PATH"
+
+      - name: The headless assertion suite
+        run: gos test tests
+
+      - name: The docs still describe the code
+        run: ./scripts/docs.sh
+
+      - name: Every documented deviation has a verdict
+        run: ./scripts/pair-census.sh
+
+      - name: The toolkit check, headless half
+        run: ./scripts/toolkit.sh --no-run

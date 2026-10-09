@@ -10,12 +10,9 @@
 //         WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
 //
 // `None` is the primary display, and `Bounds::centered` puts the window's centre on
-// that display's centre. Until round 105 `examples/27_window.gos` could not ask for
-// it: `place=center` was parsed and then compared in an `if` whose two arms were the
-// same expression, so the port carried a function of its own that recomputed the
-// centred origin from `gpui::display_field(0, ..)` and handed it in as x and y. WH4's
-// round fixed the option; round 105 deleted the workaround, so the sub-window spec is
-// upstream's own call again and the bullet that described the workaround is gone.
+// that display's centre. `place=center` carries that through to the option, so the
+// sub-window spec is upstream's own call — no function of the port's recomputes the
+// centred origin from `gpui::display_field(0, ..)` and hands it in as x and y.
 //
 // # What it measures, and what it is not
 //
@@ -45,9 +42,8 @@
 //
 // # The red
 //
-// With the spec this probe was written to replace — x and y computed from
-// `display_field(0, ..)` and no `place=` at all, which is what the port did until round
-// 105 — the readback is empty and the first check fails:
+// With x and y computed from `display_field(0, ..)` and no `place=` at all, the readback
+// is empty and the first check fails:
 // `FAIL EX27 the child was opened with a placement of "", not the \`center\` upstream's
 // Bounds::centered(None, ..) asks for`. `tests/evidence/EX27.before.txt` is that
 // transcript.

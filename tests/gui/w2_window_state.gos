@@ -46,10 +46,10 @@ fn window_body(value: i64, other: i64, other_value: i64, frame: i64) -> bool {
 /// There is one view callback for the program — the one `gpui::run` was given —
 /// and every window is drawn by it. `window::allocate` gives the window `run`
 /// opened the first id, 1, so that one is the parent and every other id is a
-/// window this program opened. It used to be a callback of its own passed to
+/// window this program opened. It is not a callback of its own passed to
 /// `gpui::open_window`; `open_window` returns before the window is ever drawn, and
-/// a callback handed to a binding function is valid only for that call, so on the
-/// compiled tiers the child's view answered an error.
+/// a callback handed to a binding function is valid only for that call, so a view
+/// callback passed that way would answer an error on the compiled tiers.
 ///
 /// The child is window 2 and holds 22, while window 1 holds 11 — the values
 /// `main`'s own body uses, the other way round.

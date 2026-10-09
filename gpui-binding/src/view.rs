@@ -70,10 +70,10 @@ pub fn clear_dispatch() {
 /// Forgets everything the frame machinery holds for this process.
 ///
 /// Nothing here owns a registration in the runtime: the view callback is a
-/// `PersistentCallback`, which at HEAD frees nothing when it is dropped, so the
-/// thread-exit panic this function used to exist to avoid cannot happen any
-/// more. It is kept because it is the one place that says what per-frame state
-/// is, and it still runs on the way out (see `app::release_retained`).
+/// `PersistentCallback`, which frees nothing when it is dropped, so the
+/// thread-exit panic this function guards against cannot happen. It is kept because
+/// it is the one place that says what per-frame state is, and it still runs on the
+/// way out (see `app::release_retained`).
 pub fn release_retained() {
     GUARD.with(|h| h.borrow_mut().clear());
     ROW_BUILDER.with(|r| *r.borrow_mut() = None);
@@ -109,11 +109,11 @@ fn row_builder() -> Option<PersistentCallback> {
 /// (`Application::run` blocks in the platform's run loop), so the caller's
 /// `gos_rt_binding_callback_release` — the release a compiled caller emits
 /// immediately after a binding fn returns — is never reached while any frame is
-/// drawn. Every other callback shape this binding used to take (a row builder, a
-/// window's view, a close guard, a window-closed handler) was released the moment
-/// its binding fn returned and therefore failed on the compiled tiers; each of
-/// those is now expressed as state and events instead, which is why `cb_fn`
-/// appears exactly twice in `lib.rs`, on `run` and `run_with`.
+/// drawn. Every other callback shape — a row builder, a
+/// window's view, a close guard, a window-closed handler — is expressed as state and
+/// events instead: each would be released the moment its binding fn returned, and
+/// therefore fail on the compiled tiers. That is why `cb_fn` appears exactly twice in
+/// `lib.rs`, on `run` and `run_with`.
 pub fn invoke(view: &PersistentCallback, args: Vec<Value>) -> Result<Value, String> {
     let Some(raw) = DISPATCH.with(|cell| cell.get()) else {
         return Err("a Gossamer callback was asked to run outside gpui::run".into());
@@ -881,12 +881,12 @@ pub const CLOSE_REQUESTED: &str = "close.requested";
 thread_local! {
     /// Each window's close guard, if it has one.
     ///
-    /// This is *state*, not a callback, and that is the whole point: the guard
-    /// used to be a Gossamer closure stored by `gpui::on_window_should_close`,
-    /// which a compiled caller releases the moment that binding fn returns, so
-    /// on the compiled tiers the guard answered an error and mapped to "yes,
-    /// close" — silently useless, and the exact case CL1 exists to catch. The
-    /// platform's own should-close closure is a *native* one, installed by this
+    /// This is *state*, not a callback, and that is the whole point: a Gossamer
+    /// closure stored by `gpui::on_window_should_close` is released by a compiled
+    /// caller the moment that binding fn returns, so the guard would answer an
+    /// error and map to "yes, close" — silently useless, which is the exact case
+    /// CL1 exists to catch. The platform's own should-close closure is a *native*
+    /// one, installed by this
     /// binding, and it reads this state; the program is asked through the event
     /// queue instead of through a callback, which works on every tier.
     static GUARD: RefCell<HashMap<i64, Guard>> = RefCell::new(HashMap::new());
@@ -959,7 +959,7 @@ pub fn asset_root() -> String {
 /// An empty name, and an absolute path, come back unchanged — a program that knows where its
 /// asset is is believed. Otherwise the declared root is tried first, and the name is handed back
 /// as it was given when the root does not have it. That fallback is what keeps a program that
-/// declares no root behaving exactly as it did before: `img(PathBuf::from(path))` and
+/// declares no root using a name exactly as written: `img(PathBuf::from(path))` and
 /// `svg().path(..)` resolve against the process's working directory, which is where a
 /// double-clicked program's working directory is *not*.
 ///
@@ -1612,9 +1612,9 @@ fn snapshot(handle: i64) -> Option<El> {
     }
     arena(|arena| {
         let el = arena.els.get(index)?;
-        // `Kind` is `Clone`, so the copy is the derive's: this used to be a match with an arm
-        // per variant, which is the shape that quietly stops compiling the day a variant is
-        // added — and the tooltip variant was the day.
+        // `Kind` is `Clone`, so the copy is the derive's, not a match with an arm
+        // per variant — the shape that quietly stops compiling the day a variant is
+        // added.
         Some(El {
             kind: el.kind.clone(),
             style: el.style.clone(),
@@ -1832,10 +1832,9 @@ fn modifier_words(m: &gpui::Modifiers) -> String {
 /// GPUI element.
 ///
 /// The root takes focus **once, the frame the program enables the keyboard** —
-/// not only in the window's first two frames, which is what it used to do: a
-/// program that turned the keyboard on at frame 40 got the listener and no focus,
-/// and focus is what a key event needs to be delivered at all, so its shortcuts
-/// were silently dead. A click into a text field still moves focus there and keeps
+/// not only in the window's first two frames: a program that turns the keyboard on at
+/// frame 40 would otherwise get the listener and no focus, and focus is what a key
+/// event needs to be delivered at all, so its shortcuts would be silently dead. A click into a text field still moves focus there and keeps
 /// it: this runs on the frame the flag turns on, or when nothing at all is focused,
 /// and never steals focus back afterwards.
 ///
@@ -1889,7 +1888,7 @@ fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> An
         })
         // The release, on the same element and under the same flag: a program
         // driving movement from the keyboard needs to know when the key stopped
-        // being held, and nothing used to listen for it at all.
+        // being held, and this is the only thing that listens for it.
         .capture_key_up(move |event: &KeyUpEvent, _window, _cx| {
             window::with(win, || {
                 let unparsed = record_keystroke("~keyup", &event.keystroke);
@@ -2002,7 +2001,7 @@ fn record_box(win: i64, key: &str, group: Option<&str>, bounds: Bounds<Pixels>) 
 /// (`Div::on_children_prepainted`, `gpui-0.2.2/src/elements/div.rs:1243`), so the box is read from
 /// a child that is `absolute` — out of flow, so it moves nothing — `size_full()`, so it is
 /// exactly the parent's rectangle, and has no hitbox. Being **first** is what makes
-/// `bounds.first()` it. Round 61 built this for the pointer rows; `bounds` and `group=` reuse it
+/// `bounds.first()` it. This backs the pointer rows; `bounds` and `group=` reuse it
 /// verbatim, which is why the three agree about where an element is.
 fn bounds_strip() -> AnyElement {
     div()
@@ -2736,8 +2735,8 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 // exists only for an element with an id. So does any of the focus
                 // tokens — `focusable`, `tabstop=`, `tabindex=` — because those are
                 // applied to interactive elements only, and a box that asks to be
-                // tabbed to and gets nothing is the fault `19_tab_stop` used to
-                // write down as "a plain element only receives focus tokens when
+                // tabbed to and gets nothing is the fault `19_tab_stop` names: "a
+                // plain element only receives focus tokens when
                 // its style also has `hover=` or `active=`".
                 None if hover.is_some()
                     || active.is_some()
@@ -2842,8 +2841,8 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             .id(ElementId::Name(id.into()));
             let focus_id = el.id.clone();
             let base = apply_interactions(base, &el.style);
-            // A button is the element a person tabs to, and until round 60 it was the one element that
-            // could not be focused: it never applied the focus tokens at all.
+            // A button is the element a person tabs to, so it applies the focus tokens like
+            // any other interactive element: a button that did not could not be focused at all.
             let base = apply_focus_order(base, &el.style, win, &focus_id, cx);
             base.child(label.clone())
                 .on_click(move |_event, _window, cx| {
@@ -3129,7 +3128,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         // and without this the arena lookup misses and every
                         // container's children are dropped, leaving rows that
                         // paint their background and nothing else. That is the
-                        // fault that drew 02_data_table's rows as 42 tinted bars.
+                        // fault that draws 02_data_table's rows as 42 tinted bars.
                         let element = match row {
                             Some(row) => window::with(win, || render(&row, window, cx, entity)),
                             None => div().into_any_element(),
@@ -3177,13 +3176,13 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             // of its own, so whatever carries the handler has to *be* that
             // element. A bare `div()` wrapped around the receiver's render is
             // not: gpui makes every div a containing block (`Style::default`
-            // is `Position::Relative`), so the wrapper became the containing
+            // is `Position::Relative`), so the wrapper becomes the containing
             // block of an out-of-flow receiver, and
-            // `ui::rect("absolute right=4 top=0 w=16 h=full")` measured its
-            // height against a wrapper that had none. The whole element, its
-            // background and its children went to zero — which is what lost
-            // 02_data_table's scrollbar strip and the thumb inside it — and
-            // the box a click was tested against was that same empty wrapper.
+            // `ui::rect("absolute right=4 top=0 w=16 h=full")` measures its
+            // height against a wrapper with none. The whole element, its
+            // background and its children go to zero — 02_data_table's scrollbar
+            // strip and the thumb inside it — and
+            // the box a click is tested against is that same empty wrapper.
             //
             // So a plain receiver is *folded*: its style and interactions
             // become the wrapper's, its children are rendered inside it, and a
@@ -3192,7 +3191,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             // or out of it. (A receiver that scrolls would lose its handle
             // here; none does.)
             //
-            // A text, button, image or list receiver keeps the older shape —
+            // A text, button, image or list receiver takes the other shape —
             // it renders itself and the handler goes on a wrapper around it.
             // No program chains a child after `.on_mouse` on one of those, so
             // that wrapper has never had to be the receiver's box.
@@ -3481,10 +3480,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             // **A `canvas`, and not this element's own render, because gpui refuses the call
             // anywhere else**: `on_mouse_event` opens with `debug_assert_paint`
             // (`window.rs:3425`), and a view's `Render::render` — which is where every
-            // handler above is written — runs in the *prepaint* phase. Registering from here
-            // panicked the container run with `this method can only be called during paint`
-            // at `window.rs:3425`; that, and not the unresolved name, was the first red this
-            // round recorded. Upstream is in a paint callback for the same reason, and the
+            // handler above is written — runs in the *prepaint* phase. Registering from there
+            // panics with `this method can only be called during paint`
+            // at `window.rs:3425`. Upstream is in a paint callback for the same reason, and the
             // canvas is how a program that builds its tree in `render` reaches one.
             //
             // Registered every frame the element is drawn, and that is not an install:
@@ -3712,15 +3710,15 @@ fn render_image(
 /// identified element.
 ///
 /// **`tab_stop` and `tab_index` are written onto the focus handle, and that is not a detail.**
-/// They used to be applied to the *element* alone, and GPUI reads them off the element only on the
-/// path this crate does not take: `gpui-0.2.2/src/elements/div.rs:1584` copies `tab_stop` and
+/// GPUI reads them off the *element* only on the path this crate does not take:
+/// `gpui-0.2.2/src/elements/div.rs:1584` copies `tab_stop` and
 /// `tab_index` onto a handle **only when there is no tracked handle and it makes one itself**
 /// ("If there's an explicit focus handle we're tracking, use that. Otherwise create a new handle").
 /// A handle this crate makes starts at `tab_stop: false` (`window.rs:277`, `FocusHandle::new`), so
-/// with a tracked handle supplied the element's own `tab_stop`/`tab_index` went nowhere, every
-/// focusable element entered gpui's tab map as a non-stop, and `Window::focus_next`
-/// (`window.rs:1413-1422`, `TabStopMap::next`) found nothing to move to — which is exactly what
-/// `tests/gui/fo1_tab_order.gos` measured: six presses, focus never leaving `~root`. Writing the
+/// with a tracked handle supplied the element's own `tab_stop`/`tab_index` go nowhere, every
+/// focusable element enters gpui's tab map as a non-stop, and `Window::focus_next`
+/// (`window.rs:1413-1422`, `TabStopMap::next`) finds nothing to move to — which is what
+/// `tests/gui/fo1_tab_order.gos` checks: six presses, focus never leaving `~root`. Writing the
 /// two through the handle — `FocusHandle::tab_stop`/`tab_index` write to the shared `FocusRef`, so
 /// the handle the registry already holds is updated too — is what makes the tab order exist.
 ///
@@ -3763,9 +3761,9 @@ fn apply_focus_order<T: StatefulInteractiveElement + 'static>(
     // for gpui to use it: div.rs:1584 does exactly that, so clicking still focuses the element and
     // the tab map still gets an entry.
     //
-    // **`focusable()` stays, and the handle is *added* to it** — round 65 thought it could replace
-    // it, and round 69's probe disproved that: with the flag gone, `gpui::focus_next` found no tab
-    // stop at all and `is_focused` still said no, so both halves of the row failed together. gpui's
+    // **`focusable()` stays, and the handle is *added* to it.** Replacing the flag with
+    // the handle does not work: with the flag gone, `gpui::focus_next` finds no tab
+    // stop at all and `is_focused` still says no, so both halves of the row fail together. gpui's
     // own tab machinery keys on that flag, and the tracked handle is what makes the element's focus
     // *ours* rather than one gpui keeps to itself.
     let mut handle = focus_for(win, id, cx);

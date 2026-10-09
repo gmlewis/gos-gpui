@@ -4,8 +4,8 @@
 //! DW5's gutter — and none of the three can be finished without a window, because the layout that
 //! draws them and the measurement that turns a point into an offset both live on one. What *can* be
 //! had without a window is the arithmetic, and it is worth having on its own: a Gossamer program
-//! keeps its text in the store (round 48 showed the store **is** the document), and until now it
-//! could not ask where a line begins, what word is under an offset, or where the caret lands one
+//! keeps its text in the store — the store **is** the document — and this is what answers where a
+//! line begins, what word is under an offset, and where the caret lands one
 //! line down.
 //!
 //! **Offsets are UTF-8 byte offsets**, the same as `gpui::styled_text`'s highlight ranges. Every

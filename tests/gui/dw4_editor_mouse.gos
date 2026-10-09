@@ -14,7 +14,7 @@
 // `PlatformInput` and is public (`gpui-0.2.2/src/window.rs:3581`), but its return type
 // `DispatchEventResult` is `pub(crate)` (`window.rs:1273`), and a public function whose
 // return type is private is not callable from another crate however it is wrapped — a
-// two-crate experiment in the round that wrote this file confirmed it for a direct call,
+// two-crate experiment confirms it for a direct call,
 // for a discarded result, and for a generic-erasure wrapper. Nothing else on `Window`
 // injects input either. The operating system's event tap is the way in, and
 // `scripts/pointer.sh` is the smallest thing that posts through it.

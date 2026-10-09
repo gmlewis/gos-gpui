@@ -2,13 +2,12 @@
 #
 #   docker build -t gosbox:2 -f scripts/gosbox.Dockerfile scripts/
 #
-# **Written down late, which is why the tag is 2.** `gosbox:1` was built the same
-# way and its recipe lived nowhere but this machine's Docker daemon until round 88
-# recovered it with `docker history --no-trunc` and reproduced it here, so the image
-# is no longer a thing only one machine can rebuild. The two additions over `:1`
+# **The tag is 2: `gosbox:1`'s recipe is recorded nowhere but this machine's Docker
+# daemon**, recovered only by `docker history --no-trunc`. This file reproduces it, so
+# the image is not a thing only one machine can rebuild. The two additions over `:1`
 # are the LLVM layer at the bottom and the `tools/` staging that `gosbox.sh` does —
-# the container could run a window from the start but could not link a native
-# binary, and `gos build` needs both.
+# the container can run a window but cannot link a native binary without them, and
+# `gos build` needs both.
 #
 # What each layer is for:
 #

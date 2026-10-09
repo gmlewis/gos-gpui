@@ -11,8 +11,8 @@
 // port's bar reads `gos-runner`.
 //
 // `gpui::set_app_name(name)` seeds `CFBundleName` into `[[NSBundle mainBundle] infoDictionary]`,
-// which is the one mechanism that moves it; the round that added it measured the alternatives
-// and `gpui-binding/src/name.rs` records the table. It has to happen **before `gpui::run`** —
+// which is the one mechanism that moves it; `gpui-binding/src/name.rs` records the
+// alternatives. It has to happen **before `gpui::run`** —
 // macOS reads the name before the bar is first drawn and keeps what it read.
 //
 // What this probe checks is the drawn bar, not the binding's own write. `gpui::installed_menu()`

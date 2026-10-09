@@ -1,10 +1,10 @@
 //! The window-option vocabulary: one parse, one application, one reader.
 //!
-//! `run`, `run_with` and `open_window` all take the same `"key=value …"` string,
-//! and each used to read its own handful of keys — so `resizable=false` meant one
+//! `run`, `run_with` and `open_window` all take the same `"key=value …"` string.
+//! Read separately, that vocabulary would let `resizable=false` mean one
 //! thing for the first window and another for every window opened after it,
-//! `place=center` was computed and then ignored (both arms of the `if` were the
-//! same expression), and a token neither recognised was dropped in silence. This
+//! `place=center` be computed and then ignored (both arms of the `if` the
+//! same expression), and a token neither recognised be dropped in silence. This
 //! module owns the vocabulary, so the three entry points cannot disagree, and a
 //! token it does not know is reported rather than ignored.
 //!
@@ -380,11 +380,11 @@ pub fn build(
         // them. Upstream's examples that pass `titlebar: None` (`window.rs`,
         // `window_positioning.rs`) get exactly that window.
         //
-        // What a port used to get was the other one: same size, same content,
+        // Carrying a titlebar gives the other window: same size, same content,
         // and three traffic lights at (12,12) that upstream's window does not
-        // have. The captures measured it — `25_window_positioning` differed from
+        // have — `25_window_positioning` differs from
         // its twin by 516 pixels, every one of them inside a 60x14 box at
-        // (12,12), and the client areas were equal to the pixel.
+        // (12,12), and the client areas are equal to the pixel.
         titlebar: if options.no_titlebar {
             None
         } else {

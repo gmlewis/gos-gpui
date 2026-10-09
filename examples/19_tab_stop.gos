@@ -5,21 +5,21 @@
 // two buttons at indices 4 and 5. Tab and Shift-Tab move focus between the
 // stops, and the focused box draws upstream's 3px blue ring.
 //
-// The focus *order* is real, and measured rather than asserted (round 91). The
+// The focus *order* is real, and measured rather than asserted. The
 // boxes carry `focusable tabstop=1 tabindex=N`, Tab calls `gpui::focus_next()`,
 // and GPUI's own tab machinery is what moves — `tests/gui/fo1_tab_order.gos`
 // presses six times over a tree of this shape and reads the walk back in
 // `tab_index` order, the repeat of 2 immediately after the first 2 and the box
-// that is focusable but not a tab stop never. Until round 91 this did not work,
-// and the file said so: the binding handed GPUI a focus handle of its own, and
-// GPUI copies `tab_stop`/`tab_index` onto a handle only when it builds one
-// itself (gpui-0.2.2/src/elements/div.rs:1584), so every focusable element
-// entered the tab map as a non-stop and `Window::focus_next` found nothing to
-// move to. `tests/evidence/FO1.before.txt` is that measurement, and
-// `FO1.after.txt` its fix.
+// that is focusable but not a tab stop never. That works because the binding
+// hands GPUI the element's own focus handle rather than one of its own: GPUI
+// copies `tab_stop`/`tab_index` onto a handle only when it builds one
+// itself (gpui-0.2.2/src/elements/div.rs:1584), so a handle of the binding's own
+// would put every focusable element in the tab map as a non-stop and leave
+// `Window::focus_next` nothing to move to. `tests/evidence/FO1.before.txt` is
+// the walk with the binding's own handle, and `FO1.after.txt` the element's.
 //
-// The 3px blue ring is real for the same reason, and is what those two files
-// bought. Each box names itself with `id=` and asks `gpui::is_focused(id)` while
+// The 3px blue ring is real for the same reason. Each box names itself with
+// `id=` and asks `gpui::is_focused(id)` while
 // the frame is being built, so the border follows focus the moment
 // `gpui::focus_next` moves it. Upstream asks `item_handle.is_focused(window)` —
 // the same question, asked of a handle rather than of a name, which is the whole

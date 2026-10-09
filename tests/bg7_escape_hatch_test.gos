@@ -2,9 +2,8 @@
 //
 // Headless: `gos test tests`. This row is not about the binding at all: it is the
 // question of what a program can reach *besides* it, which is what a program needs when
-// a capability has no binding function and no Rust widget. `apps.md` recorded it as
-// "undetermined" for one reason — the toolchain had never been run for it. It has been
-// now, and the two halves came back differently.
+// a capability has no binding function and no Rust widget. The toolchain answers it in
+// two halves, and they differ.
 //
 // Pass means a program can write a file, see that it exists, read it back byte for byte,
 // replace it, list what is in a directory it made, and delete it — all of it without a

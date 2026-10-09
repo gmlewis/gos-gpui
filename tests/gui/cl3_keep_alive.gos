@@ -15,9 +15,10 @@
 // is about. It says beforehand which window to open — `gpui::revive_window` — and
 // the binding opens it, raising the event `gpui::window_closed_event()` names in
 // the new window's queue so the program learns on its first frame that it happened.
-// It used to be `on_window_closed(handler)`, a callback run with no window in
-// existence — released the moment the binding fn that took it returned, so on the
-// compiled tiers it failed, and the shape was wrong besides.
+// It is not `on_window_closed(handler)`, a callback run with no window in
+// existence: a callback handed to a binding function is released the moment that
+// function returns, and there is no window to run it in, so it cannot run on the
+// compiled tiers — the shape is wrong besides.
 //
 // Pass means the revived window renders, which it can only do if the process
 // outlived the window it closed. If the app had quit, nothing would print a verdict

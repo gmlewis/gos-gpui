@@ -384,17 +384,17 @@ pub fn wants_focus(spec: &str) -> bool {
 
 /// Whether `spec` asks for its element's own box to be reported back.
 ///
-/// The `bounds` token. `gpui::element_bounds(id, field)` answers from a map the *paint* fills, and
-/// until this token existed only two kinds of element were put in it: one carrying a pointer
-/// listener and one carrying a slider. A box that merely wanted to know how big it came out had
-/// nothing to listen with, which made "build a box sized to its content and read back its bounds"
+/// The `bounds` token. `gpui::element_bounds(id, field)` answers from a map the *paint* fills, which
+/// without this token holds only two kinds of element: one carrying a pointer
+/// listener and one carrying a slider. A box that merely wants to know how big it came out has
+/// nothing to listen with, which makes "build a box sized to its content and read back its bounds"
 /// unsayable — the whole of `DW11`'s first clause.
 ///
 /// A bare `bounds` counts, and `bounds=0` does not, the same reading [`wants_focus`] gives its own
 /// tokens. A div that asks for it gets an *out-of-flow, unpainted, full-size strip* as its first
 /// child, because gpui hands a div the bounds of its children and never its own
-/// (`Div::on_children_prepainted`, `gpui-0.2.2/src/elements/div.rs:1243`) — the technique round 61
-/// found for the pointer rows, reused here for a box that listens to nothing.
+/// (`Div::on_children_prepainted`, `gpui-0.2.2/src/elements/div.rs:1243`) — the same strip the
+/// pointer rows use, reused here for a box that listens to nothing.
 ///
 /// It applies to a `gpui::panel`/`column`/`row`/`stack` box and to `gpui::text`. On an element that
 /// already reports — one with a pointer listener or a slider — it changes nothing, because those
@@ -838,7 +838,7 @@ fn apply_font<T: Styled>(el: T, v: &str) -> T {
 
     // With a comma the tail is a size and nothing else. `Menlo,garbage` keeps
     // the family and takes no size — it must not quietly become a request for a
-    // font called "garbage", which is what an earlier version of this did.
+    // font called "garbage".
     if let Some(family) = family.filter(|family| !family.is_empty()) {
         let el = el.font_family(family.to_string());
         return match size.parse::<f32>() {

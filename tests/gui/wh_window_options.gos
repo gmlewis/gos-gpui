@@ -4,10 +4,10 @@
 // Tier: every tier.
 //
 // One probe for five rows because they are one mechanism: the `"key=value …"`
-// string `run`, `run_with` and `open_window` all take. Each of them used to be
-// parsed by whichever entry point happened to read it, so the first window and
-// every window after it disagreed about what the vocabulary meant, and a token
-// nobody knew was dropped in silence.
+// string `run`, `run_with` and `open_window` all take. Each of them is parsed
+// by one shared vocabulary, so the first window and every window after it agree
+// about what the vocabulary means, and a token nobody knows is named rather than
+// dropped in silence.
 //
 // Pass means:
 //

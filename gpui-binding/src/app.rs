@@ -27,13 +27,12 @@ use crate::window;
 /// the one `gpui::run` was given — and rebuilds the element tree from scratch
 /// on every frame it is asked for.
 ///
-/// A window used to be able to have a view callback of its own, handed to
-/// `gpui::open_window`. That callback is released the moment `open_window`
-/// returns to its caller, so on the compiled tiers a second window's view
-/// answered an error and drew an empty frame. There is exactly one callback a
-/// binding may store at HEAD — the one `run` was given, which is never
-/// released because `run` does not return — so there is exactly one view, and a
-/// program tells its windows apart with `gpui::window_id()`.
+/// A window cannot have a view callback of its own, handed to `gpui::open_window`:
+/// a callback there is released the moment `open_window` returns to its caller, so on
+/// the compiled tiers a second window's view answers an error and draws an empty
+/// frame. There is exactly one callback a binding may store — the one `run` was
+/// given, which is never released because `run` does not return — so there is exactly
+/// one view, and a program tells its windows apart with `gpui::window_id()`.
 pub struct Root {
     view: PersistentCallback,
     /// The window this root is the view of. Everything the frame touches is
@@ -89,7 +88,7 @@ thread_local! {
 /// questions, and it is why gpui's one-prompt-at-a-time rule is not a program's problem.
 ///
 /// **The answer is waited for on a timer, not on a frame.** macOS throttles the animation frames of a
-/// window that is not frontmost — measured this round at one frame every twenty seconds — so a
+/// window that is not frontmost — one frame every twenty seconds — so a
 /// per-frame poll would leave an answered sheet sitting there, and the program's event would arrive
 /// late. `try_recv` on a timer keeps running while the window is idle, and `cx.update` is how the task
 /// gets the window back to raise the next sheet.
@@ -179,9 +178,9 @@ pub const WINDOW_CLOSED_EVENT: &str = "window.closed";
 /// kept alive, which leaves it running and inert — nothing of the program's runs
 /// without a window.
 ///
-/// This used to run the program's `on_window_closed` *handler*, a stored Gossamer
-/// callback. A compiled caller releases that callback when the binding fn that
-/// received it returns, so on the compiled tiers the handler failed; and it is the
+/// This does not run the program's `on_window_closed` *handler*, a stored Gossamer
+/// callback: a compiled caller releases that callback when the binding fn that
+/// received it returns, so on the compiled tiers the handler fails; and it is the
 /// one capability whose moment — an app with no window — is defined by there being
 /// no frame to run program code in.
 fn last_window_closed(cx: &mut App) {
@@ -254,7 +253,7 @@ thread_local! {
     ///
     /// Every window's root holds a clone of it, which is what makes a second
     /// window possible without a second callback. It is the one callback a
-    /// binding may store at HEAD: `run` does not return until the app exits, so
+    /// binding may store: `run` does not return until the app exits, so
     /// the caller's release — the one a compiled caller emits as soon as a
     /// binding fn returns — is never reached.
     static APP_VIEW: RefCell<Option<PersistentCallback>> = const { RefCell::new(None) };
@@ -267,12 +266,10 @@ fn app_view() -> Option<PersistentCallback> {
 
 /// Forgets everything the app was holding, on the way out.
 ///
-/// It used to be load-bearing. A `uniform_list`'s row builder sat in the arena
-/// and a window waiting to open held a whole view callback, both
-/// `RetainedCallback`s whose `Drop` called back into the runtime to release a
-/// registration — and a thread-local dropped at *thread exit* ran that after the
-/// runtime's own thread-locals were gone, so the runtime panicked at its FFI
-/// entry:
+/// It is housekeeping, but it stays on every quit path: a callback whose `Drop`
+/// calls back into the runtime to release a registration is dropped at *thread
+/// exit*, after the runtime's own thread-locals are gone, and the runtime then
+/// panics at its FFI entry:
 ///
 /// ```text
 /// thread '<unnamed>' panicked: cannot access a Thread Local Storage value
@@ -280,11 +277,9 @@ fn app_view() -> Option<PersistentCallback> {
 ///   ... _gos_rt_binding_callback_release
 /// ```
 ///
-/// No callback this binding stores has a `Drop` that calls anything now: the row
-/// builder and the per-window views are gone, and the one callback left is a
-/// `PersistentCallback`, which at HEAD frees nothing when dropped. So the panic
-/// cannot happen and this is housekeeping — but it stays on every quit path,
-/// because the next thing to be stored there might not be so lucky.
+/// The one callback this binding stores is a `PersistentCallback`, which frees
+/// nothing when dropped, so the panic cannot happen — but the guard stays, because
+/// the next thing to be stored there might not be so lucky.
 fn release_retained() {
     view::release_retained();
     PENDING_OPEN.with(|q| q.borrow_mut().clear());
@@ -607,11 +602,10 @@ pub struct MenuEntry {
 /// Reads a menu's entry list into the items it describes.
 ///
 /// The slot is what `set_menus`'s entries mean by "the menu's slot": the index of the
-/// entry among the *events* entries, and not among the entries. It used to be the
-/// entry's position in the vector — `app.rs:358` — which meant that a `"separator"`
-/// added in front of an action silently renumbered every action after it, and a program
-/// that keyed its own handlers off `"menu|<n>"` had to renumber them whenever the menu's
-/// shape changed. A separator is not an event and now takes no slot.
+/// entry among the *events* entries, and not among the entries, so a `"separator"`
+/// added in front of an action does not renumber the actions after it — a program
+/// that keys its own handlers off `"menu|<n>"` need not renumber them when the menu's
+/// shape changes. A separator is not an event and takes no slot.
 ///
 /// An `events` entry may name a third part, its accelerator:
 /// `"events:Save:cmd-s"`. A `quits` entry takes none (⌘Q is already bound to
@@ -1020,9 +1014,8 @@ fn process_requests(
     // It is not installed here, in the middle of a frame, and that is not a
     // style choice: gpui's X11 backend holds its callback table borrowed while it
     // draws, so registering one from inside `render` panics there
-    // (`RefCell already borrowed`, `x11/window.rs:1459`) — the first frame of
-    // every window after the first died this way, which is what the container
-    // found after the macOS run could no longer be used to test. See `Root`'s two
+    // (`RefCell already borrowed`, `x11/window.rs:1459`) — every window after the
+    // first dies on its first frame this way. See `Root`'s two
     // construction sites.
 
     // The state a window asked to open in — `start=maximized` or
@@ -1277,8 +1270,8 @@ fn process_requests(
                 // A second `tick` for a running id **reschedules** it: a fresh generation,
                 // so the loop the earlier call started finds itself retired the next time
                 // it wakes and ends without raising anything, and a new loop with the new
-                // period takes over. It used to be a set — an id already there was simply
-                // left alone, so a program could start a clock and never change it.
+                // period takes over. Leaving an id that is already there alone — a
+                // set — would let a program start a clock and never change it.
                 let generation = TIMER_GENERATION.fetch_add(1, Ordering::SeqCst);
                 TICKS
                     .lock()

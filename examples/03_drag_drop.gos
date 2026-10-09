@@ -236,13 +236,6 @@ fn item_event(ix: i64, kind: String, x: f64, y: f64) {
 
 fn main() {
     let outcome = gpui::run("", 800.0, 600.0, || {
-        // The drain lives here rather than in a function of its own, and `pointer_xy` is called
-        // here rather than inside `handle_event`. That is not a style choice: a pair-returning
-        // binding called from a module-level function faults under the JIT — `gossamer: fault
-        // inside JIT-compiled body '<fn>'`, exit 127 — so the point is read off the event in the
-        // frame's own closure and handed to the handler as an argument. "Notes and limits"
-        // in `README.md` has it; `tests/gui/mp3_drag_threshold.gos` met it a second
-        // time and is written the same way.
         for event in gpui::take_events() {
             let id, kind = gpui::event_parts(event.clone())
             let x, y = gpui::pointer_xy(event.clone())

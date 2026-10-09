@@ -22,7 +22,7 @@
 //
 // It is not discarded now. `<id>.count` is written from `MouseDownEvent::click_count`,
 // `MouseUpEvent::click_count` and `ClickEvent::Mouse(..).up.click_count`
-// (`gpui-binding/src/view.rs:3102`, `:3114`, `:3065`), and this probe is what says so: three
+// (`gpui-binding/src/view.rs:3288`, `:3301`, `:2350`), and this probe is what says so: three
 // gestures, separated by a second of real time each, and the count read back after each.
 //
 // # Why the gestures are separated by a second of real time and not by frames
@@ -37,9 +37,9 @@
 //
 // Because it is not in them. The payload an event carries is `"<kind>\u{1}<x>\u{1}<y>\u{1}<mods>"`
 // — a position and the modifiers — and the count is a *store* slot, `<id>.count`, the way
-// `<id>.x` is. Round 93 widened the payload to carry each event's own point; the count is not a
-// point and did not come with it. What is asserted here is therefore the store's reading after
-// each gesture, which is also what a program would read.
+// `<id>.x` is. The payload carries each event's own point; the count is not a point, so it is not
+// in the payload. What is asserted here is therefore the store's reading after each gesture,
+// which is also what a program would read.
 
 use gpui
 use std::os::exec
@@ -153,8 +153,7 @@ fn count(ids: Vec<String>, want: String) -> i64 {
 ///
 /// Taken at the end of each gesture and not once at the end of the run, because the three
 /// gestures post one, two and three clicks: a single total of six cannot tell a gesture that was
-/// heard once from one whose presses leaked into the reading after it, and the first version of
-/// this probe asked exactly that and was told `the box heard 6 presses, not 3`.
+/// heard once from one whose presses leaked into the reading after it.
 fn tally(prefix: String) {
     let ids = gpui::list_all("ids")
     gpui::set_int(f"{prefix}d", count(ids.clone(), "box|down"))

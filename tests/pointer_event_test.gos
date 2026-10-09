@@ -3,18 +3,17 @@
 // `gpui::on_mouse` raises `"<id>|<kind>"` and writes `<id>.x` / `<id>.y` into the
 // state store. The store has one slot per key, so when several moves coalesce into a
 // single frame every one of them reads back the **last** position — and that is not a
-// guess. Measured in the container, driven by `xdotool` on the X server the window
-// really sits on (round 93, `tests/gui/mp1_pointer_event.gos`): four moves posted at
+// guess. Driven by `xdotool` on the X server the window really sits on
+// (`tests/gui/mp1_pointer_event.gos`): four moves posted at
 // screen x = 111, 121, 131 and 141 arrived as four `canvas|move` events in one frame,
-// and the store answered `141` to all four. The intermediate points were gone, which is
-// what `13_painting`'s header has said in prose since it was written and what nothing
-// had ever measured.
+// and the store answered `141` to all four. The intermediate points are gone, which is
+// what `13_painting`'s header says in prose.
 //
-// The fix is that the event carries its own. The payload becomes
+// The event therefore carries its own. The payload becomes
 // `"<kind>\u{1}<x>\u{1}<y>\u{1}<mods>"` — gpui's US separator, which no keystroke, label
 // or emitted payload in this tree contains — and `gpui::event_parts` still answers just
 // the kind, so every `kind == "move"` in every example keeps working unchanged. The
-// two readers below are the new half.
+// two readers below are the other half.
 //
 // An event is `"<kind>\u{1}<x>\u{1}<y>\u{1}<mods>"`. `gpui::pointer_xy` answers the first two
 // as numbers and `gpui::pointer_mods` the last as the held modifiers in gpui's own order and

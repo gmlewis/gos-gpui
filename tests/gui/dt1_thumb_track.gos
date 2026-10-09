@@ -6,19 +6,19 @@
 //
 // # What this exists for
 //
-// `examples/02_data_table.gos` carried a deviation saying the thumb "is drawn at a fixed
+// The reading kept as this probe's negative control says the thumb "is drawn at a fixed
 // 100px, not from the list's visible height ... and only its *position* is computed. The track
 // is `scroll_bounds("items", "h")` less the thumb, and the fraction is `-scroll_top /
 // scroll_height` as upstream has it, so the thumb sits where upstream would put it."
 //
-// Two things in that are false, and they are the two things this probe was written against.
+// Two things in that are false, and they are the two things this probe is about.
 //
 // **Upstream's thumb is not sized from the visible height.** It is
 // `.h(SCROLLBAR_THUMB_HEIGHT)`, a fixed `px(100.)` (`tools/upstream/examples/data_table.rs:14`),
-// and the port's `THUMB_HEIGHT` is the same 100 — so the *height* was never a difference and the
-// first half of the bullet described one that does not exist.
+// and the port's `THUMB_HEIGHT` is the same 100 — so the *height* is not a difference, and the
+// first half of that reading describes one that does not exist.
 //
-// **The position formula was not upstream's.** Upstream (`:293-305`) is
+// **The position formula is not upstream's.** Upstream (`:293-305`) is
 //
 // ```text
 // let percentage = -self.scroll_top() / scroll_height;
@@ -30,15 +30,16 @@
 //
 // where `table_height` is the list's viewport (`base_handle.bounds().size.height`, `:279-283`)
 // and `scroll_height` is `last_item_size.contents.height` (`:285-291`) — the **whole content**,
-// rows times row height. The port used `scroll_max_offset`, which is the content *less the
-// viewport* (`gpui-0.2.2/src/elements/div.rs:1745-1747`), as the denominator, multiplied it by
-// the viewport less the thumb rather than by the viewport, and applied no clamp at all.
+// rows times row height. The negative control uses `scroll_max_offset`, which is the content
+// *less the viewport* (`gpui-0.2.2/src/elements/div.rs:1745-1747`), as the denominator,
+// multiplies it by the viewport less the thumb rather than by the viewport, and applies no clamp
+// at all.
 //
-// Round 95 deleted the bullet and gave the example upstream's own expression. The rule it
-// carried before is kept in this probe, in `was_top`, so the failure can be reproduced from the
-// probe alone; `tests/evidence/dt1.before.txt` is that run, and on a 10 000-row table in a
-// 400-pixel viewport it is 20.8 px apart a quarter of the way down, 45.6 px at the middle, 67.0 px
-// at three quarters, and a thumb that runs from 304 to 404 in a 400-pixel track at the end.
+// The example uses upstream's own expression. The wrong reading is kept in this probe, in
+// `was_top`, so the failure can be reproduced from the probe alone; `tests/evidence/dt1.before.txt`
+// is that run, and on a 10 000-row table in a 400-pixel viewport it is 20.8 px apart a quarter of
+// the way down, 45.6 px at the middle, 67.0 px at three quarters, and a thumb that runs from 304
+// to 404 in a 400-pixel track at the end.
 //
 // # What it measures, and what it is not
 //
@@ -47,7 +48,7 @@
 // across the range, with `gpui::scroll_offset`, `gpui::scroll_max_offset` and
 // `gpui::scroll_bounds`. The two rules are then evaluated on those numbers. So what is checked is
 // the binding's numbers and the arithmetic. That the arithmetic is the same arithmetic the
-// example now carries is a matter of the transcription below, and the transcription is by eye.
+// example uses is a matter of the transcription below, and the transcription is by eye.
 //
 // It is **not** `examples/02_data_table.gos`: a probe cannot import `ui` — `gos check` answers
 // "error[GR0005]: module `ui` does not exist" for a file outside `examples/` — and the example is
@@ -56,17 +57,17 @@
 // `tests/gui/mp3_drag_threshold.gos`; the example's own copy is exercised by running it, which
 // `./scripts/tiers.sh examples/02_data_table.gos` does.
 //
-// Two more things came out of writing this down. Neither is fixed here, and both are
+// Two more things are worth writing down. Neither is fixed here, and both are
 // measured in `tests/evidence/` rather than in the example.
 //
 // The first is that `ui::scrollbar` exists and is the obvious thing to reach for. Its thumb,
 // though, is the track's *share of the document* — `thumb_pixels` in `gpui-binding/src/scroll.rs`
 // computes `track * track / (track + max)`, floored at a 24-pixel minimum. On ten thousand rows in
 // a 400-pixel track that is 0.73 px, floored to 24, where upstream draws 100. Reaching for it would
-// have traded this deviation for a much larger one, and that is why the example keeps its own
+// trade this deviation for a much larger one, and that is why the example keeps its own
 // thumb.
 //
-// The second is that upstream's *drag* mapping turns out to be reachable after all. It needs the
+// The second is that upstream's *drag* mapping is reachable. It needs the
 // pressed thumb's own rectangle in window pixels, and a program has every term of it: the pointer
 // in the window from `gpui::pointer_xy`, the list's origin from `gpui::scroll_bounds("items", "y")`,
 // and the thumb's top from the placement rule above. It is not written here because a drag needs a
@@ -75,7 +76,7 @@
 //
 // The second assertion below is not about matching upstream at all: a thumb that is *placed* by a
 // rule must not hang past the bottom of the track it slides on. Upstream's clamp guarantees that;
-// the rule the port carried did not, and that is a picture anyone can see.
+// the negative control does not, and that is a picture anyone can see.
 
 use gpui
 use std::process
@@ -107,7 +108,7 @@ fn clamp01(v: f64) -> f64 {
     clamp(v, 0.0, 1.0)
 }
 
-/// The rule `examples/02_data_table.gos` carries now, transcribed from its `scrollbar()`.
+/// The rule `examples/02_data_table.gos` uses, transcribed from its `scrollbar()`.
 ///
 /// It is upstream's expression (`data_table.rs:301-305`) with `max + h` standing in for the
 /// content height the binding has no name for, and `THUMB_MARGIN` for `px(4.)`.
@@ -143,13 +144,11 @@ fn upstream_top(at: f64, max: f64, h: f64) -> f64 {
     clamp(h * percentage, floor, ceiling)
 }
 
-/// The rule `examples/02_data_table.gos` carried *before* round 95, kept as this probe's
-/// negative control.
+/// A deliberately wrong reading of the thumb, kept as this probe's negative control.
 ///
 /// Without it the check above would be two transcriptions of one expression, and a green would
 /// say only that a function equals itself. With it, the probe shows on the same live numbers
-/// that it can tell two rules apart — and that the one the example carried is one of the ones it
-/// tells apart.
+/// that it can tell two rules apart — and that this reading is one of the ones it tells apart.
 fn was_top(at: f64, max: f64, h: f64) -> f64 {
     if max <= 0.0 {
         return MARGIN
@@ -224,9 +223,9 @@ fn main() {
             let mut fail = bad
             let h0 = gpui::state_float("h0", 0.0)
             if control == 4 {
-                println(f"ok     DT1 the rule the example carried before round 95 disagrees with upstream's at {control} of the 5 points, by up to {worst:.1} px, so this check tells the two apart")
+                println(f"ok     DT1 the deliberately wrong reading disagrees with upstream's at {control} of the 5 points, by up to {worst:.1} px, so this check tells the two apart")
             } else {
-                println(f"FAIL DT1 the rule the example carried before round 95 disagrees with upstream's at {control} of the 5 points and not 4, so this check is not reading the numbers it thinks it is")
+                println(f"FAIL DT1 the deliberately wrong reading disagrees with upstream's at {control} of the 5 points and not 4, so this check is not reading the numbers it thinks it is")
                 fail = fail + 1
             }
             if fail == 0 {
@@ -265,7 +264,7 @@ fn main() {
         }
 
         // And the control, counted rather than reported point by point — the point-by-point
-        // account of the rule it replaces is `tests/evidence/dt1.before.txt`.
+        // account of the wrong reading is `tests/evidence/dt1.before.txt`.
         let away = gap(was_top(at, max, h), up)
         if away > 0.01 {
             if away > worst {

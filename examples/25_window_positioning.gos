@@ -54,11 +54,11 @@
 //     — the host window is 1 and the positioned ones are 2, 3, … in the order
 //     they were opened. Each one reads the description written for it just
 //     before it was opened, under the id it was about to get, so the label and
-//     colour are waiting on its first frame. `open_window` used to take the
-//     window's own view callback; a callback handed to a binding function is
+//     colour are waiting on its first frame. `open_window` does not take the
+//     window's own view callback: a callback handed to a binding function is
 //     valid only for the call that received it, and `open_window` returns before
-//     the window is drawn, so on the compiled tiers every positioned window's
-//     view answered an error.
+//     the window is drawn, so a view callback would answer an error on the
+//     compiled tiers.
 //   * Upstream's labels interpolate `DisplayId`'s `Debug`, which is
 //     `DisplayId(1)`. `gpui::display_field(i, "id")` is that number, so the labels are
 //     reproduced with the `DisplayId(…)` wrapper spelled out by hand.

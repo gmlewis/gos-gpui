@@ -27,7 +27,7 @@
 // box sized to its content and read back its bounds" — the brief's own check for this row —
 // was unsayable. `gpui-binding/src/style.rs`'s `bounds` token is the answer: a bare `bounds`
 // on any element makes it report its own box, through the same out-of-flow strip the pointer
-// rows have used since round 61, so a box that listens to nothing measures exactly where a
+// rows use, so a box that listens to nothing measures exactly where a
 // box that listens would.
 //
 // # What is not checked here

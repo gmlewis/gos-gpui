@@ -2,15 +2,15 @@
 //
 // Tier: every tier.
 //
-// Two thirds of this row were already true when the round began, and it is worth
-// saying so rather than pretending to have built them: `Colors::for_appearance` has
-// been wired since TM4 (all eight fields cached and chosen by the appearance), and
-// the named table has been readable since TH1 and TM4 (`gpui::colour_names`,
-// `gpui::default_color`, `gpui::default_color_for`).
+// Most of this row is already true: `Colors::for_appearance` is wired (all eight
+// fields cached and chosen by the appearance), and the named table is readable
+// through `gpui::colour_names`, `gpui::default_color` and
+// `gpui::default_color_for`.
 //
-// What was not true is the row's third clause. `gpui::set_theme` recorded a name that
-// **nothing consulted** — its own doc said so, and `scripts/docs.sh` guarded the claim —
-// so a program could name a theme and get the platform's colours anyway.
+// The row's third clause is the theme itself: `gpui::set_theme` names a theme, and a
+// name that **nothing consults** — which is what its own doc and `scripts/docs.sh`
+// guarded against — would let a program name a theme and get the platform's colours
+// anyway.
 //
 // Pass means the name is consulted. The probe asks for the palette the machine is
 // *not* using, and requires three things of it: the named colour table answers from

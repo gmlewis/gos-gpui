@@ -42,11 +42,11 @@
 //   binding. So this port hides and stays hidden. `gpui::delay` could time a
 //   restore; there is no restore to time it to.
 //
-//   This was a dashed, greyed placeholder reading "Hide Application
-//   (unavailable)" until the pair's captures were compared: it was the ONLY
-//   region of this example's window that differed from upstream's, 11,467
-//   pixels of it, and the button it stood in for had been reachable from the
-//   binding all along.
+//   The button is a real button rather than a dashed, greyed stand-in. A
+//   "Hide Application (unavailable)" panel would be the ONLY region of this
+//   example's window that differs from upstream's, 11,467 pixels of it, and the
+//   button it would stand in for is reachable from the binding, so the port
+//   draws the button rather than the stand-in.
 //
 // Also absent, and therefore not ported:
 //
@@ -66,9 +66,9 @@
 //   * `titlebar=none` is the binding's spelling of gpui's own `titlebar: None`,
 //     which is what upstream passes: a full-size content view with no bar at
 //     all and **no traffic lights**, so the blue 32px bar this view draws is
-//     the only one the window has, exactly as in upstream's window. It used to
-//     mean a transparent titlebar with the lights moved to (12,12), which is
-//     the window `25_window_positioning` was measured against. Measured, the two
+//     the only one the window has, exactly as in upstream's window — not a
+//     transparent titlebar with the lights moved to (12,12), which is the
+//     window `25_window_positioning` measures against. Measured, the two
 //     Custom Titlebar windows — upstream's example and this port's — are **0
 //     differing pixels** over the whole 298x298 frame. On Linux the same request
 //     sets client decorations, which no tier of this project photographs.
@@ -167,11 +167,11 @@ fn sub_window_view() {
 /// `WindowOptions` upstream builds, and `custom_titlebar` is upstream's
 /// `SubWindow` flag.
 ///
-/// What the window will draw is not a callback. `open_window` used to take the
-/// window's own view; a callback handed to a binding function is valid only for
+/// What the window will draw is not a callback. `open_window` does not take the
+/// window's own view: a callback handed to a binding function is valid only for
 /// the call that received it, and `open_window` returns before the window is ever
-/// drawn, so on the compiled tiers every sub-window's view answered an error and
-/// drew nothing. Instead the description goes into the window's own state, under
+/// drawn, so a view callback would answer an error on the compiled tiers and
+/// draw nothing. Instead the description goes into the window's own state, under
 /// the id it is about to be given — `window::allocate` hands out ids in the order
 /// windows are opened, and the host took 1, so the n-th sub-window is id `n + 1`.
 fn open_sub(title: String, options: String, custom_titlebar: bool) {

@@ -56,7 +56,7 @@ fn main() {
             // An editor with no chrome tokens at all answers the widget's defaults
             // rather than empty strings. The gutter is off, so its width is zero and
             // its numbers fall back to `text`; the caret and the selection are colours
-            // the widget always has, and they were not readable before this row.
+            // the widget always has.
             failed = failed + check("plain", "gutter", "0")
             failed = failed + check("plain", "gutterbg", "none")
             failed = failed + check("plain", "gutterfg", "text")

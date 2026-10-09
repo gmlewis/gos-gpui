@@ -42,9 +42,9 @@
 //   * A Gossamer frame rebuilds the whole tree each frame instead of
 //     re-rendering a retained `Entity`; the tree itself is the same.
 //
-// Nothing is missing from the binding for this example. The placeholder this
-// replaced claimed it needed `window.text_system()`, `ShapedLine` and
-// `paint_text`; it needs none of them.
+// Nothing is missing from the binding for this example — not
+// `window.text_system()`, not `ShapedLine`, not `paint_text`: the port needs
+// none of them.
 
 use gpui
 use std::process

@@ -6,10 +6,10 @@
 #   ./scripts/window-guard.sh          # exit 0 if windows are allowed, 3 if they are not
 #   ./scripts/window-guard.sh --why    # ... and one line saying so either way
 #
-# On 2026-10-06 the owner of this machine asked, in these words, that nothing pop up on their
-# screen any more — the run's GUI probes were opening real windows on their desktop and made the
-# laptop unusable while they were working. That is not a preference to be weighed against
-# evidence: it is the person who owns the machine, and it outranks every tier in this register.
+# The owner of this machine has asked that nothing pop up on their screen: GUI probes opening
+# real windows on the desktop make the laptop unusable while they work. That is not a preference
+# to be weighed against evidence: it is the person who owns the machine, and it outranks every
+# tier in this register.
 #
 # So **headless is the default**, and opening a window is the exception that has to be asked for:
 #
@@ -18,7 +18,7 @@
 #
 # Nothing else may open a window. The scripts that do — `tiers`, `probes`, `regress`, `run-once`,
 # `appearance-toggle` — all call this first and either skip the window-opening half or refuse
-# outright, so that a later session cannot quietly reintroduce the nuisance.
+# outright, so nothing can quietly reintroduce the nuisance.
 #
 # What headless mode still allows, and it is most of the work: `gos check` (which compiles the
 # binding exactly the way the toolchain does), `gos test tests` (the `#[test]` cases, which need no
@@ -30,9 +30,8 @@ set -uo pipefail
 reason="headless mode: the owner of this machine asked that nothing open a window"
 
 # Bulk runs are a second decision, not the same one. `scripts/probes.sh` opens a window per
-# probe; on 2026-10-06 one `DSH_ALLOW_WINDOWS=1` was enough to start a sweep of them, and the
-# owner of the machine — who had said "I will watch" about *one* probe — found their machine
-# unusable. So a suite that opens a window per program now needs a flag of its own:
+# probe, and `DSH_ALLOW_WINDOWS=1` is consent to one window rather than to a suite of them. So
+# a suite that opens a window per program needs a flag of its own:
 #
 #   DSH_ALLOW_WINDOWS=1 ./scripts/tiers.sh tests/gui/foo.gos          # one program, a window or two
 #   DSH_ALLOW_WINDOWS=1 DSH_ALLOW_WINDOWS_BULK=1 ./scripts/probes.sh  # one window per probe, asked for

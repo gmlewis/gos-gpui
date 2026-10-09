@@ -23,15 +23,15 @@
 // `size_12()` is `rems(3.)` = 48px (gpui-macros-0.2.2/src/styles.rs) and
 // `p_0p5()` is `rems(0.125)` = 2px.
 //
-// WHAT THE BINDING HAS, as of round 100. `ui::image_request(path, style,
-// loading, fallback)` is GPUI's `with_loading` / `with_fallback`: the image
+// WHAT THE BINDING HAS. `ui::image_request(path, style, loading, fallback)` is
+// GPUI's `with_loading` / `with_fallback`: the image
 // element keeps the two subtrees as its own, and the binding picks between them
 // by reading the *ordinary* image loader's state — the same state `Img` reads —
 // on the same `Some(Ok)` / `Some(Err)` / `None` arms and the same
-// `LOADING_DELAY` (200ms, gpui-0.2.2 src/elements/img.rs:31, 366-401). That was
-// the whole of what the port could not reach before; the row it was blocked on
-// is DW7. The bytes still arrive the way they always did: `PathBuf ->
-// ImageSource` is `Resource::Path` (src/elements/img.rs:100-104) and
+// `LOADING_DELAY` (200ms, gpui-0.2.2 src/elements/img.rs:31, 366-401). This is
+// the whole of what DW7 asks for.
+// The bytes arrive the same way: `PathBuf -> ImageSource`
+// is `Resource::Path` (src/elements/img.rs:100-104) and
 // `ImageAssetLoader` reads it with `fs::read` (src/elements/img.rs:601), so
 // upstream's own `Assets` / `AssetSource` impl is not what loads any of its four
 // cells either (`AssetSource` is consulted only for `Resource::Embedded`,
@@ -44,10 +44,10 @@
 // items=center`, with nothing added. The window is 300x300, as upstream asks
 // (`gpui::run` centres a window the same way). Upstream's `.id("image-1")` ..
 // `.id("image-4")` are on the images themselves, so `gpui::image_state` reads
-// back which subtree each cell chose. Earlier revisions of this port carried a
-// heading, a "the four cells" legend and an "absent, not emulated" panel, because
-// there was a list of unreachable capabilities to record; the list is empty now
-// and so are the panels.
+// back which subtree each cell chose. There is no heading, no "the four cells"
+// legend and no "absent, not emulated" panel: such a panel records a list of
+// unreachable capabilities, and for this example the list is empty, so there is
+// nothing for it to say.
 //
 // Deviations — the list is the point of this file:
 //
@@ -93,9 +93,11 @@ use ui
 /// binding takes a filesystem path, so this is the copy in `examples/assets/`.
 ///
 /// Both paths are passed to the free `ui::image_request` as `*APP_ICON` /
-/// `*MISSING`: under gos 0.66.0 a `&str` const is a reference and that call
-/// wants the value it names, while the chained `.image(..)` of 04 and 11 takes
-/// the const as it stands.
+/// `*MISSING`: a `&str` const is a reference, and a `String` parameter wants
+/// the value it names rather than the reference. Passing the reference itself
+/// is refused — `takes(P)` against `fn takes(s: String)` asks you to
+/// `write *P`. The chained `.image(..)` of 04 and 11 takes the const as it
+/// stands.
 const APP_ICON: &str = "examples/assets/app-icon.png"
 
 /// Upstream's fourth cell, verbatim — the normal loader on a path that is not

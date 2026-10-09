@@ -36,14 +36,14 @@
 // default cursor — and the inner `on_mouse_move(..)` that called
 // `cx.stop_propagation()` has nothing left to stop.
 //
-// That tree, and nothing else, is what this port draws. It drew one thing more
-// until round 97: a dark readout panel at the window's top-left, printing
-// `gpui::mouse_position()` and the edge the dead arm's own `resize_edge` picks,
-// with an `on_mouse` on the green box standing in for upstream's
-// `on_mouse_down` / `on_click` handlers there. That was an approximation of
-// pointer work macOS never performs — and a person putting the two windows side
-// by side could see it, which is exactly what Goal B forbids. It is gone, and
-// the three differences it carried went with it: the missing `set_cursor_style`
+// That tree, and nothing else, is what this port draws. It would otherwise
+// carry a dark readout panel at
+// the window's top-left, printing `gpui::mouse_position()` and the edge the dead
+// arm's own `resize_edge` picks, with an `on_mouse` on the green box standing in
+// for upstream's `on_mouse_down` / `on_click` handlers there — an approximation
+// of pointer work macOS never performs, and a person putting the two windows side
+// by side could see it, which is exactly what Goal B forbids. Drawing it would
+// also put three further differences on screen: the missing `set_cursor_style`
 // (upstream calls it *inside* the dead arm, so neither window shows a per-edge
 // resize cursor, and the `Server` arm's own `cursor(CursorStyle::Arrow)` is the
 // arrow either way), the live window size `resize_edge` was handed, and the
@@ -84,9 +84,9 @@
 //     — 187 levels on the red light. `gpui::run` activates every window it
 //     opens, so the port asks for upstream's state instead, as
 //     `activate=false`. **Invisible**: the same three lights, the same colours —
-//     and with it this pair is now 0 differing pixels over the whole window, the
-//     title bar's material included. That last part was 18,478px before the flag
-//     was added.
+//     and with it this pair is 0 differing pixels over the whole window, the
+//     title bar's material included. Without the flag the title bar's material
+//     alone differs by 18,478px.
 
 use gpui
 use std::process
