@@ -1,0 +1,120 @@
+Round 96 — register row DD4, "pointer capture during a drag, so a release outside the
+element is heard", and the two binding calls that close it.
+
+Command: ./scripts/gosbox.sh run tests/gui/dd4_capture.gos
+
+`tests/gui/dd4_capture.gos` presses inside a 200x100 box, moves twice to the far side of it
+and releases well outside it, then asserts the box heard the press, both moves that left it
+and the release — each with its own point, read off the event rather than out of the one
+store slot the last of them would have overwritten — and that `gpui::element_bounds` reads
+the box's own rectangle back.
+
+This file records **three** runs: the red at HEAD, the red of the first attempt at the
+binding, and the negative control that makes the green one evidence. Two of them are wrong
+in the same place — the box hears the press and then nothing — for two different reasons,
+which is why both are here.
+
+--------------------------------------------------------------------------------
+1. At HEAD: neither call is bound
+--------------------------------------------------------------------------------
+At HEAD neither `gpui::on_mouse_window` nor `gpui::element_bounds` exists. `gos check` does
+not validate binding names — it answers `check: ok (22 items typed)` for this file — so the
+red is the run, in the container. The view callback fails on the unresolved name every
+frame, so the tree is never built and nothing is ever heard; the three FAIL lines are what
+`report()` managed to print before the same unresolved name stopped it at the
+`element_bounds` call. `gpui::quit()` is never reached either, because the frame that would
+have raised it failed first, which is why the runner answers `exited 124 — no verdict`
+rather than a clean exit.
+
+FAIL   tests/gui/dd4_capture.gos: exited 124 — no verdict
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::on_mouse_window")
+       FAIL DD4 the box heard 0 press(es), not 1
+       FAIL DD4 the box heard 0 move(s) outside itself, not 2: it heard nothing once the pointer left it
+       FAIL DD4 the box heard 0 release(s), not 1: a release outside the element reached nobody
+
+--------------------------------------------------------------------------------
+2. The first attempt at the binding: silent, because the kinds were read as one word
+--------------------------------------------------------------------------------
+The first implementation split `window_kinds` on the comma. The probe — like `mp1`, `mp2`
+and `mp3` — writes the space-separated form, `"down up move"`, so the split produced one
+word, `"down up move"`, which matched none of the three arms and registered **nothing**.
+No panic, no note, no listener: a silent wrong answer, which is the failure mode the
+container makes expensive to tell from a hang.
+
+FAIL   tests/gui/dd4_capture.gos: exited 0 — no verdict
+       FAIL DD4 the box heard 0 press(es), not 1
+       FAIL DD4 the box heard 0 move(s) outside itself, not 2: it heard nothing once the pointer left it
+       FAIL DD4 the box heard 0 release(s), not 1: a release outside the element reached nobody
+
+--------------------------------------------------------------------------------
+3. The second attempt: gpui refuses the call outside a paint phase
+--------------------------------------------------------------------------------
+The split was fixed to read words, and the listeners were then registered from the element's
+own `Render::render` — where every other handler in `view.rs` is written. gpui does not
+allow it: `Window::on_mouse_event` opens with `debug_assert_paint` (`window.rs:3425`), and a
+view's `render` runs in the *prepaint* phase. The run panicked on the first frame that drew
+the box. Upstream is inside a paint callback for the same reason — `data_table.rs` hangs its
+scrollbar's listeners on a `canvas` inside the thumb (`:320-364`) — and a canvas paint
+closure is how a program that builds its tree in `render` reaches one.
+
+FAIL   tests/gui/dd4_capture.gos: exited 101 — no verdict
+
+       thread 'main' (126) panicked at /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/window.rs:3425:26:
+       this method can only be called during paint
+       note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+--------------------------------------------------------------------------------
+4. Green: the element carries a canvas, and the canvas registers on the window
+--------------------------------------------------------------------------------
+`gpui::on_mouse_window(el, kinds, id)` now renders its element exactly as `gpui::on_mouse`
+does — the same box, the same styles, the same `<id>.x`/`<id>.y` in the store — and appends
+one out-of-flow, full-size `canvas` whose paint closure is the only place the registration
+happens. `gpui::element_bounds(id, field)` reads the rectangle gpui laid the element out in,
+which is what a program needs to gate a drag on the element it began on, upstream's
+`thumb_bounds.contains(&ev.position)`.
+
+The five events below are all the box heard. Every point is its own: the two moves that left
+it are at 600,450 and 700,500, and the release is at 700,500 — none of them is the press's
+point read back late, which is what round 93's per-event payload is for.
+
+ok     tests/gui/dd4_capture.gos: OK DD4 the box heard the press, both moves that left it and the release outside it, each with its own point, and reads its own bounds back as 200x100 at 100,100
+       OK DD4 the box heard the press, both moves that left it and the release outside it, each with its own point, and reads its own bounds back as 200x100 at 100,100
+       note DD4 heard move 200.00,150.00
+       note DD4 heard down 200.00,150.00
+       note DD4 heard move 600.01,450.01
+       note DD4 heard move 700.01,500.01
+       note DD4 heard up 700.01,500.01
+
+--------------------------------------------------------------------------------
+5. The negative control: the same tree, the same gesture, `gpui::on_mouse`
+--------------------------------------------------------------------------------
+`WINDOW_LEVEL` at the top of the probe picks how the box's listener is registered. Set it
+to `false` and the same tree, the same gesture and the same four assertions register with
+`gpui::on_mouse` — which is what the binding had before this round — and the probe goes red
+in exactly one way: the box hears the press, at its own point, and then **nothing at all**.
+Both moves that left it and the release outside it reach nobody. The press is still heard,
+so the red is about where the pointer had to be and not about the gesture having failed; and
+`element_bounds` still reads 200x100 at 100,100, so it is not about the rectangle either.
+This is what makes the green run evidence rather than an assertion that two code paths
+differ, and it is why the first two reds above are the same three lines.
+
+FAIL   tests/gui/dd4_capture.gos: exited 0 — no verdict
+       FAIL DD4 the box heard 0 move(s) outside itself, not 2: it heard nothing once the pointer left it
+       FAIL DD4 the box heard 0 release(s), not 1: a release outside the element reached nobody
+       note DD4 heard down 200.00,150.00

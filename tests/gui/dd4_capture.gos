@@ -1,0 +1,250 @@
+// DD4 — a window-level pointer listener: a drag that leaves the element is still heard.
+//
+// container: the pointer is driven from outside the process by `xdotool` through XTEST,
+// against the X server the window really sits on. The Mac has no such server — and
+// `scripts/window-guard.sh` keeps a window from opening there at all — so `scripts/probes.sh`
+// and `scripts/tiers.sh` skip this one by name. It runs in the container:
+//
+//   ./scripts/gosbox.sh tiers tests/gui/dd4_capture.gos
+//
+// # What this exists for
+//
+// Register row DD4 is "pointer capture during a drag, so a release outside the element is
+// heard". The capability is `gpui::on_mouse_window`: where `gpui::on_mouse` registers on the
+// element and so reports only while the pointer is over it — gpui gates every element
+// listener on `hitbox.is_hovered(window)` (`gpui-0.2.2/src/elements/div.rs:128`, `:147`) —
+// this registers on the **window**, through `Window::on_mouse_event`
+// (`gpui-0.2.2/src/window.rs:3421`), whose listeners are dispatched for every mouse event
+// wherever the pointer is (`:3677-3714`). That is upstream's own instrument: `data_table.rs`
+// keeps its scrollbar drag alive with `window.on_mouse_event(..)` rather than an element
+// handler, and `docs/` has no other way to express it.
+//
+// # What it checks
+//
+// One press inside a box, two moves that leave it, and the release well outside it. The box
+// must hear the moves and the `up`, and must hear them with their own positions — the
+// positions come off the events themselves, through `gpui::pointer_xy`, not out of the one
+// store slot the last of them would have overwritten.
+//
+// # The negative control
+//
+// `WINDOW_LEVEL` below picks how the listener is registered. `true` is the window-level
+// listener this row is about. Set it to `false` and the same tree, the same gesture and the
+// same assertions register with `gpui::on_mouse` instead, which is what the binding had —
+// and the probe goes red in one way: the box hears the `down` and then nothing at all. That
+// is the red recorded in `tests/evidence/dd4.before.txt`, and it is what makes this evidence
+// rather than an assertion that two code paths differ.
+
+use gpui
+use std::os::exec
+use std::process
+
+/// The window's title, and what `xdotool` is told to look for.
+const TITLE: String = "dd4capture"
+
+/// The box the gesture is aimed at: `absolute left=100 top=100 w=200 h=100`.
+const BOX_X: f64 = 100.0
+const BOX_Y: f64 = 100.0
+const BOX_W: f64 = 200.0
+const BOX_H: f64 = 100.0
+
+/// Where the press lands, and the two points on the far side of the box the drag goes to.
+const PRESS_X: f64 = 200.0
+const PRESS_Y: f64 = 150.0
+const OUT_X: f64 = 600.0
+const OUT_Y: f64 = 450.0
+const RELEASE_X: f64 = 700.0
+const RELEASE_Y: f64 = 500.0
+
+/// How the listener is registered: `true` for `gpui::on_mouse_window`, `false` for
+/// `gpui::on_mouse`. Flipping this is the negative control; see the header.
+const WINDOW_LEVEL: bool = true
+
+/// Run a program and answer its stdout, trimmed, with anything that went wrong printed.
+fn shell(program: String, args: Vec<String>) -> String {
+    match exec::run(program.clone(), args) {
+        Ok(out) => {
+            if out.code != 0 {
+                println(f"FAIL DD4 {program} exited {out.code}: {out.stderr.trim()}")
+            }
+            out.stdout.trim().clone()
+        }
+        Err(problem) => {
+            println(f"FAIL DD4 could not run {program}: {problem}")
+            String::new()
+        }
+    }
+}
+
+/// The xdotool subcommand that posts one pointer move, as a list of words.
+fn move_to(x: f64, y: f64) -> Vec<String> {
+    let sx = x.round() as i64
+    let sy = y.round() as i64
+    #["mousemove", "--sync", f"{sx}", f"{sy}"]
+}
+
+/// Whether two numbers are the same to within a twentieth of a pixel — the same slack
+/// `tests/gui/mp2_painting_drag.gos` uses, and for the same reason: the pointer is posted at
+/// a whole screen coordinate and the binding reports against an origin that is not whole.
+fn same(a: f64, b: f64) -> bool {
+    let d = a - b
+    (if d < 0.0 { -d } else { d }) < 0.05
+}
+
+/// Whether `x`,`y` is outside the box the gesture starts in.
+fn outside(x: f64, y: f64) -> bool {
+    x < BOX_X || y < BOX_Y || x > BOX_X + BOX_W || y > BOX_Y + BOX_H
+}
+
+fn main() {
+    let outcome = gpui::run(TITLE, 900.0, 600.0, || {
+        let f = gpui::frame()
+        gpui::animate()
+
+        // ---- the gesture, posted from inside the frame that blocks it ------------------
+        //
+        // `--sync` is what makes the four posts arrive in order: each waits for the X server
+        // to have processed the one before it. The frame callback is blocked while they are
+        // posted, so they are queued before it returns, but *when* gpui hands them over is the
+        // platform's business — which is why the drain below runs over a range of frames.
+        if f == 3 && gpui::state_int("phase", 0) == 0 {
+            gpui::set_int("phase", 1)
+            let found = shell("xdotool", #["search", "--name", TITLE])
+            let hits = found.lines()
+            if hits.is_empty() {
+                println(f"FAIL DD4 no window named {TITLE} on this display (xdotool said `{found}`)")
+            } else {
+                let ox = gpui::window_field("inner_x")
+                let oy = gpui::window_field("inner_y")
+                gpui::set_float("ox", ox)
+                gpui::set_float("oy", oy)
+                let _ = shell("xdotool", move_to(ox + PRESS_X, oy + PRESS_Y))
+                let _ = shell("xdotool", #["mousedown", "1"])
+                let _ = shell("xdotool", move_to(ox + OUT_X, oy + OUT_Y))
+                let _ = shell("xdotool", move_to(ox + RELEASE_X, oy + RELEASE_Y))
+                let _ = shell("xdotool", #["mouseup", "1"])
+            }
+        }
+
+        // ---- the drain ------------------------------------------------------------------
+        //
+        // Over a range of frames rather than one, as MP2 does: the gesture is posted with this
+        // callback blocked, and when gpui hands the events over is the platform's business. The
+        // claim is about the events' content, not about the frame they land in.
+        if f >= 4 {
+            for event in gpui::take_events() {
+                let id, kind = gpui::event_parts(event.clone())
+                if id == "box" {
+                    // Off the event, in the frame's own closure: `gpui::pointer_xy` faults
+                    // under the JIT when it is called from a module-level function
+                    // (`CAPABILITIES.md`, round 93).
+                    let x, y = gpui::pointer_xy(event.clone())
+                    gpui::list_push("k", kind)
+                    gpui::list_push_float("px", x)
+                    gpui::list_push_float("py", y)
+                }
+            }
+        }
+
+        if f == 18 && gpui::state_int("phase", 0) == 1 {
+            gpui::set_int("phase", 2)
+            report()
+            gpui::quit()
+        }
+
+        // The box, with the listener under test on it. Everything else in the window is a
+        // plain background, so nothing else can raise the events being counted.
+        let box_style = f"absolute left={BOX_X} top={BOX_Y} w={BOX_W} h={BOX_H} bg=#3366ff"
+        let box = if WINDOW_LEVEL {
+            gpui::on_mouse_window(gpui::rect(box_style), "down up move", "box")
+        } else {
+            gpui::on_mouse(gpui::rect(box_style), "down up move", "box")
+        }
+        let root = gpui::child(gpui::stack("size=full bg=#ffffff"), box)
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}
+
+/// The verdict, and the whole of the check. Every branch prints its own line, because a check
+/// that passes by falling through is a check that has stopped checking.
+fn report() {
+    let kinds = gpui::list_all("k")
+    let xs = gpui::list_all_float("px")
+    let ys = gpui::list_all_float("py")
+    let n = kinds.len() as i64
+
+    let mut bad = 0
+    let mut downs = 0
+    let mut moves_out = 0
+    let mut ups = 0
+    let mut up_here = 0
+
+    for i in 0..n {
+        let kind = kinds[i].clone()
+        let x = xs[i]
+        let y = ys[i]
+        if kind == "down" {
+            downs = downs + 1
+            if !same(x, PRESS_X) || !same(y, PRESS_Y) {
+                println(f"FAIL DD4 the press was heard at {x:.2},{y:.2}, not at its own {PRESS_X:.2},{PRESS_Y:.2}")
+                bad = bad + 1
+            }
+        } else if kind == "move" {
+            if outside(x, y) {
+                moves_out = moves_out + 1
+            }
+        } else if kind == "up" {
+            ups = ups + 1
+            if same(x, RELEASE_X) && same(y, RELEASE_Y) {
+                up_here = up_here + 1
+            }
+        }
+    }
+
+    // 1. The press, heard where it happened.
+    if downs != 1 {
+        println(f"FAIL DD4 the box heard {downs} press(es), not 1")
+        bad = bad + 1
+    }
+
+    // 2. The moves that left the box, heard anyway, each with its own point. Two were posted
+    //    outside it; a listener that stopped at the element edge would record neither.
+    if moves_out != 2 {
+        println(f"FAIL DD4 the box heard {moves_out} move(s) outside itself, not 2: it heard nothing once the pointer left it")
+        bad = bad + 1
+    }
+
+    // 3. The release, which happened well outside the box.
+    if ups != 1 {
+        println(f"FAIL DD4 the box heard {ups} release(s), not 1: a release outside the element reached nobody")
+        bad = bad + 1
+    } else if up_here != 1 {
+        println("FAIL DD4 the release was heard, but not at the point it happened")
+        bad = bad + 1
+    }
+
+    // 4. The box's own rectangle, which is what a program needs to gate a drag on — upstream's
+    //    `thumb_bounds.contains(&ev.position)`. Read back from the binding, not assumed.
+    let bx = gpui::element_bounds("box", "x")
+    let by = gpui::element_bounds("box", "y")
+    let bw = gpui::element_bounds("box", "w")
+    let bh = gpui::element_bounds("box", "h")
+    if !same(bx, BOX_X) || !same(by, BOX_Y) || !same(bw, BOX_W) || !same(bh, BOX_H) {
+        println(f"FAIL DD4 element_bounds reads the box at {bx:.2},{by:.2} {bw:.2}x{bh:.2}, not at {BOX_X:.2},{BOX_Y:.2} {BOX_W:.2}x{BOX_H:.2}")
+        bad = bad + 1
+    }
+
+    if bad == 0 {
+        println(f"OK DD4 the box heard the press, both moves that left it and the release outside it, each with its own point, and reads its own bounds back as {bw:.0}x{bh:.0} at {bx:.0},{by:.0}")
+    }
+
+    // Left for the operator's eye, not as a check: everything the box heard, in order.
+    for i in 0..n {
+        println(f"note DD4 heard {kinds[i]} {xs[i]:.2},{ys[i]:.2}")
+    }
+}

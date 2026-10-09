@@ -145,12 +145,25 @@ incmd() { inbox bash -lc "export PATH=$CONTAINER_PATH; $1"; }
 # Measured the hard way in round 87: a throwaway container killed at a 120s timeout left
 # `runners/eb43bebcecce/.gos-build.lock` holding pid 40, after which two runs of a probe that had
 # just been green answered `exited 124 — no verdict` and printed nothing at all.
+#
+# **`kill -0` is the wrong test, and round 96 measured why.** The lock holds a pid from
+# whichever container made it; this reaper runs in a *fresh* container, whose own low pids are
+# taken by the display server and the window manager. A lock holding 40 therefore looked
+# "alive" to `kill -0 40` because *this* container's pid 40 existed, and it was never reaped —
+# every probe in the suite then answered `cache i/o error: another gos process holds … for >5
+# min` and the run came back **0/49**. So the pid has to be checked against `/proc/<pid>/cmdline`
+# and be a `gos`; anything else, including an empty cmdline for a pid that is gone, is stale.
 reap_locks() {
   inbox bash -lc 'for l in /root/.cache/gossamer/runners/*/.gos-build.lock; do
       [ -f "$l" ] || continue
       p="$(cat "$l" 2>/dev/null)"
       case "$p" in ""|*[!0-9]*) continue ;; esac
-      kill -0 "$p" 2>/dev/null || { rm -f "$l"; echo "gosbox: reaped stale build lock $l (pid $p)"; }
+      owner="$(cat "/proc/$p/cmdline" 2>/dev/null | tr "\0" " ")"
+      case "$owner" in
+        *gos*) ;;
+        *) rm -f "$l"
+           echo "gosbox: reaped stale build lock $l (pid $p is ${owner:-gone}, not a gos)" ;;
+      esac
     done' 2>&1 | sed 's/^/       /'
 }
 
@@ -208,6 +221,7 @@ case "$cmd" in
   check)
     [ $# -ge 1 ] || die "check needs a program"
     stage
+    reap_locks
     rc=0
     for p in "$@"; do
       out="$(incmd "gos check '$p' 2>&1 | tail -20")"

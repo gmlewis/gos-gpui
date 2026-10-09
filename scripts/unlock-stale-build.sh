@@ -23,8 +23,12 @@ while IFS= read -r lock; do
   case "$pid" in
     ''|*[!0-9]*) continue ;;
   esac
-  if ! ps -p "$pid" >/dev/null 2>&1; then
-    echo "unlock: reaping stale build lock $lock (pid $pid is gone)" >&2
+  # "is this pid alive" is not the question — "is this pid a `gos`" is. A recorded pid that the
+  # system has since handed to something else answers `ps -p` happily, and the lock survives to
+  # cost the next run five minutes. Round 96 found the container-side twin of this: see
+  # `reap_locks` in `scripts/gosbox.sh`.
+  if ! ps -p "$pid" -o command= 2>/dev/null | grep -q 'gos'; then
+    echo "unlock: reaping stale build lock $lock (pid $pid is not a running gos)" >&2
     rm -f "$lock"
   fi
 done < <(find "$cache" -name '.gos-build.lock' 2>/dev/null)

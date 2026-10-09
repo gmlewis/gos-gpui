@@ -16,8 +16,8 @@ use std::path::PathBuf;
 use gpui::prelude::*;
 use gpui::{
     canvas, div, fill, img, point, px, relative, svg, uniform_list, AnyElement, App, Bounds,
-    ElementId, EntityId, FocusHandle, KeyDownEvent, KeyUpEvent, MouseButton, Pixels, SharedString,
-    Svg, Window,
+    DispatchPhase, ElementId, EntityId, FocusHandle, KeyDownEvent, KeyUpEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, SharedString, Svg, Window,
 };
 
 use gossamer_binding::{NativeDispatch, PersistentCallback, Value};
@@ -155,7 +155,12 @@ pub enum Kind {
     /// A `canvas` that paints built paths, in order.
     Paths { paths: Vec<i64>, backgrounds: Vec<String> },
     /// A wrapper that reports pointer events for the element it holds.
-    Mouse { child: usize, id: String, kinds: String },
+    ///
+    /// `kinds` are heard only while the pointer is over the element — gpui gates every
+    /// element listener on `hitbox.is_hovered(window)`. `window_kinds` are heard wherever
+    /// the pointer is, through `Window::on_mouse_event`; they are the same names, and the
+    /// two may be mixed.
+    Mouse { child: usize, id: String, kinds: String, window_kinds: String },
     /// Text with per-byte-range highlights.
     StyledText { content: String, highlights: Vec<String> },
     /// A binding-owned text editor, registered under `key`.
@@ -1454,9 +1459,12 @@ fn snapshot(handle: i64) -> Option<El> {
                 Kind::Paths { paths, backgrounds } => {
                     Kind::Paths { paths: paths.clone(), backgrounds: backgrounds.clone() }
                 }
-                Kind::Mouse { child, id, kinds } => {
-                    Kind::Mouse { child: *child, id: id.clone(), kinds: kinds.clone() }
-                }
+                Kind::Mouse { child, id, kinds, window_kinds } => Kind::Mouse {
+                    child: *child,
+                    id: id.clone(),
+                    kinds: kinds.clone(),
+                    window_kinds: window_kinds.clone(),
+                },
                 Kind::StyledText { content, highlights } => {
                     Kind::StyledText { content: content.clone(), highlights: highlights.clone() }
                 }
@@ -1757,6 +1765,70 @@ fn round3(v: f32) -> f64 {
 /// (`window.rs:2860`) — needs exactly that number. **The store's `<id>.x` / `<id>.y` stay
 /// element-relative**, which is the convenience they have always been and what a widget
 /// measuring a position inside itself wants; [`crate::pointer_xy`] documents the difference.
+/// Registers `id`'s **window-level** listeners on `window` for the events named in `kinds`.
+///
+/// The same three events the element-level handlers report, through the same writer
+/// ([`report_pointer`]), registered on the window instead of on the element. gpui dispatches
+/// window listeners for every mouse event wherever the pointer is
+/// (`gpui-0.2.2/src/window.rs:3677-3714`), where an element's own listener is gated on the
+/// element's hitbox being hovered (`elements/div.rs:128`, `:147`) — which is what keeps a
+/// drag alive once the pointer has left the element it began on.
+///
+/// **Only legal from a paint callback.** `on_mouse_event` opens with `debug_assert_paint`
+/// (`window.rs:3425`), and the view's `Render::render` runs in the *prepaint* phase; calling
+/// it from there panics with `this method can only be called during paint`. The caller is
+/// the paint closure of a `canvas` the mouse element carries for exactly this.
+///
+/// `kinds` is read as **words** — `"down up move"` names the same three as `"down,up,move"` —
+/// because a program writes it the way `gpui::on_mouse`'s `kinds` is written, and that one is
+/// read with a `contains`. A `split(',')` alone made `"down up move"` one word, matched none
+/// of the three and registered nothing at all.
+fn register_window_mouse(
+    window: &mut Window,
+    cx: &mut App,
+    entity: EntityId,
+    win: i64,
+    id: &str,
+    kinds: &str,
+) {
+    let wants = |want: &str| {
+        kinds
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .any(|word| word == want)
+    };
+
+    if wants("down") {
+        let key = id.to_string();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, _w, cx| {
+            if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                return;
+            }
+            window::with(win, || report_pointer(&key, "down", event.position, event.modifiers));
+            cx.notify(entity);
+        });
+    }
+    if wants("up") {
+        let key = id.to_string();
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, _w, cx| {
+            if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                return;
+            }
+            window::with(win, || report_pointer(&key, "up", event.position, event.modifiers));
+            cx.notify(entity);
+        });
+    }
+    if wants("move") {
+        let key = id.to_string();
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _w, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            window::with(win, || report_pointer(&key, "move", event.position, event.modifiers));
+            cx.notify(entity);
+        });
+    }
+}
+
 fn report_pointer(
     id: &str,
     kind: &str,
@@ -1806,6 +1878,40 @@ pub(crate) fn pointer_fields(event: &str) -> Option<(f64, f64, String)> {
         return None;
     }
     Some((x, y, mods.to_string()))
+}
+
+/// One field of an element's rectangle, in **window** coordinates, or `0.0` when there is
+/// no rectangle to report.
+///
+/// The rectangle gpui laid the element out in during the last frame it was drawn, read
+/// back from the same per-`(window, element)` map `report_pointer` measures the
+/// element-relative `<id>.x` against — so a program that has one has the other, and they
+/// agree.
+///
+/// **Only an element that carries an interaction has one.** gpui hands the binding the
+/// bounds of an element's box while it is being painted, which the binding keeps for the
+/// elements a pointer handler is attached to and for sliders — nothing else. An element
+/// with a name and no listener reports `0.0`, and so does a name that is not in this
+/// window. A caller that needs a rectangle to read back must give the element something to
+/// listen with, which is exactly what upstream's `thumb_bounds.contains(&ev.position)`
+/// needs to gate a drag on.
+///
+/// **A rectangle stays after the element stops being drawn**, because nothing clears the
+/// map — it is the last frame's answer, not this frame's. The two cases are the same one
+/// while a program rebuilds its tree every frame, which is what a view callback does.
+pub fn element_bounds(id: &str, field: &str) -> f64 {
+    let win = window::current();
+    let bounds = MOUSE_BOUNDS.with(|m| m.borrow().get(&(win, id.to_string())).copied());
+    let Some(bounds) = bounds else {
+        return 0.0;
+    };
+    match field {
+        "x" => round3(f32::from(bounds.origin.x)),
+        "y" => round3(f32::from(bounds.origin.y)),
+        "w" => round3(f32::from(bounds.size.width)),
+        "h" => round3(f32::from(bounds.size.height)),
+        _ => 0.0,
+    }
 }
 
 /// The payload of an event, cut at [`POINTER_SEP`].
@@ -2307,7 +2413,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             style::apply(element, &el.style).into_any_element()
         }
 
-        Kind::Mouse { child, id, kinds } => {
+        Kind::Mouse { child, id, kinds, window_kinds } => {
             // `on_mouse` reports for the element it was handed and adds no box
             // of its own, so whatever carries the handler has to *be* that
             // element. A bare `div()` wrapped around the receiver's render is
@@ -2442,6 +2548,49 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         cx.notify(entity);
                     }
                 });
+            }
+
+            // The window-level half: the same events, heard wherever the pointer is.
+            //
+            // Every handler above is gated by gpui on `hitbox.is_hovered(window)`
+            // (`gpui-0.2.2/src/elements/div.rs:128`, `:147`), so a drag that leaves the
+            // element is heard by nobody: the moves stop arriving and the release, which
+            // can only happen outside it, is missed altogether. `Window::on_mouse_event`
+            // (`:3421`) is the window's own listener — dispatched for every mouse event
+            // wherever the pointer is (`window.rs:3677-3714`) — and is what upstream reaches
+            // for to keep a drag alive: `data_table.rs` hangs its scrollbar's three listeners
+            // on a `canvas` inside the thumb (`:320-364`).
+            //
+            // **A `canvas`, and not this element's own render, because gpui refuses the call
+            // anywhere else**: `on_mouse_event` opens with `debug_assert_paint`
+            // (`window.rs:3425`), and a view's `Render::render` — which is where every
+            // handler above is written — runs in the *prepaint* phase. Registering from here
+            // panicked the container run with `this method can only be called during paint`
+            // at `window.rs:3425`; that, and not the unresolved name, was the first red this
+            // round recorded. Upstream is in a paint callback for the same reason, and the
+            // canvas is how a program that builds its tree in `render` reaches one.
+            //
+            // Registered every frame the element is drawn, and that is not an install:
+            // gpui clears the list at the end of each frame (`window.rs:743`), so an element
+            // a program stops drawing stops hearing anything. `report_pointer` is the same
+            // writer the element-level handlers use, so the payload, the store and the
+            // `<id>.x`/`<id>.y` the program reads are the same either way; the only
+            // difference is where the pointer had to be.
+            if !window_kinds.is_empty() {
+                let key = id.clone();
+                let heard = window_kinds.clone();
+                // Out of flow and full size, so it cannot move anything: the first child of
+                // this element is still the strip `MOUSE_BOUNDS` is read from, and this is
+                // appended after it and after everything else.
+                let registrar = canvas(
+                    move |_bounds, _window, _cx| (),
+                    move |_bounds, _state, window, cx| {
+                        register_window_mouse(window, cx, entity, win, &key, &heard)
+                    },
+                )
+                .absolute()
+                .size_full();
+                wrapper = wrapper.child(registrar);
             }
             wrapper.into_any_element()
         }

@@ -1591,12 +1591,78 @@ gossamer_binding::register_module!(
     /// `down`, `up`, `move`, `click`, `right`, and each one raises
     /// `"<id>|<kind>"` and writes `<id>.x` / `<id>.y` into the state store,
     /// relative to the element's own top-left corner.
+    ///
+    /// **Heard only while the pointer is over the element.** gpui gates every element
+    /// listener on the element's hitbox being hovered
+    /// (`gpui-0.2.2/src/elements/div.rs:128`, `:147`), so an event that happens somewhere
+    /// else — a drag that has left the element, a release outside it — is heard by nobody.
+    /// [`gpui::on_mouse_window`] is the same call without that gate.
     fn on_mouse(element: i64, kinds: String, id: String) -> i64 {
         view::push(
-            Kind::Mouse { child: element.max(0) as usize, id, kinds },
+            Kind::Mouse {
+                child: element.max(0) as usize,
+                id,
+                kinds,
+                window_kinds: String::new(),
+            },
             String::new(),
             String::new(),
         )
+    }
+
+    /// Report pointer events for `element` **wherever the pointer is**, not only over it.
+    ///
+    /// `kinds` is any of `down`, `up` and `move` — the same names [`gpui::on_mouse`] takes,
+    /// and the same three it reports, so a program reading `"<id>|<kind>"` cannot tell the
+    /// two apart. They are read as words: `"down up move"` and `"down,up,move"` name the same
+    /// three. What differs is where the pointer had to be for the event to arrive:
+    /// these are registered on the **window**, through `Window::on_mouse_event`, whose
+    /// listeners gpui dispatches for every mouse event wherever it lands
+    /// (`gpui-0.2.2/src/window.rs:3421`, `:3677-3714`). `click` and `right` are not among
+    /// them: gpui synthesises a click from a press and a release on one element, which is
+    /// a question about the element and not about the window.
+    ///
+    /// **This is how a drag is kept alive past the edge of the element it began on**, which
+    /// is upstream's own instrument — `data_table.rs` holds its scrollbar drag with
+    /// `window.on_mouse_event(..)` — and the thing that makes a release outside the element
+    /// reachable at all. Pair it with [`gpui::element_bounds`] to gate the press on the
+    /// element's own rectangle, which is what upstream's
+    /// `thumb_bounds.contains(&ev.position)` does; without a gate, every press anywhere in
+    /// the window is reported.
+    ///
+    /// **It is live, not installed.** The listeners are registered while the frame that
+    /// draws the element is being painted, and gpui dispatches them for the mouse events
+    /// that follow — then clears the list when the next frame is drawn (`window.rs:743`).
+    /// So an element a program stops drawing stops hearing its events one frame later, and
+    /// there is no way to leave a window-wide listener behind or to undo one.
+    fn on_mouse_window(element: i64, kinds: String, id: String) -> i64 {
+        view::push(
+            Kind::Mouse {
+                child: element.max(0) as usize,
+                id,
+                kinds: String::new(),
+                window_kinds: kinds,
+            },
+            String::new(),
+            String::new(),
+        )
+    }
+
+    /// One field of the element named `id` — `"x"`, `"y"`, `"w"` or `"h"` — in **window**
+    /// coordinates, or `0.0` when it has no rectangle to report.
+    ///
+    /// The rectangle gpui laid the element out in during the frame it was last drawn. It is
+    /// the same one [`gpui::pointer_xy`] is measured against and the same one
+    /// [`gpui::on_mouse`]'s `<id>.x` is measured from, so `pointer_xy - element_bounds` is
+    /// the store's own answer rather than a second opinion about it.
+    ///
+    /// **An element with nothing listening on it has no rectangle**, and neither does a
+    /// name that is not in this window: both answer `0.0`, which is also a legitimate `x`
+    /// for an element at the window's left edge. Read a rectangle for an element that
+    /// carries [`gpui::on_mouse`], [`gpui::on_mouse_window`] or a slider's `on_change`, or
+    /// check the `w` you asked for is not `0.0` before trusting the `x`.
+    fn element_bounds(id: String, field: String) -> f64 {
+        view::element_bounds(&id, &field)
     }
 
     /// Raise keystrokes as `"<id>|<unparsed>"`. Installed once.
