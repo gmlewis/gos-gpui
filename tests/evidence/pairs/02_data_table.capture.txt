@@ -1,0 +1,22 @@
+pair 02_data_table
+upstream  tools/upstream/examples/data_table.rs
+port      examples/02_data_table.gos
+captured  2026-10-09T15:28:10Z
+
+the two commands:
+    cargo run --manifest-path tools/upstream/Cargo.toml --example data_table
+    gos run --main-thread examples/02_data_table.gos
+
+upstream capture  1280x1032
+port capture      1280x1032
+
+compare -metric AE  51519 (0.0390012)
+    the normalised figure:      0.0390012   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 169172
+        of which, in the 32px title bar macOS draws: 0
+        of which, in the client area the example draws: 169172
+
+169172 pixels are not bit-for-bit equal. tests/evidence/pairs/02_data_table.diff.png
+shows where. The metric above says how far apart they are in total: compare it
+against the count before reading a small number as a good one -- one pixel
+black-on-white outscores a hundred pixels a grey level apart.

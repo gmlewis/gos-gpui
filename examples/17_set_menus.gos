@@ -30,12 +30,23 @@
 //     can call it.
 //   * the application menu bar is a macOS feature; on Linux `set_menus` stores
 //     the menu but shows no bar, which is upstream's behaviour there too.
+//   * the port names the application (`gpui::set_app_name`). The word at the left
+//     of the menu bar is the name of the *executable*, not of the menu: upstream's
+//     binary is `set_menus`, the port's is the shared `gos-runner`. Both bars read
+//     `set_menus`; the Apple menu's "Force Quit set_menus" agrees.
 
 use gpui
 use std::process
 use ui
 
 fn main() {
+    // The word at the left of the menu bar is the *application's* name, which macOS
+    // reads from the executable it ran: upstream's `cargo run --example set_menus`
+    // shows `set_menus` because its binary is called that, and not because anything
+    // in set_menus.rs asks for it. Every port is run by the same runner, so the name
+    // is declared here instead. It takes effect only before `gpui::run`.
+    gpui::set_app_name("set_menus")
+
     let outcome = gpui::run("", 1536.0, 864.0, || {
         // Upstream installs the menu once from `Application::run`'s closure,
         // before opening its window. `gpui::set_menus` is applied after the

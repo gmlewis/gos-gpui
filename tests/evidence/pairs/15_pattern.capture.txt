@@ -1,0 +1,20 @@
+pair 15_pattern
+upstream  tools/upstream/examples/pattern.rs
+port      examples/15_pattern.gos
+captured  2026-10-09T13:46:55Z
+
+the two commands:
+    cargo run --manifest-path tools/upstream/Cargo.toml --example pattern
+    gos run --main-thread examples/15_pattern.gos
+
+upstream capture  600x632
+port capture      600x632
+
+compare -metric AE  1402.2 (0.00369778)
+    the normalised figure:      0.00369778   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 11137
+
+11137 pixels are not bit-for-bit equal. tests/evidence/pairs/15_pattern.diff.png
+shows where. The metric above says how far apart they are in total: compare it
+against the count before reading a small number as a good one -- one pixel
+black-on-white outscores a hundred pixels a grey level apart.

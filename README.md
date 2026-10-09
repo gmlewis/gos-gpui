@@ -314,6 +314,7 @@ a per-frame arena, which is why `ui` exists; a program can also use it directly.
 | `gpui::task(id, ms)` | do slow work off the UI thread for `ms`, then raise `id` and leave a summary under `"<id>.result"`. The window keeps painting while it runs. `gpui::task_result(id)` reads the summary and is `""` until the work is done; `gpui::task_running(id)` says whether it is still in flight; `gpui::task_cancel(id)` stops it — no event, no result, and only that one id. While the work runs it raises `"<id>.progress"` and `gpui::task_progress(id)` is the number those events are about, `0.0` to `1.0`, so a progress bar is `gpui::draw("bars", gpui::task_progress("id"), …)`. **What the work *is*** is a Rust-side job: no callback a program can write is ever run off the UI thread (see the ledger's `## Unreachable`). |
 | `gpui::set_menus(name, items)` | install an application menu. An item is `"separator"`, `"quits:Quit"`, `"events:<label>[:<stroke>]"`, `"submenu:<label>"`, `"services:Services"` or `"os:<label>:<selector>"` — the last wired to a system selector (`cut`, `copy`, `paste`, `selectAll`, `undo`, `redo`) that the OS acts on itself. An entry indented with one `>` per level goes inside the submenu opened above it. An action raises `"menu\|<slot>"`; `gpui::menu_tree(items)` reads the nesting back, `gpui::installed_menu()` what the platform was actually given, and `gpui::installed_menu_os_actions()` the selectors among its items. |
 | `gpui::set_dock_menu(items)` | the menu the dock icon offers on a right-click, in the same entry grammar. gpui has no getter for it, so it can be installed and not inspected. |
+| `gpui::set_app_name(name)` | name the application, as the macOS menu bar shows it — the bold word at the left, and the one in the Apple menu's `Force Quit …`. It is the *application's* name and not the menu's: upstream's `set_menus` example shows `set_menus` because its binary is called that, and `text.rs` shows `text` while naming its own menu "GPUI Typography". Every port runs under the shared `gos-runner`, so a port whose bar is visible declares the name here. **Call it before `gpui::run`** — macOS reads the name before the bar is first drawn — and it does nothing on Linux, which has no such bar. |
 | `gpui::on_keys(true)` | route keystrokes to the program as `"key\|<stroke>"` events, and releases as `"keyup\|<stroke>"`. |
 | `gpui::emit(id, payload)` | raise one event for an id you name — upstream's `cx.emit`. |
 | `gpui::subscribe(topic, id)` / `unsubscribe(topic, id)` | ask the event id `id` to hear `topic`. A subscription is an *event id*, not a callback: the program handles its events once a frame, and a topic arrives in the same place as everything else. Subscribing twice is subscribing once, and a subscription belongs to a window. `gpui::subscribers(topic)` and `topics()` read the roster back. |
@@ -751,13 +752,13 @@ One file per upstream example, numbered to match. Run the pair:
 | `14_paths_bench` | `paths_bench.rs` | one path painted 2000× |
 | `15_pattern` | `pattern.rs` | `pattern_slash` |
 | `16_scrollable` | `scrollable.rs` | both axes |
-| `17_set_menus` | `set_menus.rs` | including the *Services* system menu; the quit item is the binding's |
+| `17_set_menus` | `set_menus.rs` | including the *Services* system menu; the quit item is the binding's; the application is named with `gpui::set_app_name`, because upstream's name is its binary's |
 | `18_shadow` | `shadow.rs` | every shadow band |
 | `19_tab_stop` | `tab_stop.rs` | focus order is real; **the blue focus ring is absent** — `is_focused` cannot observe a `focusable` element |
 | `20_text_layout` | `text_layout.rs` | including per-range highlights |
 | `21_text_wrapper` | `text_wrapper.rs` | truncation, ellipsis and clamping |
-| `22_text` | `text.rs` | `init_colors` runs once at startup; its one empty menu, "GPUI Typography", is installed through `gpui::set_menus` |
-| `23_tree` | `tree.rs` | renders to depth 40; upstream's 50 trips `GX0008` |
+| `22_text` | `text.rs` | `init_colors` runs once at startup; its one empty menu, "GPUI Typography", is installed through `gpui::set_menus`; the application is named `text` with `gpui::set_app_name`, which is what upstream's bar reads |
+| `23_tree` | `tree.rs` | all 50 levels, as upstream |
 | `24_uniform_list` | `uniform_list.rs` | explicit row height |
 | `25_window_positioning` | `window_positioning.rs` | nine windows per display, on the primary display |
 | `26_window_shadow` | `window_shadow.rs` | upstream's client-decoration arm is **dead on macOS**; the port renders the Server arm and labels its own pointer additions |

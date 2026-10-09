@@ -70,6 +70,22 @@ pub struct Options {
     pub no_titlebar: bool,
     pub background: Background,
     pub start: Start,
+    /// Whether the app asks the desktop to bring it to the front.
+    ///
+    /// `run` has always activated — an app launched from a binding that never
+    /// activated would open a window the desktop leaves behind whatever is
+    /// already in front, and every port that is a plain `gpui::run` wants the
+    /// window it just asked for to be the one in front. `activate=false` is for
+    /// the ports of upstream examples that do not activate: gpui's
+    /// `App::activate(false)` reaches macOS as
+    /// `NSApp.activateIgnoringOtherApps_(NO)` (`platform/mac/platform.rs:564`),
+    /// which activates the app **only when no other application is active**, and
+    /// several upstream examples call nothing at all. A window whose app was not
+    /// activated is not the key window, and macOS draws its three traffic lights
+    /// unfocused — `rgb(70,69,68)` where a key window's are
+    /// `rgb(255,75,85)`, `rgb(254,191,45)`, `rgb(43,192,89)`. That is the whole
+    /// of the difference those pairs show.
+    pub activate: bool,
     /// Minimum content size, in pixels.
     pub min: Option<(f64, f64)>,
     /// Where the window's top-left corner goes, in pixels.
@@ -102,6 +118,7 @@ impl Options {
             no_titlebar: false,
             background: Background::Opaque,
             start: Start::Windowed,
+            activate: true,
             min: None,
             pos: None,
             app_id: None,
@@ -224,6 +241,14 @@ pub fn parse(spec: &str) -> Options {
                 options.start = Start::Fullscreen;
                 true
             }
+            ("activate", "true") => {
+                options.activate = true;
+                true
+            }
+            ("activate", "false") => {
+                options.activate = false;
+                true
+            }
             // The spelled-out forms, which read better in a one-key spec.
             ("maximized", "true") => {
                 options.start = Start::Maximized;
@@ -342,11 +367,33 @@ pub fn build(
         // platform are calls the window makes once it exists — `take_start`
         // raises them from its own first frame.
         window_bounds: Some(WindowBounds::Windowed(bounds)),
-        titlebar: Some(gpui::TitlebarOptions {
-            title: Some(title.to_owned().into()),
-            appears_transparent: options.no_titlebar,
-            traffic_light_position: traffic_lights(options.no_titlebar),
-        }),
+        // `titlebar=none` is gpui's own `titlebar: None` — not a transparent
+        // titlebar with the traffic lights moved into it.
+        //
+        // gpui reads that field in two places and both of them matter.
+        // `mac/window.rs:600-615` builds the style mask from it: a window whose
+        // options *carry* a titlebar gets `NSClosable | NSTitled` (plus
+        // resizable and minimizable), and a window whose options carry none gets
+        // `NSTitled | NSFullSizeContentView` — no close button, so AppKit draws
+        // **no traffic lights at all**. And `:710-716` takes
+        // `traffic_light_position` from it, which is `None`, so nothing moves
+        // them. Upstream's examples that pass `titlebar: None` (`window.rs`,
+        // `window_positioning.rs`) get exactly that window.
+        //
+        // What a port used to get was the other one: same size, same content,
+        // and three traffic lights at (12,12) that upstream's window does not
+        // have. The captures measured it — `25_window_positioning` differed from
+        // its twin by 516 pixels, every one of them inside a 60x14 box at
+        // (12,12), and the client areas were equal to the pixel.
+        titlebar: if options.no_titlebar {
+            None
+        } else {
+            Some(gpui::TitlebarOptions {
+                title: Some(title.to_owned().into()),
+                appears_transparent: false,
+                traffic_light_position: None,
+            })
+        },
         window_decorations: client_decorations(options.no_titlebar),
         focus: options.focus,
         show: options.show,
@@ -367,23 +414,8 @@ pub fn build(
         tabbing_identifier: options.tabbing.clone(),
         ..Default::default()
     };
-    remember(win, &built, options.start, options.place);
+    remember(win, &built, options.start, options.place, options.activate);
     built
-}
-
-/// The traffic-light position is a macOS-only window option.
-#[cfg(target_os = "macos")]
-fn traffic_lights(no_titlebar: bool) -> Option<gpui::Point<gpui::Pixels>> {
-    if no_titlebar {
-        Some(point(px(12.0), px(12.0)))
-    } else {
-        None
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn traffic_lights(_no_titlebar: bool) -> Option<gpui::Point<gpui::Pixels>> {
-    None
 }
 
 /// Hiding the system titlebar is `window_decorations` on Linux, and nothing at
@@ -418,6 +450,10 @@ struct Record {
     minimizable: bool,
     resizable: bool,
     focus: bool,
+    /// Whether the app will ask the desktop to bring it to the front when this
+    /// window is the one being opened. Read back by `run_app`, off the same
+    /// record the reader answers from — see [`activate`].
+    activate: bool,
     /// Whether the state the window asked to open in has been raised yet.
     started: bool,
     // ---- observed, once a frame ----
@@ -444,10 +480,11 @@ thread_local! {
 }
 
 /// Remembers what window `win` was opened with, read back off the options gpui
-/// was handed. `start` and `place` come from the parse: they are the two facts
-/// that do not survive into `WindowOptions` (a start state is a call, and a
-/// centred window is just where its bounds landed).
-fn remember(win: i64, built: &WindowOptions, start: Start, place: Place) {
+/// was handed. `start`, `place` and `activate` come from the parse: they are the
+/// three facts that do not survive into `WindowOptions` (a start state is a call,
+/// a centred window is just where its bounds landed, and an activation is a call
+/// on the app rather than a field of a window).
+fn remember(win: i64, built: &WindowOptions, start: Start, place: Place, activate: bool) {
     let record = Record {
         min: built
             .window_min_size
@@ -470,11 +507,12 @@ fn remember(win: i64, built: &WindowOptions, start: Start, place: Place) {
             gpui::WindowBackgroundAppearance::Transparent => "transparent",
             gpui::WindowBackgroundAppearance::Blurred => "blur",
         },
+        // gpui's own reading (`mac/window.rs:756`): no titlebar at all, or a
+        // transparent one, both mean the program draws the bar itself.
         titlebar: if built
             .titlebar
             .as_ref()
-            .map(|titlebar| titlebar.appears_transparent)
-            .unwrap_or(false)
+            .is_none_or(|titlebar| titlebar.appears_transparent)
         {
             "none"
         } else {
@@ -485,6 +523,7 @@ fn remember(win: i64, built: &WindowOptions, start: Start, place: Place) {
         minimizable: built.is_minimizable,
         resizable: built.is_resizable,
         focus: built.focus,
+        activate,
         ..Default::default()
     };
     RECORDS.with(|records| {
@@ -518,6 +557,22 @@ pub fn take_start(win: i64) -> Option<Start> {
     })
 }
 
+/// Whether window `win` asks the app to be brought to the front.
+///
+/// The one reader that does not answer a program: activation is a call the
+/// binding makes on the app while it is opening the window, and the program
+/// asked for it in the spec rather than reading it back. It is here so that the
+/// **one** parse is the only place `activate` is understood — `run_app` asks
+/// this instead of reading the spec a second time.
+///
+/// A window with no record answers `true`: that is what every entry point did
+/// before the token existed, and an unknown window is not a reason to change it.
+pub fn activate(win: i64) -> bool {
+    RECORDS
+        .with(|r| r.borrow().get(&win).map(|record| record.activate))
+        .unwrap_or(true)
+}
+
 /// Formats a number the way a program would read it back: `420`, not `420.0`.
 fn number(value: f64) -> String {
     if value.fract() == 0.0 && value.abs() < 1e15 {
@@ -535,9 +590,9 @@ fn flag(on: bool) -> String {
 ///
 /// The asked-for half is fixed at open: `min`, `min_w`, `min_h`, `app_id`,
 /// `tabbing`, `kind`, `place`, `start`, `background`, `titlebar`, `show`,
-/// `movable`, `minimizable`, `focus`, `resizable`. The observed half is read once
-/// a frame and is empty until the window has painted: `scale`, `maximized`,
-/// `fullscreen`, `display`.
+/// `movable`, `minimizable`, `focus`, `resizable`, `activate`. The observed half
+/// is read once a frame and is empty until the window has painted: `scale`,
+/// `maximized`, `fullscreen`, `display`.
 ///
 /// Anything else — including a name from the observed half in a program running
 /// with no window at all — answers `""`.
@@ -570,6 +625,7 @@ pub fn window_option(name: &str) -> String {
         "minimizable" => flag(record.minimizable),
         "focus" => flag(record.focus),
         "resizable" => flag(record.resizable),
+        "activate" => flag(record.activate),
         // Observed. `""` rather than a wrong answer before the first paint.
         "scale" if record.live => number(record.scale as f64),
         "maximized" if record.live => flag(record.maximized),

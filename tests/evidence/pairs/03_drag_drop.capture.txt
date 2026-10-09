@@ -1,0 +1,19 @@
+pair 03_drag_drop
+upstream  tools/upstream/examples/drag_drop.rs
+port      examples/03_drag_drop.gos
+captured  2026-10-09T15:28:25Z
+
+the two commands:
+    cargo run --manifest-path tools/upstream/Cargo.toml --example drag_drop
+    gos run --main-thread examples/03_drag_drop.gos
+
+upstream capture  800x632
+port capture      800x632
+
+compare -metric AE  0 (0)
+    the normalised figure:      0   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 0
+        of which, in the 32px title bar macOS draws: 0
+        of which, in the client area the example draws: 0
+
+The two windows are pixel-identical.

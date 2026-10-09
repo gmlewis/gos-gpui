@@ -49,8 +49,7 @@
 // there was a list of unreachable capabilities to record; the list is empty now
 // and so are the panels.
 //
-// Deviations — the list is the point of this file, and it has two entries where
-// it had seven:
+// Deviations — the list is the point of this file:
 //
 //   * **Cells 2 and 3 wait 5s for a source that cannot wait.** A custom `Asset`
 //     with a `Duration` in its source is unreachable — `Asset<Source = ..>` and
@@ -73,6 +72,18 @@
 //     src/elements/animation.rs:249-261). Both are at phase 0 when the cell first
 //     draws, so they breathe together; the sampled alpha can still differ by a
 //     frame. **Invisible.**
+//   * Upstream calls `cx.activate(false)` while it builds the window. On macOS
+//     that is `NSApp.activateIgnoringOtherApps_(NO)`
+//     (`gpui-0.2.2/src/platform/mac/platform.rs:564`), which asks for the
+//     activation only if no other application is already active, so its window
+//     is not the key window and AppKit draws the three traffic lights unfocused:
+//     `rgb(70,69,68)` where a key window's are `rgb(255,75,85)`,
+//     `rgb(254,191,45)` and `rgb(43,192,89)`. That was the whole of what this
+//     pair's captures disagreed about — three 14x14 lights, with the client
+//     areas equal to the pixel. The port asks for the same state as
+//     `activate=false`, because `gpui::run` activates every window it opens and
+//     a program has no `App` to ask. **Invisible**: the same three lights in the
+//     same three colours.
 
 use gpui
 use std::math
@@ -230,7 +241,7 @@ fn missing_cell(alpha: f64) -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run("", 300.0, 300.0, || {
+    let outcome = gpui::run_with("", 300.0, 300.0, "activate=false", || {
         // Upstream asks its asset system for all four images once, as the tree
         // is built. Two of the port's cells stage a 5s arrival instead — cell 1
         // and cell 4 are real loads that answer at once — so the timers start on

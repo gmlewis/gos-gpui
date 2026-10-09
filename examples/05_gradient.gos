@@ -13,9 +13,23 @@ use gpui
 use std::process
 use ui
 
+/// One of the two solid swatches, its label in the middle. Upstream asks for
+/// `div().size_full().rounded_xl().flex().items_center().justify_center()`, and the
+/// `flex` is load-bearing: without it the box is GPUI's default block container and
+/// `items=`/`justify=` do nothing, so the label sits in the top-left corner instead
+/// of the middle — 2,747 pixels of the pair's captures, every one of them the whole
+/// label at 64 levels or more.
 fn solid(colour: String) -> ui::El {
-    ui::rect(f"flex=1 size=full rounded=xl items=center justify=center bg={colour} color=white")
+    ui::rect(f"flex flex=1 size=full rounded=xl items=center justify=center bg={colour} color=white")
         .text("Solid Color", "")
+}
+
+/// Upstream's button shows `format!("{}", color_space)`, which is `ColorSpace`'s own
+/// `Display` — `"sRGB"` for `Srgb`, `"Oklab"` for `Oklab` (`gpui-0.2.2/src/color.rs:678-685`).
+/// The stored value is the `grad=` token's spelling, which is lower case, so the
+/// label is mapped here rather than kept in the state.
+fn space_label(space: String) -> String {
+    if space == "oklab" { "Oklab" } else { "sRGB" }
 }
 
 /// `flex_1 rounded_xl h_24` swatch — `h_24` is 96px.
@@ -43,7 +57,7 @@ fn main() {
             .child(ui::row("flex gap=8 justify=between items=center")
                 .text("Gradient Examples", "")
                 .child(ui::row("flex gap=8 items=center")
-                    .button("method", space, "flex px=12 py=4 font=sm bg=black color=white active=opacity:0.8")))
+                    .button("method", space_label(space), "flex px=12 py=4 font=sm bg=black color=white active=opacity:0.8")))
             .child(ui::row("flex flex=1 gap=12")
                 .child(solid("red"))
                 .child(solid("blue")))

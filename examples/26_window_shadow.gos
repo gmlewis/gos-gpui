@@ -47,7 +47,7 @@
 // (upstream calls it *inside* the dead arm, so neither window shows a per-edge
 // resize cursor, and the `Server` arm's own `cursor(CursorStyle::Arrow)` is the
 // arrow either way), the live window size `resize_edge` was handed, and the
-// hover readout. All nine left are `invisible`; see `PAIRS.md` sec.3.
+// hover readout. All ten left are `invisible`; see `PAIRS.md` sec.3.
 //
 // Deviations:
 //
@@ -75,6 +75,16 @@
 //   * `div()` becomes `ui::rect`/`ui::panel`/`ui::column`/`ui::row`, and as in
 //     every port the frame is rebuilt from scratch rather than re-rendering a
 //     retained `Entity<WindowShadow>`.
+//   * Upstream never asks for its app to be activated — its `main` opens the
+//     window and returns — so its window is not the key window and macOS draws
+//     the three traffic lights unfocused: `rgb(68,67,67)` where a key window's
+//     are `rgb(255,75,85)`, `rgb(254,191,45)` and `rgb(43,192,89)`. Those three
+//     lights are 516 of this pair's differing pixels and the largest step by far
+//     — 187 levels on the red light. `gpui::run` activates every window it
+//     opens, so the port asks for upstream's state instead, as
+//     `activate=false`. **Invisible**: the same three lights, the same colours.
+//     The rest of this pair's difference is the title bar's material, which is
+//     one to two levels across the bar and is written up in `PAIRS.md`.
 
 use gpui
 use std::process
@@ -84,7 +94,7 @@ use ui
 const WINDOW: f64 = 600.0
 
 fn main() {
-    let outcome = gpui::run("", WINDOW, WINDOW, || {
+    let outcome = gpui::run_with("", WINDOW, WINDOW, "activate=false", || {
         // Upstream's tree in the `Decorations::Server` arm, which is the arm
         // macOS takes: the transparent backdrop, the #CCCCFF panel, the white
         // card, the green box. Nothing else is drawn.

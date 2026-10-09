@@ -1,0 +1,22 @@
+pair 04_gif_viewer
+upstream  tools/upstream/examples/gif_viewer.rs
+port      examples/04_gif_viewer.gos
+captured  2026-10-09T15:28:41Z
+
+the two commands:
+    cargo run --manifest-path tools/upstream/Cargo.toml --example gif_viewer
+    gos run --main-thread examples/04_gif_viewer.gos
+
+upstream capture  1536x896
+port capture      1536x896
+
+compare -metric AE  68277.8 (0.0496113)
+    the normalised figure:      0.0496113   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 1.32302e+06
+        of which, in the 32px title bar macOS draws: 0
+        of which, in the client area the example draws: 1323020
+
+1.32302e+06 pixels are not bit-for-bit equal. tests/evidence/pairs/04_gif_viewer.diff.png
+shows where. The metric above says how far apart they are in total: compare it
+against the count before reading a small number as a good one -- one pixel
+black-on-white outscores a hundred pixels a grey level apart.

@@ -6,9 +6,29 @@
 // clock with `gpui::animate()`, and reproduces `ease_in_out` and `bounce`
 // exactly (they are four lines each in GPUI's animation.rs).
 //
-// Difference to watch for: upstream's animation is run by GPUI's animation
-// driver, which only asks for frames while the animation is live. This port
-// asks for a frame every frame, so it repaints continuously.
+// Deviations:
+//   * the arrow is named by filesystem path (`examples/assets/arrow_circle.svg`)
+//     rather than through upstream's `AssetSource`; `ui::icon` reads the file
+//     directly and GPUI's own SVG loader draws it. Invisible.
+//   * upstream's animation is run by GPUI's animation driver
+//     (`with_animation(..)`), which asks for a frame only while the animation is
+//     live; the binding has no animation driver a program can hand a closure to,
+//     and `gpui::animate()` asks for a frame every frame. The arrow turns the
+//     same way from the same clock, so the two are the same picture at the same
+//     instant and differ only in how many frames each one drew to get there.
+//     Invisible in a capture; a pair of stills catches the arrow at whatever
+//     rotation each was asked for, and a still cannot say how many frames it
+//     took. Forced: the driver is not reachable from this ABI.
+//   * upstream calls `cx.activate(false)` while it builds the window, which
+//     reaches macOS as `NSApp.activateIgnoringOtherApps_(NO)`
+//     (`gpui-0.2.2/src/platform/mac/platform.rs:564`) — an activation asked for
+//     only if no other application is already active — so its window is not the
+//     key window and AppKit draws all three traffic lights unfocused:
+//     `rgb(70,69,68)` where a key window's are `rgb(255,75,85)`,
+//     `rgb(254,191,45)` and `rgb(43,192,89)`. The port asks for the same thing
+//     as the state `activate=false`, because `gpui::run` activates every window
+//     it opens and a program has no `App` to ask instead. Invisible: the same
+//     three lights in the same three colours.
 
 use gpui
 use std::process
@@ -38,7 +58,7 @@ fn bounce_ease_in_out(delta: f64) -> f64 {
 }
 
 fn main() {
-    let outcome = gpui::run("", 300.0, 300.0, || {
+    let outcome = gpui::run_with("", 300.0, 300.0, "activate=false", || {
         gpui::animate()
 
         let delta = (gpui::now() % PERIOD) / PERIOD
@@ -49,7 +69,15 @@ fn main() {
                 .child(ui::column("overflow=y h=150 w=full flex=1 justify=center items=center font=xl gap=16")
                     .text("Hello Animation", "")
                     .icon(ARROW, f"size=80 overflow=hidden color=black rotate={degrees}"))
-                .child(ui::panel("flex h=64 w_full p=8 justify=center items=center border=1 bordercolor=#0000001a bg=#0000000d")
+                // `border_t_1()` -- the top edge alone, as upstream asks for; a
+                // plain `border=1` draws the other three sides too, and a 1px
+                // grey seam on three sides is a difference a screenshot shows.
+                //
+                // `black().opacity(0.1)`. The byte is 0x19 and not the 0x1a that
+                // "10%" rounds to: gpui renders alpha 0.1 as the 213-grey step,
+                // and on the 1/255 grid that step is 25/255. Measured, not
+                // assumed -- 0x18 gives 214, 0x19 (this) 213, 0x1a 212.
+                .child(ui::panel("flex h=64 w_full p=8 justify=center items=center bordert=1 bordercolor=#00000019 bg=#0000000d")
                     .text("Other Panel", "")))
             |> ui::root
     })

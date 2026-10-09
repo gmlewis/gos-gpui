@@ -1,0 +1,19 @@
+pair 22_text
+upstream  tools/upstream/examples/text.rs
+port      examples/22_text.gos
+captured  2026-10-09T15:25:47Z
+
+the two commands:
+    cargo run --manifest-path tools/upstream/Cargo.toml --example text
+    gos run --main-thread examples/22_text.gos
+
+upstream capture  920x752
+port capture      920x752
+
+compare -metric AE  0 (0)
+    the normalised figure:      0   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 0
+        of which, in the 32px title bar macOS draws: 0
+        of which, in the client area the example draws: 0
+
+The two windows are pixel-identical.

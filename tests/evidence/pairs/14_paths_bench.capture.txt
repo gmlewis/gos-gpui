@@ -1,0 +1,17 @@
+pair 14_paths_bench
+upstream  tools/upstream/examples/paths_bench.rs
+port      examples/14_paths_bench.gos
+captured  2026-10-09T13:46:38Z
+
+the two commands:
+    cargo run --manifest-path tools/upstream/Cargo.toml --example paths_bench
+    gos run --main-thread examples/14_paths_bench.gos
+
+upstream capture  1024x800
+port capture      1024x800
+
+compare -metric AE  0 (0)
+    the normalised figure:      0   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 0
+
+The two windows are pixel-identical.

@@ -2622,7 +2622,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
     // touches belong to the window it was drawn in.
     let win = window::current();
     match &el.kind {
-        Kind::Plain => {
+        Kind::Plain => own_frame(|| {
             // A `gpui::tooltip` among the children is lifted out instead of laid out beside
             // them, because gpui does not draw it there: it draws it *over* this element, at
             // the pointer, while the pointer rests on it. Everything else is a child as before.
@@ -2800,14 +2800,14 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 .into_any_element(),
                 None => base.children(children).into_any_element(),
             }
-        }
+        }),
 
         // A tooltip that no target ever took. `Kind::Plain` lifts one out of its children and
         // hands it to `Div::tooltip`; reaching here means this one was put somewhere that
         // lifts nothing — a root, a row — and gpui draws no tooltip without a hitbox under it,
         // so there is no "correct" rendering to give it. It is drawn as the box it is: a stray
         // `gpui::tooltip` shows up where the program put it instead of vanishing or panicking.
-        Kind::Tooltip => {
+        Kind::Tooltip => own_frame(|| {
             let plain = El {
                 kind: Kind::Plain,
                 style: el.style.clone(),
@@ -2815,9 +2815,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 children: el.children.clone(),
             };
             render(&plain, window, cx, entity)
-        }
+        }),
 
-        Kind::Text(text) => {
+        Kind::Text(text) => own_frame(|| {
             let text = text.clone();
             let box_ = style::apply(div(), &el.style);
             // A text element can be asked for its own box too: the run's laid-out width is what
@@ -2830,9 +2830,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             } else {
                 box_.child(text).into_any_element()
             }
-        }
+        }),
 
-        Kind::Button(label) => {
+        Kind::Button(label) => own_frame(|| {
             let id = el.id.clone();
             let click_id = id.clone();
             let base = style::apply(
@@ -2851,9 +2851,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                     cx.notify(entity);
                 })
                 .into_any_element()
-        }
+        }),
 
-        Kind::Checkbox { label, checked } => {
+        Kind::Checkbox { label, checked } => own_frame(|| {
             let id = el.id.clone();
             let click_id = id.clone();
             let checked = *checked;
@@ -2887,9 +2887,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                     cx.notify(entity);
                 })
                 .into_any_element()
-        }
+        }),
 
-        Kind::Input { placeholder } => {
+        Kind::Input { placeholder } => own_frame(|| {
             // A single-line field is the editor's engine with a flag, not a second widget. What that
             // buys is everything a hand-rolled key loop never had: the caret, the selection and the
             // clipboard, the undo history, and — the reason the row exists — a **marked range**, so
@@ -2914,9 +2914,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 })
                 .child(field)
                 .into_any_element()
-        }
+        }),
 
-        Kind::Slider { min, max } => {
+        Kind::Slider { min, max } => own_frame(|| {
             let key = el.id.clone();
             let span = (*max - *min).max(f64::EPSILON);
             let value = store::get_float(&el.id, *min);
@@ -2993,9 +2993,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 }
             })
             .into_any_element()
-        }
+        }),
 
-        Kind::Progress(value) => {
+        Kind::Progress(value) => own_frame(|| {
             let frac = value.clamp(0.0, 1.0) as f32;
             let outer = style::apply(
                 div()
@@ -3018,16 +3018,16 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         .bg(style::colour("#a6e3a1")),
                 )
                 .into_any_element()
-        }
+        }),
 
         // The element id matters here beyond hit-testing: GPUI keeps an
         // image's animation cursor (`ImgState`) keyed by its global element id,
         // so without `.id(..)` an animated GIF never advances a frame.
-        Kind::Image { path, loading, fallback } => {
+        Kind::Image { path, loading, fallback } => own_frame(|| {
             render_image(el, path, *loading, *fallback, win, window, cx, entity)
-        }
+        }),
 
-        Kind::Icon(path) => {
+        Kind::Icon(path) => own_frame(|| {
             let icon: Svg = svg().path(SharedString::from(asset_path(path)));
             let icon = style::apply(icon, &el.style);
             match style::rotation(&el.style) {
@@ -3038,18 +3038,18 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                     .into_any_element(),
                 None => icon.into_any_element(),
             }
-        }
+        }),
 
-        Kind::Divider => {
+        Kind::Divider => own_frame(|| {
             style::apply(div().h(px(1.0)).w_full().bg(style::colour("#313244")), &el.style)
                 .into_any_element()
-        }
+        }),
 
-        Kind::Spacer(size) => {
+        Kind::Spacer(size) => own_frame(|| {
             style::apply(div().h(px(*size as f32)).w_full(), &el.style).into_any_element()
-        }
+        }),
 
-        Kind::Virtual { count, row_height } => {
+        Kind::Virtual { count, row_height } => own_frame(|| {
             let count = *count;
             let row_height = *row_height;
             // The list's own id, so the rows it builds can be recorded against
@@ -3151,9 +3151,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             });
             let handle = list::handle(win, &el.id);
             style::apply(list, &el.style).track_scroll(handle).into_any_element()
-        }
+        }),
 
-        Kind::Paths { paths, backgrounds } => {
+        Kind::Paths { paths, backgrounds } => own_frame(|| {
             let handles = paths.clone();
             let specs = backgrounds.clone();
             let element = canvas(
@@ -3170,9 +3170,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 },
             );
             style::apply(element, &el.style).into_any_element()
-        }
+        }),
 
-        Kind::Mouse { child, id, kinds, window_kinds } => {
+        Kind::Mouse { child, id, kinds, window_kinds } => own_frame(|| {
             // `on_mouse` reports for the element it was handed and adds no box
             // of its own, so whatever carries the handler has to *be* that
             // element. A bare `div()` wrapped around the receiver's render is
@@ -3510,26 +3510,26 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 wrapper = wrapper.child(registrar);
             }
             wrapper.into_any_element()
-        }
+        }),
 
-        Kind::Editor { key, placeholder } => {
+        Kind::Editor { key, placeholder } => own_frame(|| {
             // The style string goes both ways: it is applied to the box the editor sits in, as it
             // always was, and it is handed to the widget for the chrome tokens that colour what the
             // widget paints itself — the caret, the selection, and the line-number gutter.
             let field = editor::editor_element(win, key, placeholder, &el.style, false, window, cx);
             style::apply(div(), &el.style).child(field).into_any_element()
-        }
+        }),
 
-        Kind::StyledText { content, highlights } => {
+        Kind::StyledText { content, highlights } => own_frame(|| {
             let ranges: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = highlights
                 .iter()
                 .filter_map(|spec| parse_highlight(spec))
                 .collect();
             let text = gpui::StyledText::new(content.clone()).with_highlights(ranges);
             style::apply(div(), &el.style).child(text).into_any_element()
-        }
+        }),
 
-        Kind::Canvas { painter, phase } => {
+        Kind::Canvas { painter, phase } => own_frame(|| {
             let painter = painter.clone();
             let phase = *phase;
             let element = canvas(
@@ -3537,9 +3537,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 move |bounds, _state, window, _cx| paint(&painter, bounds, phase, window),
             );
             style::apply(element, &el.style).into_any_element()
-        }
+        }),
 
-        Kind::Scrollbar { id, axis } => {
+        Kind::Scrollbar { id, axis } => own_frame(|| {
             let painting_id = id.clone();
             let painting_axis = axis.clone();
             let down_id = id.clone();
@@ -3572,8 +3572,40 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                     }
                 })
                 .into_any_element()
-        }
+        })
     }
+}
+
+/// Builds one element on a stack frame of its own, rather than inside `render`'s.
+///
+/// `render` is the recursive function — it calls itself once per level of the
+/// element tree — so everything reserved in its frame is paid again at every
+/// level. Measured before this split, one `render` frame was **202,704 bytes**,
+/// which put the ceiling near 40 levels on a thread's 8 MiB stack; after it,
+/// **41,824**. `23_tree` ported upstream's `tree` example, which builds 50, and
+/// faulted rather than stopping, because the ceiling had moved since the number
+/// was written down.
+///
+/// The frame was not one arm's. The `match` in `render` has nineteen arms and
+/// LLVM lays their locals out side by side instead of sharing one slot between
+/// arms that can never both be live, so what `render` reserved was roughly their
+/// *sum* — the scrollbar's `Stateful<Div>` and the list's `UniformList` and the
+/// mouse wrapper's `Div` all counted at once, though a given call takes exactly
+/// one.
+///
+/// This helper is generic over the arm's own closure, so each arm is
+/// monomorphised on its own and reserves only its own locals, and
+/// `#[inline(never)]` keeps that frame out of `render`'s. Each arm then costs
+/// what its element is worth: a `Div` is a `Div`, not nineteen of them.
+///
+/// The same trick upstream gets for free, and the reason `tree.rs` can nest 50
+/// divs where this could nest 40: upstream writes `div().child(inner)` in the
+/// program, where each level is its own call and the compiler never has to
+/// choose between nineteen siblings' stack slots. A tree described *as data*
+/// and rendered by one function is what puts them in one frame.
+#[inline(never)]
+fn own_frame(f: impl FnOnce() -> AnyElement) -> AnyElement {
+    f()
 }
 
 /// One image element, drawn in whichever of its four states its load is in.

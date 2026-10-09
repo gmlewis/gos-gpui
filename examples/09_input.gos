@@ -78,10 +78,10 @@ fn main() {
         let layout = ui::keyboard_layout()
 
         ui::column("bg=#aaaaaa flex col size=full")
-            .child(ui::row("bg=white borderb=1 bordercolor=black w=full justify=between items=center")
+            .child(ui::row("bg=white borderb=1 bordercolor=black w=full justify=between items=start")
                 .text(f"Keyboard {layout}", "")
                 .button("reset", "Reset", "border=1 bordercolor=black px=8 bg=yellow cursor=pointer hover=bg=#b8b800"))
-            .child(ui::editor("input", "Type here...", "w=full p=4 bg=white"))
+            .child(ui::editor("input", "Type here...", "w=full p=4 bg=white lhpx=30 fs=24"))
             .child(keystroke_log(lines))
             |> ui::root
     })

@@ -1,0 +1,20 @@
+pair 23_tree
+upstream  tools/upstream/examples/tree.rs
+port      examples/23_tree.gos
+captured  2026-10-09T13:49:00Z
+
+the two commands:
+    cargo run --manifest-path tools/upstream/Cargo.toml --example tree
+    gos run --main-thread examples/23_tree.gos
+
+upstream capture  300x332
+port capture      300x332
+
+compare -metric AE  113.278 (0.00113733)
+    the normalised figure:      0.00113733   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 516
+
+516 pixels are not bit-for-bit equal. tests/evidence/pairs/23_tree.diff.png
+shows where. The metric above says how far apart they are in total: compare it
+against the count before reading a small number as a good one -- one pixel
+black-on-white outscores a hundred pixels a grey level apart.

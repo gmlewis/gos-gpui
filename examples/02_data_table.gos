@@ -38,8 +38,22 @@
 //     been handed. Upstream reads the same range out of its own processor, which
 //     also runs during layout, so in both the header is one frame behind.
 //   * `ui::list` takes an explicit row height; upstream's `uniform_list`
-//     measures the first row. 22.0 is this port's reading of the natural
-//     height — the same figure `24_uniform_list` settled on.
+//     measures the first row. 28.0 is upstream's own row, to the pixel: a
+//     `text_sm` line box (14px font at GPUI's φ=1.618034 line height → 22.65,
+//     rounded to 23) plus `py_0p5()`'s 2px twice plus the 1px `border_b_1` is
+//     28, and the captures show upstream's alternating row tints exactly 28
+//     apart — 56 between every other one. This port declared 22.0, and 22 was
+//     what its rows measured: the binding wraps each row in
+//     `div().h(px(row_height))`, so the declared figure *is* the pitch. An
+//     earlier reading of 22.0 was simply wrong, and it put 41 rows on screen
+//     where upstream shows 33.
+//   * The body cells carry `shrink=0`, which upstream does not write. Upstream's
+//     columns keep their declared widths and run off the right edge of the box;
+//     the binding's cells, in the same flex row, shrink to fit instead, and the
+//     whole table was 55-62% of its own column widths. `shrink=0` is the port's
+//     way of asking for what upstream's layout does of its own accord — see the
+//     note on `cell` below for what was measured. Invisible: the two now land on
+//     the same columns to the pixel.
 //   * As in every port here, a Gossamer frame describes the whole tree again
 //     rather than re-rendering a retained `Entity<DataTable>`.
 //
@@ -276,14 +290,32 @@ fn cell_text(row: i64, key: String) -> String {
     }
 }
 
-/// One body cell: `px_1`, a fixed `w(width)`, truncation. Upstream does not turn
-/// shrinking off here, though it does on the header cells — reproduced as
-/// written, on both sides.
+/// One body cell: `px_1`, a fixed `w(width)`, truncation.
+///
+/// `shrink=0` is the one token here that upstream does not write — and the one
+/// that makes the picture match. Upstream writes `div().w(width).px_1()` and
+/// leaves shrinking on, and the row those land in is 2026px of columns plus
+/// 384px of padding inside a 1248px box, so the columns *should* shrink. They do
+/// not. Measured off the pair's captures, upstream's body cells start at 30, 96,
+/// 160, 340, 420, 500, 580, 660, 738, 790, 886, 982, 1100, 1200 — cell origin
+/// 25 plus `px_1`, then each `FIELDS` width exactly, which is its own header's
+/// column positions to the pixel. The port's started at 30, 73, 112, … : every
+/// column pulled left, and none of them under its own header.
+///
+/// GPUI lays a `uniform_list` row out with a definite width and a definite
+/// height (`uniform_list.rs:487`, `layout_as_root(size(Definite(w),
+/// Definite(item_height)))`), and the row itself is what holds the columns.
+/// Whatever floor keeps upstream's cells at their declared width, the binding's
+/// element tree does not have it — why is not settled here; what is settled is
+/// the measurement above. `shrink=0` says out loud what upstream's layout does
+/// without saying it, and the two pictures then agree column for column. The
+/// header cells already carry it because upstream writes `flex_shrink_0()`
+/// there explicitly.
 fn cell(row: i64, key: String, width: i64, tint: String) -> ui::El {
     let style = if tinted(key) {
-        f"ws=nowrap truncate px=4 w={width} color={tint}"
+        f"ws=nowrap shrink=0 truncate px=4 w={width} color={tint}"
     } else {
-        f"ws=nowrap truncate px=4 w={width}"
+        f"ws=nowrap shrink=0 truncate px=4 w={width}"
     }
     ui::text(cell_text(row, key), style)
 }
@@ -491,7 +523,7 @@ fn main() {
                 .child(ui::row("w_full overflow=hidden borderb=1 bordercolor=#e0e0e0 color=#555555 bg=#f0f0f0 py=4 px=8 font=xs")
                     .children(header))
                 .child(ui::stack("size=full")
-                    .list("items", TOTAL_ITEMS, 22.0, "size=full")
+                    .list("items", TOTAL_ITEMS, 28.0, "size=full")
                     .child(scrollbar())))
             |> ui::root
     })

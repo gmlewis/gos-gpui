@@ -8,14 +8,20 @@
 // upstream's `hsla(0.0, 0.0, 0.0, 0.5)`, `point(px(10.), px(10.))`, `px(1.0)`,
 // `px(5.0)`.
 //
-// Two deviations, both on the binding's side:
+// Deviations, both on the binding's side:
 //   * asset paths point at examples/assets/ rather than the crate's own
-//     examples/image/, which the runner does not ship.
-//   * the binding puts an element id on every image, wanted or not. Upstream's
-//     untagged `img(..)` therefore requests no animation frames, so its window
-//     parks once the fade settles; here the panel's GIF keeps asking for
-//     frames and the window repaints continuously. The cat is frame 0 either
-//     way — see 04_gif_viewer.gos for why, and for the API that is missing.
+//     examples/image/, which the runner does not ship. Invisible: the same
+//     bytes, decoded by GPUI's own loader.
+//   * the cat. Upstream writes `img("image/black-cat-typing.gif").size_12()`
+//     with no `.id(..)`, and GPUI keys an image's animation cursor (`ImgState`)
+//     by that element id — no id, no cursor, so upstream's cat is frozen at
+//     frame 0 and its window stops asking for frames. `Arena::push` gives every
+//     element an id (that is what makes `hover=` and the animation cursor work
+//     for a program that names nothing), so the port's cat advances, and its
+//     window keeps repainting. Forced: the binding has no way to draw an image
+//     with no element id at all. A still capture of the two shows the same cat
+//     at a different frame of the same animation — the difference is real, and
+//     it is not something a photograph can see.
 
 use gpui
 use std::process

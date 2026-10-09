@@ -2,43 +2,81 @@
 //
 // Fifty rows, built only for the visible window, each logging its click.
 //
-// Two deviations:
+// Four deviations:
 //
 //   * upstream's `uniform_list(id, count, f)` derives the row height from the
 //     first row it lays out, while this binding's `ui::list` takes an explicit
-//     `row_height`. 22.0 is this port's reading of the natural height.
+//     `row_height`. **26.0** is upstream's own pitch, and the pair's captures are
+//     what say so: its rows' text sits 26 pixels apart, 26 = round(16 x 1.618),
+//     the line box of gpui's *default* text (this example's divs never ask for a
+//     size). The port declared 22.0 — its reading of the natural height — and the
+//     captures showed its rows exactly 22 apart, so the list was out of step with
+//     upstream's by four pixels a row and out of step with itself past the first
+//     screen.
+//   * the row is upstream's `div().id(ix).px_2().cursor_pointer().on_click(..)`
+//     with its text as the only child, and this binding's nearest equivalent is
+//     `ui::on_mouse(ui::text(..), "click", ..)`. It is *not* `ui::button`, which
+//     is what the port drew first: a button centres its label in the row and
+//     brings its own flex and chrome with it, where upstream's text sits at the
+//     row's left edge eight pixels in. Same pixels now, and the capture is what
+//     found the difference — the port's labels were 120-odd pixels to the right.
 //   * upstream's builder is `uniform_list`'s own argument. Here it is handed to
 //     `gpui::run_with_rows` instead, because `run` is the only binding call that
 //     does not return — a callback handed to a binding function is valid for
 //     exactly that call. The builder takes the list id as well as the row index,
 //     so one builder can serve every list a program draws.
+//   * upstream never asks for its app to be activated, so its window is not the
+//     key window and macOS draws the three traffic lights unfocused:
+//     `rgb(70,69,68)` where a key window's are `rgb(255,75,85)`,
+//     `rgb(254,191,45)` and `rgb(43,192,89)`. That was the whole of what this
+//     pair's captures disagreed about — three 14x14 lights at (12,12), with the
+//     client areas equal to the pixel. `gpui::run` activates every window it
+//     opens, so the port asks for upstream's state instead, as
+//     `activate=false` in the options string `run_with_rows` already takes.
+//     **Invisible**: the same three lights, the same colours.
 //
 // Upstream prints to stdout on click; so does this port. Watch the terminal.
 
 use gpui
 use std::process
+use std::strings
 use ui
 
 const ROWS: i64 = 50
 
 /// One row. `index` is zero-based, as upstream's is; the label is one-based.
+///
+/// The element carries the row in its own id — `item-3` — because that is what a
+/// click reports back: this binding raises an event named after the element that
+/// took it, so the row is read off the event's id rather than kept anywhere.
 fn entry_row(_list: String, index: i64) -> ui::El {
     let item = index + 1
-    ui::button(f"item-{index}", f"Item {item}", "px=8 cursor=pointer")
+    ui::on_mouse(
+        ui::text(f"Item {item}", "px=8 cursor=pointer"),
+        "click",
+        f"item-{index}",
+    )
 }
 
 fn main() {
-    let outcome = gpui::run_with_rows("", 300.0, 300.0, "", entry_row, || {
+    let outcome = gpui::run_with_rows("", 300.0, 300.0, "activate=false", entry_row, || {
         for event in gpui::take_events() {
             let id, _data = gpui::event_parts(event)
-            if id == "item" {
-                let row = gpui::state_int("clicked", 0)
-                println(f"clicked Item {row}")
+
+            // The row is in the id the element was given: `item-3` is row 3,
+            // zero-based, so the label is one more. Upstream's `println!` is
+            // `clicked Item {item:?}` with `item = ix + 1`, and `{:?}` on a
+            // `usize` prints the same digits as `{}`.
+            let parts = strings::split(id, "-")
+            if parts.len() == 2 && parts[0] == "item" {
+                if let Some(row) = strings::to_i64(parts[1]) {
+                    println(f"clicked Item {row + 1}")
+                }
             }
         }
 
         ui::panel("size=full bg=#ffffff")
-            .list("entries", ROWS, 22.0, "w=full h=full")
+            .list("entries", ROWS, 26.0, "w=full h=full")
             |> ui::root
     })
 

@@ -7,6 +7,14 @@
 #   ./scripts/pair.sh 22_text --commands
 #   ./scripts/pair.sh --list
 #
+# Two deadlines, because the two sides do not start at the same speed. `--timeout`
+# (default 45s, `PAIR_TIMEOUT`) bounds the search for each side's *process* and
+# the window wait for the upstream side. `--port-timeout` (default 900s,
+# `PAIR_PORT_TIMEOUT`) is what the port gets, because the port is compiled by the
+# VM it runs on every time it is run and one example's compile has been measured
+# at 401s before its first frame (13_painting). A port that is merely slow and a
+# port that crashed are told apart by `capture`, which reports which happened.
+#
 # # Why this is the owner's command and not mine
 #
 # Goal B asks that every `examples/NN_*.gos` be visually indistinguishable from
@@ -55,6 +63,13 @@ names=()
 commands_only=0
 sizes=0
 timeout_s="${PAIR_TIMEOUT:-45}"
+# The port's own deadline, which is deliberately not `timeout_s`. The two sides
+# are not equally quick to start: the upstream example is a linked binary, and
+# the port is compiled by the VM it runs on each time it runs, so its first frame
+# can be minutes away (measured: 401s, 13_painting). `timeout_s` bounds the
+# searches for a *process*; `port_timeout` bounds the port's compile. See the
+# note in `capture`.
+port_timeout="${PAIR_PORT_TIMEOUT:-900}"
 settle="${PAIR_SETTLE:-3}"
 
 while [ $# -gt 0 ]; do
@@ -69,6 +84,7 @@ while [ $# -gt 0 ]; do
     --sizes) sizes=1 ;;
     --commands) commands_only=1 ;;
     --timeout) timeout_s="${2:-45}"; shift ;;
+    --port-timeout) port_timeout="${2:-900}"; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "pair.sh: unknown option $1" >&2; exit 2 ;;
     *) names+=("$1") ;;
@@ -168,27 +184,91 @@ resolve () {  # resolve <name> -> sets port_file, upstream_name, port_title
 #
 # `scripts/pointer.sh windows` lists "pid number layer x y w h" front to back.
 # The window we want is the one owned by the process we launched.
-capture () {  # capture <pgrep-pattern> <out.png> <label>
-  local pattern="$1" out="$2" label="$3"
-  local pid="" num="" W="" H="" X="" Y="" i
+#
+# `pgrep -f` matches a process's whole argument vector, and that is not the same
+# question as *which executable this is*. Cargo links an example with
+# `clang … -o …/target/debug/examples/<name>-<hash> …`, so the path of the
+# example that is being *built* is an argument of the compiler — and a pair that
+# latches onto the compiler then waits the whole timeout for a window from a
+# process that exited when the link finished. It reports "opened no window"
+# about a window that is about to appear, and that reads as a fact about the
+# port's rendering rather than about the search. The same is true of the
+# runner's own build, whose link line carries `-o …/target/debug/gos-runner`.
+#
+# So the candidates are filtered by the executable `ps` reports for them, which
+# is the path of the program itself and never its arguments: the compiler's
+# `comm` is `…/usr/bin/clang`, the example's is its own path. Without the
+# filter the upstream side of a pair fails whenever cargo decides to relink —
+# which, because the build step just touched it, is most of the time.
+#
+# The port needs a second distinction, and it is the one that made this function
+# hang for the whole timeout. `gos`'s runner is ONE executable that both builds
+# and runs:
+#
+#     …/runner/target/debug/gos-runner build examples/13_painting.gos
+#     …/runner/target/debug/gos-runner run --main-thread examples/13_painting.gos
+#
+# Both match `pgrep -f gos-runner`, and both pass the `comm` filter — the `comm`
+# of the build is the runner's own path, exactly as the run's is. `gos run`
+# builds before it runs, so the build half is very often the *older* of the two
+# pids, which is what `head -1` picks; the build ends without ever opening a
+# window, and the capture then waits `${timeout_s}s` for a window from a process
+# that has already exited. That reads as "the port opened no window", which is a
+# statement about the port's rendering rather than about the search. So the
+# pattern for a port names the runner's **subcommand** as well, and the filter
+# checks the executable against the pattern's first word and the whole argument
+# vector against the whole pattern — the executable test that keeps the compiler
+# out, and the argv test that keeps the build half out.
+capture () {  # capture <pgrep-pattern> <out.png> <label> [window-timeout-s]
+  local pattern="$1" out="$2" label="$3" window_timeout="${4:-$timeout_s}"
+  local pid="" num="" W="" H="" X="" Y="" i p exe elapsed
 
+  exe="${pattern%% *}"
   for i in $(seq 1 "$((timeout_s * 2))"); do
-    pid=$(pgrep -f "$pattern" 2>/dev/null | head -1)
+    # (`grep -qF` rather than a `case` here: bash 3.2, which is what macOS
+    # ships, refuses to parse a `case` inside a command substitution that is
+    # piped into something else. Same test, one bash older.)
+    pid=$(pgrep -f "$pattern" 2>/dev/null | while IFS= read -r p; do
+            ps -p "$p" -o comm= 2>/dev/null | grep -qF -- "$exe" || continue
+            ps -p "$p" -o args= 2>/dev/null | grep -qF -- "$pattern" && printf '%s\n' "$p"
+          done | head -1)
     [ -n "$pid" ] && break
     sleep 0.5
   done
   if [ -z "$pid" ]; then
-    echo "  $label: no process matched '$pattern' within ${timeout_s}s"
+    echo "  $label: no process whose executable matches '$pattern' within ${timeout_s}s"
     return 1
   fi
 
-  for i in $(seq 1 "$((timeout_s * 2))"); do
+  # Wait for the window — but bounded by the caller's own generosity rather than
+  # by the 45-second default, because the two sides are not equally quick to
+  # start. The port is *compiled by the VM it runs on* every time it is run
+  # (`gossamer_cli::cmd::run::run_on_vm` -> `Vm::load` -> the MIR passes), and on
+  # this machine one example's compile has been measured at 401s before its first
+  # frame — 13_painting, whose `move_unique_clones` pass dominates. A fixed 45s
+  # wait does not report that the port is slow; it reports that the port opened no
+  # window, which is a claim about the port's rendering and is false. So the
+  # deadline is a parameter and the port is given `port_timeout`.
+  #
+  # What the wait must still not do is sit out the whole deadline for a process
+  # that has already *exited* — a crashed program and a slow one are different
+  # facts and the two messages say which happened.
+  elapsed=0
+  for i in $(seq 1 "$((window_timeout * 2))"); do
     line=$( "$here/pointer.sh" windows 2>/dev/null | awk -v p="$pid" '$1==p { print; exit }' )
     [ -n "$line" ] && break
+    kill -0 "$pid" 2>/dev/null || {
+      echo "  $label: pid $pid exited after ${elapsed}s with no window"
+      return 1
+    }
     sleep 0.5
+    elapsed=$(( elapsed + 1 ))
+    if [ $(( i % 60 )) -eq 0 ]; then
+      echo "  $label: pid $pid is still starting up — no window after $(( i / 2 ))s"
+    fi
   done
   if [ -z "$line" ]; then
-    echo "  $label: pid $pid opened no window within ${timeout_s}s"
+    echo "  $label: pid $pid opened no window within ${window_timeout}s"
     return 1
   fi
 
@@ -253,7 +333,12 @@ run_pair () {
   echo "  built"
   echo "building the port (no window opens for a build)"
   "$here/unlock-stale-build.sh" 2>/dev/null || true
-  gos build "$port_file" >/tmp/pair-port-build.log 2>&1 \
+  # `gos build` links the binary itself and cannot write `-framework …` into
+  # that link line, so a GPUI binary comes out with the whole of CoreFoundation
+  # undefined. It does read `$CC`, and `tools/cc-gpui.sh` supplies them on the
+  # way past -- which is what `build.sh` does too. Without this the port never
+  # links and the pair never gets as far as a window.
+  CC="$PWD/tools/cc-gpui.sh" gos build "$port_file" >/tmp/pair-port-build.log 2>&1 \
     || { echo "  port build FAILED -- see /tmp/pair-port-build.log"; tail -5 /tmp/pair-port-build.log | sed 's/^/    /'; return 1; }
   echo "  built"
   echo
@@ -269,10 +354,15 @@ run_pair () {
   sleep 1
 
   echo "running the port"
-  ( cd "$PWD" && timeout -k 5 "$timeout_s" gos run --main-thread "$port_file" ) \
+  # `port_timeout` and not `timeout_s`: this `timeout` is what *kills* the port,
+  # and the port spends its first seconds-to-minutes compiling itself on the VM
+  # before it can draw anything (see `capture`). Killing it at 45s kills a port
+  # that was working. `kill`/`pkill` below are what stop it once the capture is
+  # done, so a generous deadline here costs nothing on a pair that starts quickly.
+  ( cd "$PWD" && timeout -k 5 "$port_timeout" gos run --main-thread "$port_file" ) \
     >/tmp/pair-port-run.log 2>&1 &
   local port_job=$!
-  capture "gos-runner" "$ev.port.png" "port"
+  capture "gos-runner run" "$ev.port.png" "port" "$port_timeout"
   local port_status=$?
   kill "$port_job" 2>/dev/null
   pkill -x gos-runner 2>/dev/null
@@ -316,16 +406,83 @@ run_pair () {
     return 0
   fi
 
-  local ae
+  # Two numbers, and neither of them is a pixel count.
+  #
+  # `compare -metric AE` prints "A (N)". N is the normalised absolute error: the
+  # total difference over the whole image as a fraction of what an image that
+  # was wrong in every pixel would score. A is the same figure scaled back up by
+  # the pixel count, so `0 (0)` means identical and `1.29 (1.3e-05)` means a
+  # total difference equal to about one and a third wholly-wrong pixels. A
+  # hundred pixels each one grey level out of 255 off score far *better* than
+  # one pixel that is black where the other is white, which is the point of the
+  # metric and also why reading A as "A pixels differ" is wrong twice over: it
+  # flatters a near-miss and it libels a pair whose windows merely rounded
+  # differently. This pair was reported as "1 pixels differ" while 409 pixels
+  # were each one grey level apart.
+  #
+  # So the count is taken separately, and exactly: the difference thresholded at
+  # zero counts every pixel that is not bit-for-bit equal, however small the
+  # difference. Both go into the record, each named for what it is.
+  local ae ae_norm differ mask chrome content
   ae=$(compare -metric AE "$ev.upstream.png" "$ev.port.png" "$ev.diff.png" 2>&1)
+  ae_norm=$(printf '%s' "$ae" | sed 's/^[^(]*(//; s/).*$//')
+  differ=$(convert "$ev.upstream.png" "$ev.port.png" -compose difference -composite \
+             -channel RGB -separate -evaluate-sequence max -threshold 0 \
+             -format '%[fx:int(mean*w*h+0.5)]' info: 2>/dev/null)
+
+  # ... and the same count for the client area on its own.
+  #
+  # The top 32 rows of these captures are the window's title bar, which macOS
+  # draws and the example does not. An unfocused window draws its traffic lights
+  # and its bar tint differently from a focused one, and only one window can be
+  # key: a pair photographed with the two sides in different focus states carries
+  # a difference that is photography and not rendering, and it is not small --
+  # 10_on_window_close_quit and 26_window_shadow measured 15,032 and 18,478
+  # differing pixels, all of them in that band, with client areas that are equal
+  # to the pixel. The figure is added, not substituted: the whole-window count
+  # above still stands and still fails, and this says which part of it is the
+  # platform's chrome. A reader who wants to know whether the example rendered
+  # differently wants this number; a reader who wants to know whether two
+  # photographs are equal wants the one above.
+  mask=$(mktemp -t pair-mask) || mask=""
+  if [ -n "$mask" ]; then
+    convert "$ev.upstream.png" "$ev.port.png" -compose difference -composite \
+      -colorspace gray -threshold 0 "$mask" 2>/dev/null || mask=""
+  fi
+  if [ -n "$mask" ] && [ -s "$mask" ]; then
+    chrome=$(convert "$mask" -crop "${uw}x32+0+0" +repage \
+               -format '%[fx:int(mean*w*h+0.5)]' info: 2>/dev/null)
+    rm -f "$mask"
+  fi
   {
     echo "compare -metric AE  $ae"
-    echo
-    if [ "$ae" = "0" ]; then
-      echo "The two windows are pixel-identical."
-    else
-      echo "$ae pixels differ. tests/evidence/pairs/$base.diff.png shows where."
+    echo "    the normalised figure:      ${ae_norm:-?}   (0 identical, 1 wrong in every pixel)"
+    echo "    pixels not bit-for-bit equal: ${differ:-?}"
+    if [ -n "${chrome:-}" ]; then
+      content=$(awk -v t="$differ" -v c="$chrome" 'BEGIN{ printf "%d", t - c }')
+      echo "        of which, in the 32px title bar macOS draws: $chrome"
+      echo "        of which, in the client area the example draws: $content"
     fi
+    echo
+    case "${differ:-}" in
+      "")
+        echo "the difference could not be thresholded, so there is no count of differing"
+        echo "pixels here; the metric above is all that came back from ImageMagick." ;;
+      0)
+        echo "The two windows are pixel-identical." ;;
+      *)
+        if [ -n "${chrome:-}" ] && [ "$chrome" = "$differ" ]; then
+          echo "$differ pixels are not bit-for-bit equal, and every one of them is in the"
+          echo "window's title bar -- which is macOS's to draw, and which is drawn for a"
+          echo "focused window differently from an unfocused one. The client areas agree:"
+          echo "the example rendered identically on both sides."
+        else
+          echo "$differ pixels are not bit-for-bit equal. tests/evidence/pairs/$base.diff.png"
+          echo "shows where. The metric above says how far apart they are in total: compare it"
+          echo "against the count before reading a small number as a good one -- one pixel"
+          echo "black-on-white outscores a hundred pixels a grey level apart."
+        fi ;;
+    esac
   } | tee -a "$ev.capture.txt"
 }
 

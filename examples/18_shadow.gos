@@ -13,13 +13,18 @@
 //
 // Deviations:
 //
-//   * Colours are quantised to hex. Upstream writes `hsla(h, s, l, a)`, the
-//     style language takes `#rrggbbaa`, so the alpha lands on the nearest of
-//     256 steps: `hsla(0.0, 0.5, 0.5, 0.3)` -> `#bf40404d` (alpha 0.302),
-//     `hsla(0.0, 0.0, 0.0, 0.3)` -> `#0000004d`, and the shapes' 10% hairline
-//     `hsla(0.0, 0.0, 0.0, 0.1)` -> `#0000001a` (alpha 0.102). The
-//     hue/saturation/lightness halves are exact: `#bf4040` is (0.75, 0.25,
-//     0.25), which is what GPUI's own hsla(0.0, 0.5, 0.5) converts to.
+//   * Colours are written as `hsla(h, s, l, a)` rather than as hex. Upstream
+//     writes `hsla(..)` directly and this binding accepts the same spelling,
+//     argument for argument, so nothing is quantised and the two composite
+//     identically. Until the pair's captures were compared this port wrote the
+//     nearest `#rrggbbaa` instead: `hsla(0.0, 0.5, 0.5, 0.3)` became `#bf40404d`
+//     (alpha 77/255 = 0.302, not 0.3), `hsla(0.0, 0.0, 0.0, 0.3)` became
+//     `#0000004d`, and the shapes' 10% hairline `hsla(0.0, 0.0, 0.0, 0.1)`
+//     became `#0000001a` (alpha 26/255 = 0.102, not 0.1). **A hex alpha is a
+//     byte**, so none of those three is the value upstream passes, and the
+//     captures showed the difference on every shape's edge and in every shadow's
+//     falloff — 12,460 pixels, up to 3 levels apart. The hue, saturation and
+//     lightness halves were already exact; only the alpha was not.
 //   * An `El`'s style is fixed when the element is built, whereas upstream's
 //     `Div` takes `.shadow(..)` as a further builder step. The shape helpers
 //     here therefore take their shadow spec as an argument. The element tree
@@ -42,22 +47,26 @@ use ui
 
 /// `hsla(0.0, 0.5, 0.5, 0.3)` — the desaturated red on the first and the
 /// directional bands.
-const RED: &str = "#bf40404d"
+const RED: &str = "hsla(0,0.5,0.5,0.3)"
 
 /// `hsla(0.0, 0.0, 0.0, 0.3)` — the black on the blur and spread bands.
-const BLACK: &str = "#0000004d"
+const BLACK: &str = "hsla(0,0,0,0.3)"
 
 /// The `hsla(0.0, 0.0, 0.0, 0.1)` hairline every shape wears as its border.
-const HAIRLINE: &str = "#0000001a"
+const HAIRLINE: &str = "hsla(0,0,0,0.1)"
 
 /// The last band's four stacked shadows, in upstream's order: red above,
 /// yellow to the right, green below, blue to the left — each `hsla(h, 1.0,
-/// 0.5, 0.3)`, offset 12px, blur 8, spread 2.
-const FOUR: &str = "shadow=#ff00004d,0,-12,8,2|#ffff004d,12,0,8,2|#00ff004d,0,12,8,2|#0000ff4d,-12,0,8,2"
+/// 0.5, 0.3)`, offset 12px, blur 8, spread 2. The hues are upstream's own
+/// `0.0 / 360.`, `60.0 / 360.`, `120.0 / 360.` and `240.0 / 360.` to the digit
+/// where an `f32` stops caring; 60/360, 120/360 and 240/360 are 1/6, 1/3 and
+/// 2/3.
+const FOUR: &str = "shadow=hsla(0,1,0.5,0.3),0,-12,8,2|hsla(0.1666666667,1,0.5,0.3),12,0,8,2|hsla(0.3333333333,1,0.5,0.3),0,12,8,2|hsla(0.6666666667,1,0.5,0.3),-12,0,8,2"
 
 // ---- one shadow -------------------------------------------------------
 
-/// One custom `BoxShadow`, as `shadow=#rrggbbaa,offset-x,offset-y,blur,spread`.
+/// One custom `BoxShadow`, as `shadow=<colour>,offset-x,offset-y,blur,spread`,
+/// where `<colour>` is any spelling `bg=` takes: hex, `hsla(..)`, or a name.
 fn shadow(colour: String, x: i64, y: i64, blur: i64, spread: i64) -> String {
     f"shadow={colour},{x},{y},{blur},{spread}"
 }

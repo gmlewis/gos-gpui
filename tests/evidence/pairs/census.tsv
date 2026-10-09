@@ -21,27 +21,33 @@
 # line does not begin a deviation, is reported.
 #
 # pair	line	class	note
+01_animation.gos	10	invisible	the icon loads by path instead of through AssetSource; the same bytes, the same loader
+01_animation.gos	13	forced	GPUI's animation driver is not reachable from this ABI; the port repaints every frame, and a still catches whichever rotation each side was asked for
+01_animation.gos	22	invisible	upstream calls cx.activate(false), which does not activate when another app is in front, so its window is not key and its three traffic lights are grey; the port asks for the same state, so the same three lights are grey
 02_data_table.gos	20	invisible	the row builder is reached through run_with_rows instead of cx.processor
-02_data_table.gos	29	forced	upstream's quotes come from rand::rng(); there is no fixed target to match
+02_data_table.gos	29	forced	upstream's quotes come from rand::rng(), so two runs of upstream differ from each other: the values can never be matched, only the layout
 02_data_table.gos	35	invisible	the visible row range is obtained differently; the same rows are drawn
-02_data_table.gos	40	invisible	ui::list takes 22.0 as the row height, the port's reading of upstream's measured height
-02_data_table.gos	43	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
+02_data_table.gos	40	invisible	ui::list takes the row height as a figure; 28.0 is upstream's own row to the pixel (23px text_sm line box + 2px py_0p5 twice + 1px rule), and the captures' row pitch now agrees
+02_data_table.gos	50	invisible	the body cells say shrink=0 where upstream leaves shrinking on; upstream's columns hold their widths and the port's did not, and both hold them now
+02_data_table.gos	57	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
 03_drag_drop.gos	33	invisible	the ghost is a tree element, not GPUI's drag-preview layer; gpui paints the preview after the root and the ghost is the root stack's last child, so the paint order matches
 03_drag_drop.gos	40	invisible	an invisible full-window on_mouse overlay restores the same behaviour
 03_drag_drop.gos	50	invisible	animate() keeps the ghost following; the same pixels
 03_drag_drop.gos	54	invisible	handlers are plain functions over the store; cx.listener has no equivalent
-04_gif_viewer.gos	8	invisible	the image loads by path instead of through AssetSource; the same pixels
-04_gif_viewer.gos	11	invisible	the image's id is unstable, so frames are requested continuously; frame 0 either way
-08_image_loading.gos	55	invisible	a custom Asset with a Duration is unreachable (AX2); cells 2 and 3's 5s comes from the port's own gpui::task timer, and the subtrees are the same elements at the same times
-08_image_loading.gos	69	invisible	both pulse from phase 0 on a 3s cycle; the sampled alpha can differ by a frame
+04_gif_viewer.gos	16	invisible	the image loads by path instead of through AssetSource; the same pixels
+04_gif_viewer.gos	20	invisible	two captures of a running animation are two frames of it; both sides advance the same cursor from the same GIF
+08_image_loading.gos	54	invisible	a custom Asset with a Duration is unreachable (AX2); cells 2 and 3's 5s comes from the port's own gpui::task timer, and the subtrees are the same elements at the same times
+08_image_loading.gos	68	invisible	both pulse from phase 0 on a 3s cycle; the sampled alpha can differ by a frame
+08_image_loading.gos	75	invisible	upstream calls cx.activate(false), which does not activate when another app is in front, so its window is not key and its three traffic lights are grey; the port asks for the same state, so the same three lights are grey
 09_input.gos	17	invisible	the editor is Rust-side code; the shell it draws is the same
 09_input.gos	18	invisible	the thirteen keys are matched on the element instead of through the keymap; the same text results
 09_input.gos	23	forced	the editor is a document editor -- it holds breaks and handles the keys that move by them, where upstream binds neither; DW1 plus ui::editor(key, placeholder, style) handing out the widget whole are the proof
 09_input.gos	35	invisible	focus is taken when the editor is created rather than at startup
 09_input.gos	39	invisible	the shell is reproduced, and Reset is upstream's own -- on_reset_click clears the keystroke log and resets the text too (input.rs:622-627)
-10_on_window_close_quit.gos	7	invisible	interaction only: cmd-w is not wired; the desktop quit shortcut is bound instead
+10_on_window_close_quit.gos	11	invisible	cmd-w is bound to an event id rather than to a program action, which cannot cross this ABI; the same key does the same thing
+10_on_window_close_quit.gos	17	forced	the binding is single-window; upstream opens two and its first asks not to activate
 11_opacity.gos	12	invisible	asset paths point at examples/assets/ rather than the crate's own examples/image/
-11_opacity.gos	14	invisible	every image carries a binding-allocated id, so the window repaints; frame 0 either way
+11_opacity.gos	15	forced	every image carries a binding-allocated id, so the port's cat advances where upstream's untagged one is frozen at frame 0; there is no way to draw an image with no id
 12_ownership_post.gos	38	forced	no Entity graph, no subscription object, nothing for notify() to re-render -- PORTING.md sec.5
 12_ownership_post.gos	42	forced	Change { increment: usize } becomes untyped payload text
 12_ownership_post.gos	46	forced	cx.emit is flushed within the enclosing update, not delivered on a subscription
@@ -54,13 +60,15 @@
 14_paths_bench.gos	10	invisible	paths live in a persistent pool addressed by handle; the same 2000 are painted
 14_paths_bench.gos	15	invisible	gpui::animate() is window.request_animation_frame()
 14_paths_bench.gos	18	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
+16_scrollable.gos	13	invisible	hsla(..,0.05) / hsla(..,0.1) are gpui's own f32 alphas, so the fills composite identically; as hex they were 13/255 and 26/255 and the green box was 1-2 levels off over 63,263 pixels
 17_set_menus.gos	25	invisible	the quit handler does not print; stdout, not pixels
 17_set_menus.gos	28	invisible	the app is activated when the window opens instead of by the example
 17_set_menus.gos	31	invisible	set_menus stores but shows no bar on Linux, which is upstream's behaviour there too
-18_shadow.gos	16	invisible	hsla is quantised to the nearest hex step
-18_shadow.gos	23	invisible	an El's style is fixed at build time; the shapes are the same
-18_shadow.gos	27	invisible	element ids belong to the binding, which allocates one per element
-18_shadow.gos	29	invisible	a Gossamer frame rebuilds the tree; the colours themselves are exact
+17_set_menus.gos	33	invisible	the application is named explicitly; macOS takes upstream's name `set_menus` from its binary, and every port runs under the shared runner
+18_shadow.gos	16	invisible	hsla(..) is gpui's own spelling, argument for argument, so every alpha is exact; as hex each was a byte, 3 of them off by 1-2 levels over 12,460 pixels
+18_shadow.gos	28	invisible	an El's style is fixed at build time; the shapes are the same
+18_shadow.gos	32	invisible	element ids belong to the binding, which allocates one per element
+18_shadow.gos	34	invisible	a Gossamer frame rebuilds the tree; the colours themselves are exact
 19_tab_stop.gos	37	invisible	a focusable box wraps a ui::button; the same pixels
 20_text_layout.gos	34	invisible	ui::text(..) is the binding's div().child(text), the same two-level element
 20_text_layout.gos	38	invisible	ui::styled_text wraps the StyledText in a div, the same nesting
@@ -72,16 +80,18 @@
 22_text.gos	46	invisible	the character list is written already cut into rows
 22_text.gos	51	invisible	the scroll box's id is not set
 22_text.gos	54	invisible	a Gossamer frame rebuilds the tree; next_id has no counterpart
-23_tree.gos	7	invisible	40 levels render where upstream renders 50
-24_uniform_list.gos	7	invisible	ui::list takes 22.0 explicitly, the port's reading of upstream's measured height
-24_uniform_list.gos	10	invisible	the builder is handed to run_with_rows instead of being uniform_list's argument
-25_window_positioning.gos	26	visible	no display_id window option, so a window cannot be pinned to a display
-25_window_positioning.gos	33	invisible	GPUI's macOS Display::bounds() reports the origin as (0,0) for every display
-25_window_positioning.gos	41	visible	gpui::run always opens a host window of its own; upstream opens none
-25_window_positioning.gos	44	invisible	the host window's view draws every window; they are told apart by window_id
-25_window_positioning.gos	54	invisible	the labels reproduce DisplayId's Debug through display_field
-25_window_positioning.gos	57	invisible	titlebar=none is asked for, so the titlebar the binding attaches is invisible
-25_window_positioning.gos	61	visible	the host window's own size is explicit, as everywhere in these ports
+22_text.gos	57	invisible	the application is named explicitly; upstream's binary is `text`, so its bar reads `text` and not the menu's own name
+23_tree.gos	12	invisible	upstream never activates its app, so its window is not key and its three traffic lights are grey; the port asks for the same state, so the same three lights are grey
+24_uniform_list.gos	7	invisible	ui::list takes the row height explicitly; 26.0 is upstream's own pitch, round(16 x 1.618), and the captures put its rows 26 apart
+24_uniform_list.gos	16	invisible	the row is a text element with a click handler, left-aligned at upstream's px_2, where ui::button centred its label in the row
+24_uniform_list.gos	23	invisible	the builder is handed to run_with_rows instead of being uniform_list's argument
+24_uniform_list.gos	28	invisible	upstream never activates its app, so its window is not key and its three traffic lights are grey; the port asks for the same state, so the same three lights are grey
+25_window_positioning.gos	26	invisible	GPUI's macOS Display::bounds() reports the origin as (0,0) for every display
+25_window_positioning.gos	34	visible	gpui::run always opens a host window of its own; upstream opens none
+25_window_positioning.gos	37	invisible	the host window's view draws every window; they are told apart by window_id
+25_window_positioning.gos	47	invisible	the labels reproduce DisplayId's Debug through display_field
+25_window_positioning.gos	50	invisible	titlebar=none is asked for, so the titlebar the binding attaches is invisible
+25_window_positioning.gos	54	visible	the host window's own size is explicit, as everywhere in these ports
 26_window_shadow.gos	54	invisible	the Decorations::Client arm cannot run on macOS
 26_window_shadow.gos	56	invisible	set_client_inset is not exposed and is a no-op on macOS
 26_window_shadow.gos	58	invisible	insert_hitbox / set_cursor_style / start_window_resize / start_window_move / show_window_menu are called only inside the dead arm, so no macOS frame differs
@@ -91,10 +101,10 @@
 26_window_shadow.gos	69	invisible	element ids belong to the binding
 26_window_shadow.gos	71	invisible	the colours are exact -- a note, not a difference
 26_window_shadow.gos	75	invisible	div() becomes ui::rect / ui::panel / ...; a Gossamer frame rebuilds the tree
-27_window.gos	56	visible	sub-windows are centred on the primary display, not placed by display id
-27_window.gos	61	invisible	both bar the same: gpui sets a title only for Some(title), and "" is empty either way (mac/window.rs:740)
-27_window.gos	63	visible	titlebar=none moves the traffic lights into a 32px client-drawn bar
-27_window.gos	67	invisible	geometry is returned as scalars; the structs are declared in the program
-27_window.gos	72	invisible	events are process-wide; each sub-window is given its own close handler
-27_window.gos	76	visible	an invisible sub-window keeps the program alive, so it does not quit with the visible ones
-27_window.gos	79	invisible	ui::button supplies its own flex / items=center / justify=center / cursor=pointer
+26_window_shadow.gos	78	invisible	upstream never activates its app, so its window is not key and its three traffic lights are grey; the port asks for the same state, so the same three lights are grey
+27_window.gos	64	invisible	both bar the same: gpui sets a title only for Some(title), and "" is empty either way (mac/window.rs:740)
+27_window.gos	66	visible	titlebar=none moves the traffic lights into a 32px client-drawn bar
+27_window.gos	73	invisible	geometry is returned as scalars; the structs are declared in the program
+27_window.gos	78	invisible	events are process-wide; each sub-window is given its own close handler
+27_window.gos	82	visible	an invisible sub-window keeps the program alive, so it does not quit with the visible ones
+27_window.gos	85	invisible	ui::button supplies its own flex / items=center / justify=center / cursor=pointer

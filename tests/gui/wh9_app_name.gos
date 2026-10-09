@@ -1,0 +1,77 @@
+// WH9 — the application's name: the bold word macOS draws at the left of the menu bar.
+//
+// linux: this is the macOS menu bar, which has no counterpart there — `gpui::set_app_name`
+// is a documented no-op off macOS, and the container cannot read a bar that does not exist.
+//
+// **The word is the application's, not the menu's.** Upstream's `set_menus` example shows
+// `set_menus`, and its `text` example shows `text` — though `text.rs` names its own menu
+// `"GPUI Typography"`. Nothing in either example asks for the word: it is the name of the
+// *executable*, and upstream's examples are one binary each (`target/debug/examples/text`).
+// Every port is run by the same runner, `gos-runner`, so without a way to say otherwise every
+// port's bar reads `gos-runner`.
+//
+// `gpui::set_app_name(name)` seeds `CFBundleName` into `[[NSBundle mainBundle] infoDictionary]`,
+// which is the one mechanism that moves it; the round that added it measured the alternatives
+// and `gpui-binding/src/name.rs` records the table. It has to happen **before `gpui::run`** —
+// macOS reads the name before the bar is first drawn and keeps what it read.
+//
+// What this probe checks is the drawn bar, not the binding's own write. System Events is asked
+// for the titles of this process's menu-bar items, by pid, and the assertion is that the name
+// is one of them. The read needs Accessibility permission, which `osascript` has from this
+// shell; where it is missing the probe says so on the FAIL line rather than passing quietly
+// without its evidence.
+//
+// Pass means: **the menu bar of this process reads the name the program declared.**
+//
+// Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/wh9_app_name.gos 60`.
+
+use gpui
+use std::process
+use std::strings
+use ui
+
+/// The name this probe declares. Not the runner's, not the window's title, and not anything
+/// the window itself draws — if it appears in the menu bar it got there through `set_app_name`.
+const NAME: &str = "wh9-app-name"
+
+/// Every item title in **this process's** menu bar, `Apple|wh9-app-name|` and so on, or a
+/// string beginning `~` when the question could not be asked at all. Asked by pid, so the
+/// answer is this program's bar and nobody else's.
+fn menu_bar_titles() -> String {
+    let script = f"tell application \"System Events\"\nset p to first process whose unix id is {process::id()}\nset out to \"\"\nrepeat with bi in (every menu bar item of menu bar 1 of p)\nset out to out & (title of bi) & \"|\"\nend repeat\nreturn out\nend tell"
+    let args: Vec<String> = #["-e", script]
+
+    match process::run("osascript", args) {
+        Ok(out) => strings::trim(out.stdout),
+        Err(problem) => f"~osascript: {problem}",
+    }
+}
+
+fn main() {
+    // Before `gpui::run`, because the name has to be in place before the menu bar is drawn.
+    gpui::set_app_name(NAME)
+
+    let outcome = gpui::run("", 360.0, 200.0, || {
+        // The bar is drawn when the window is ordered, which is before the first frame; a few
+        // frames of slack costs nothing and the read is a subprocess.
+        if gpui::frame() == 3 {
+            let titles = menu_bar_titles()
+
+            if strings::contains(titles.clone(), NAME) {
+                println(f"OK WH9 the menu bar of this process reads {titles}")
+            } else {
+                println(f"FAIL WH9 the menu bar reads \"{titles}\" and not {NAME}")
+            }
+            gpui::quit()
+        }
+
+        ui::panel("flex size=full items=center justify=center bg=#181825 color=#cdd6f4")
+            .text("wh9 - the application's name", "")
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL WH9 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

@@ -54,6 +54,11 @@
 //   * As in every port here, a Gossamer frame rebuilds the tree rather than
 //     re-rendering a retained `Entity<TextExample>`; `next_id` therefore has no
 //     counterpart — the binding numbers the elements itself.
+//   * the port names the application (`gpui::set_app_name`). The word at the left
+//     of the menu bar is the name of the *executable*, not of the menu: upstream's
+//     binary is `text`, the port's is the shared `gos-runner`. Upstream's bar
+//     therefore reads `text`, not `GPUI Typography`, which is only what text.rs
+//     calls its menu — and both bars agree once the port declares the same name.
 
 use gpui
 use std::process
@@ -174,6 +179,13 @@ fn sidebar() -> ui::El {
 }
 
 fn main() {
+    // The word at the left of the menu bar is the *application's* name, which macOS
+    // reads from the executable it ran — so upstream's bar reads `text`, after the
+    // binary `target/debug/examples/text`, and not `GPUI Typography`, which is only
+    // what text.rs calls its menu. Every port is run by the same runner, so the name
+    // is declared here instead. It takes effect only before `gpui::run`.
+    gpui::set_app_name("text")
+
     // Upstream opens the window at (0, 0) — `Bounds::Windowed(bounds(point(px(0.0),
     // px(0.0)), size(px(920.), px(720.))))`; `pos=0,0` is that placement, and the
     // title is upstream's.

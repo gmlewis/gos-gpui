@@ -2,20 +2,54 @@
 //
 // Upstream opens TWO windows and quits when the last one closes. This binding
 // is single-window, so the port exercises the behaviour it can: closing this
-// window — by the traffic lights or by the quit keystroke — ends the process.
+// window — by the traffic lights or by `cmd-w` — ends the process. Upstream's
+// `cx.on_window_closed` quits when the window list empties, which for one
+// window is the window that just went away, so `gpui::quit` on the stroke is
+// the same act.
 //
-// Deviation: upstream binds `cmd-w` to remove the focused window. The binding
-// owns its key bindings and binds the desktop quit shortcut instead (⌘Q on
-// macOS, Ctrl+Q elsewhere), so ⌘W is not wired here.
+// Deviations:
+//   * upstream binds `cmd-w` to a program action that removes the focused
+//     window, and quits only because that was the last window. The binding
+//     raises an event for a bound stroke (`gpui::bind_keys`) and a program
+//     action is not a value that can cross this ABI (R3), so the port binds
+//     `cmd-w` to an event id and quits on it. Same key, same effect, one step
+//     instead of two.
+//   * upstream opens two windows of the same example side by side, and its
+//     first one asks not to activate the application (`cx.activate(false)`).
+//     The binding is single-window. Forced.
+//
+// The title is not in the list: `gpui::run` takes it as its first argument and
+// this example has nothing to put in it, so it is empty — as upstream's is, it
+// leaving `WindowOptions::default()`.
 
 use gpui
 use std::process
 use ui
 
+/// Upstream's `CloseWindow` action, which calls `window.remove_window()`. The
+/// last window going away is what quits upstream; with one window the stroke
+/// is the whole of it.
+fn handle(events: Vec<String>) {
+    for event in events {
+        let id, _data = gpui::event_parts(event)
+        if id == "closewin" {
+            gpui::quit()
+        }
+    }
+}
+
 fn main() {
     let outcome = gpui::run("", 500.0, 500.0, || {
+        // The window has to be able to hear the stroke: `bind_keys` puts it in
+        // the keymap, and `on_keys` is what gives the window the focus a key
+        // event is delivered to. Without it the binding is in the keymap and
+        // the window never sees the key.
+        gpui::on_keys(true)
+        gpui::bind_keys("cmd-w=closewin")
+        gpui::take_events() |> handle
+
         ui::panel("flex col gap=12 bg=#505050 size=500 justify=center items=center shadow=lg border=1 bordercolor=#0000ff font=xl color=#ffffff")
-            .text("Closing this window with the quit shortcut or the traffic lights should quit the application!", "")
+            .text("Closing this window with cmd-w or the traffic lights should quit the application!", "")
             |> ui::root
     })
 

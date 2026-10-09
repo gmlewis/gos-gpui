@@ -53,6 +53,7 @@ mod editor;
 mod gpu;
 mod history;
 mod list;
+mod name;
 mod options;
 mod prompts;
 mod path;
@@ -2453,6 +2454,29 @@ gossamer_binding::register_module!(
     /// data and would rather check it than read stderr.
     fn unknown_window_tokens(spec: String) -> Vec<String> {
         options::unknown_window_tokens(&spec)
+    }
+
+    /// Name the application, as the macOS menu bar shows it.
+    ///
+    /// The word at the left of the menu bar — and the name in the Apple menu's
+    /// `Force Quit …` — is the *application's* name, which macOS takes from the
+    /// executable that was run. It is not the name [`gpui::set_menus`] installs a
+    /// menu under: `text.rs` names its menu `"GPUI Typography"` and its menu bar
+    /// reads `text` (`tools/upstream/examples/text.rs:303`), because the binary
+    /// upstream runs is `target/debug/examples/text`. Every port is run by the same
+    /// runner instead, so without this every port's menu bar reads `gos-runner`.
+    ///
+    /// So a program that ports an example whose menu bar is visible passes that
+    /// example's own name — upstream's file stem, `set_menus` for `set_menus.rs` —
+    /// and the two menu bars agree.
+    ///
+    /// **Call it before [`gpui::run`].** macOS reads the name before the menu bar is
+    /// first drawn and keeps what it read, so a later call changes nothing. Under a
+    /// bundle — and on Linux, which has no such menu bar — this does nothing at all.
+    ///
+    /// `gpui::set_app_name("set_menus")`
+    fn set_app_name(name: String) {
+        name::set(&name)
     }
 
     /// Install an application menu.

@@ -5,13 +5,36 @@
 //
 // `pattern_slash(colour, width, interval)` is the `slash=` style token:
 // `slash=#ff0000,4.5,4.5`.
+//
+// Two things the pair's captures found here, both now gone:
+//
+//   * **The border belongs to the container, not to the tile.** Upstream puts
+//     `border_1().border_color(blue)` on the `flex_col` that holds the slash
+//     tiles — and on the two standalone bars — and gives the tiles themselves no
+//     border at all. This port drew one on every tile as well, so each 54x18
+//     square wore its own blue outline and the column read as four separate
+//     boxes with white between them; the 256px column showed a blue rule between
+//     the red, green, blue and yellow bands. 11,137 pixels, every one of them 64
+//     levels or more away from upstream's — the whole of both columns.
+//   * Upstream's tile size is `56.0 / 6.0`, which is `9.333333` to the last
+//     digit an `f32` keeps; the port wrote `9.333`, which is a different `f32`
+//     by about 350 ulps. A stripe is 9.333333px wide for upstream and 9.333px
+//     here, so the two patterns drift apart by a hundredth of a pixel across the
+//     256px tile. It was not visible in the captures — the border was what
+//     differed — but the number is upstream's now.
+//
+// The green column's fill is `hsla(0.3333333333,1,0.25,0.16)`, which is
+// `green().opacity(0.16)` exactly. Written as `#00800029` (alpha 41/255) it was
+// not, and a hex alpha is a byte; see `gpui::hsla`.
 
 use gpui
 use std::process
 use ui
 
+/// One slash tile. Upstream's `div().w(px(..)).h(px(..)).bg(pattern_slash(..))`,
+/// with no border: the container has it.
 fn slash(colour: String, width: String, interval: String, extra: String) -> ui::El {
-    ui::rect(f"{extra} slash={colour},{width},{interval} border=1 bordercolor=blue")
+    ui::rect(f"{extra} slash={colour},{width},{interval}")
 }
 
 fn main() {
@@ -23,12 +46,12 @@ fn main() {
                 .child(slash("red", "4.5", "4.5", "w=54 h=18"))
                 .child(slash("red", "4.5", "4.5", "w=54 h=18"))
                 .child(slash("red", "4.5", "9", "w=54 h=18")))
-            .child(ui::column("flex col border=1 bordercolor=blue bg=#00800029")
+            .child(ui::column("flex col border=1 bordercolor=blue bg=hsla(0.3333333333,1,0.25,0.16)")
                 .text("Elements the same height should align", "")
-                .child(slash("red", "9.333", "9.333", "w=256 h=56"))
-                .child(slash("green", "9.333", "9.333", "w=256 h=56"))
-                .child(slash("blue", "9.333", "9.333", "w=256 h=56"))
-                .child(slash("yellow", "9.333", "9.333", "w=256 h=26")))
+                .child(slash("red", "9.333333", "9.333333", "w=256 h=56"))
+                .child(slash("green", "9.333333", "9.333333", "w=256 h=56"))
+                .child(slash("blue", "9.333333", "9.333333", "w=256 h=56"))
+                .child(slash("yellow", "9.333333", "9.333333", "w=256 h=26")))
             .child(ui::rect("border=1 bordercolor=blue w=240 h=40 bg=red"))
             .child(ui::rect("border=1 bordercolor=blue w=240 h=40 grad=45,red,blue"))
             |> ui::root

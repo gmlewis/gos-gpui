@@ -1,0 +1,20 @@
+pair 16_scrollable
+upstream  tools/upstream/examples/scrollable.rs
+port      examples/16_scrollable.gos
+captured  2026-10-09T13:47:10Z
+
+the two commands:
+    cargo run --manifest-path tools/upstream/Cargo.toml --example scrollable
+    gos run --main-thread examples/16_scrollable.gos
+
+upstream capture  500x532
+port capture      500x532
+
+compare -metric AE  186.909 (0.000702665)
+    the normalised figure:      0.000702665   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 63726
+
+63726 pixels are not bit-for-bit equal. tests/evidence/pairs/16_scrollable.diff.png
+shows where. The metric above says how far apart they are in total: compare it
+against the count before reading a small number as a good one -- one pixel
+black-on-white outscores a hundred pixels a grey level apart.

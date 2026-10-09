@@ -453,30 +453,72 @@ pub fn named(spec: &str) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
-/// `shadow=#rrggbbaa,x,y,blur,spread`, with `|` between several shadows.
+/// Split a spec on commas that are not inside brackets.
+///
+/// `hsla(0, 0.5, 0.5, 0.3)` and `#ffffff` are both one component here.
+fn split_components(spec: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, c) in spec.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(&spec[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&spec[start..]);
+    out
+}
+
+/// Split a spec's first comma-separated component off, keeping brackets whole.
+///
+/// `hsla(0, 0.5, 0.5, 0.3), 0, -12, 8, 2` is a shadow whose *colour* has commas
+/// in it, and a plain `split(',')` reads the hue as the colour and the saturation
+/// as the offset. So the colour comes off first, balanced.
+fn first_component(spec: &str) -> (&str, &str) {
+    let mut depth = 0usize;
+    for (i, c) in spec.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return (&spec[..i], &spec[i + 1..]),
+            _ => {}
+        }
+    }
+    (spec, "")
+}
+
+/// `shadow=<colour>,x,y,blur,spread`, with `|` between several shadows.
 fn shadows(v: &str) -> Vec<gpui::BoxShadow> {
     v.split('|')
         .map(|one| {
-            let parts: Vec<&str> = one.split(',').collect();
+            let (tint, rest) = first_component(one);
+            let parts: Vec<&str> = rest.split(',').collect();
             let at = |i: usize, fallback: f32| {
                 parts.get(i).and_then(|p| p.parse::<f32>().ok()).unwrap_or(fallback)
             };
             gpui::BoxShadow {
-                color: colour(parts.first().copied().unwrap_or("#00000080")),
-                offset: gpui::point(px(at(1, 0.0)), px(at(2, 0.0))),
-                blur_radius: px(at(3, 0.0)),
-                spread_radius: px(at(4, 0.0)),
+                color: colour(if tint.is_empty() { "#00000080" } else { tint }),
+                offset: gpui::point(px(at(0, 0.0)), px(at(1, 0.0))),
+                blur_radius: px(at(2, 0.0)),
+                spread_radius: px(at(3, 0.0)),
             }
         })
         .collect()
 }
 
-/// `slash=#rrggbb,width,interval`.
+/// `slash=<colour>,width,interval`.
 fn slash(v: &str) -> gpui::Background {
-    let parts: Vec<&str> = v.split(',').collect();
-    let colour = colour(parts.first().copied().unwrap_or("#ffffff"));
-    let width = parts.get(1).and_then(|w| w.parse::<f32>().ok()).unwrap_or(4.0);
-    let interval = parts.get(2).and_then(|i| i.parse::<f32>().ok()).unwrap_or(width);
+    let (tint, rest) = first_component(v);
+    let parts: Vec<&str> = rest.split(',').collect();
+    let colour = colour(if tint.is_empty() { "#ffffff" } else { tint });
+    let width = parts.first().and_then(|w| w.parse::<f32>().ok()).unwrap_or(4.0);
+    let interval = parts.get(1).and_then(|i| i.parse::<f32>().ok()).unwrap_or(width);
     gpui::pattern_slash(colour, width, interval)
 }
 
@@ -927,6 +969,32 @@ pub fn set_colour_table(win: i64, table: HashMap<String, Hsla>) {
 /// every element that takes a style string is checked by it: a colour typo has to be visible as a
 /// complaint, because as a colour it is indistinguishable from a deliberate black.
 pub fn colour(v: &str) -> Hsla {
+    // `hsla(<h>,<s>,<l>,<a>)` — gpui's own `hsla`, argument for argument, and
+    // the spelling that keeps an alpha **exact**.
+    //
+    // A hex colour is `#rrggbbaa`, so its alpha is a byte: 26/255 is not 0.1 and
+    // 13/255 is not 0.05, and gpui blends with the f32 a colour carries. A port
+    // that writes upstream's `green().opacity(0.1)` as `#0080001a` therefore
+    // hands the renderer a different colour from the one upstream hands it, and
+    // the difference survives to the screen: `16_scrollable`'s captures differ in
+    // 63,726 pixels, 63,263 of them the single green box — (212,228,225) in
+    // upstream's capture against (211,226,225) in the port's, over a fill that
+    // looks identical in both.
+    //
+    // `h` is in turns, as gpui's is: `hsla(0.3333333333, 1, 0.25, 0.1)` is
+    // `green().opacity(0.1)` exactly. Three arguments take an alpha of 1.
+    if let Some(rest) = v.strip_prefix("hsla(").and_then(|rest| rest.strip_suffix(')')) {
+        let mut parts = rest.split(',');
+        let mut num = |fallback: f32| {
+            parts
+                .next()
+                .and_then(|p| p.trim().parse::<f32>().ok())
+                .unwrap_or(fallback)
+        };
+        let (h, s, l) = (num(0.0), num(0.0), num(0.0));
+        let a = num(1.0);
+        return hsla(h, s, l, a);
+    }
     if let Some(hex) = v.strip_prefix('#') {
         return match hex.len() {
             3 => {
@@ -982,7 +1050,9 @@ pub fn background(spec: &str) -> gpui::Background {
 ///
 /// `space` is `srgb` or `oklab`, matching GPUI's `ColorSpace`.
 fn gradient(v: &str) -> gpui::Background {
-    let parts: Vec<&str> = v.split(',').collect();
+    // Components, not a plain `split(',')`: a colour may be an `hsla(..)`, whose
+    // own commas are inside brackets.
+    let parts = split_components(v);
     let pct = |raw: Option<&&str>, fallback: f32| {
         raw.and_then(|p| p.parse::<f32>().ok()).unwrap_or(fallback)
     };

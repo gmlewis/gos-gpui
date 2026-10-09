@@ -7,6 +7,21 @@
 // `overflow=scroll` is GPUI's `overflow_scroll()` (either axis) and
 // `overflow=x` is `overflow_x_scroll()`. This is the example to run if
 // scrolling in the binding looks wrong — the two axes are independent here.
+//
+// One deviation, and the pair's own capture is what found it:
+//
+//   * upstream writes its two translucent fills as `blue().opacity(0.05)` and
+//     `green().opacity(0.1)`, which are gpui's own `hsla` values; this port wrote
+//     them as `#0000ff0d` and `#0080001a`. **A hex colour's alpha is a byte**, so
+//     `0d` is 13/255 = 0.050980 and `1a` is 26/255 = 0.101961 — not 0.05 and
+//     0.1. The green box is 63,263 pixels of the window and every one of them
+//     was 1-2 levels off; the captures say so ((212,228,225) upstream against
+//     (211,226,225) here). `hsla(<h>,<s>,<l>,<a>)` is now a spelling the binding
+//     accepts and it is gpui's `hsla` argument for argument, so the alpha is the
+//     f32 upstream passes and the two composite identically.
+//
+// The colours above are now exactly `blue().opacity(0.05)` and
+// `green().opacity(0.1)` / `.opacity(0.2)`; see `gpui::hsla`.
 
 use gpui
 use std::process
@@ -16,9 +31,9 @@ fn main() {
     let outcome = gpui::run("", 500.0, 500.0, || {
         ui::panel("size=full p=16 overflow=scroll bg=white")
             .text("Example for test 2 way scroll in nested layout", "")
-            .child(ui::panel("h=5000 border=1 bordercolor=blue bg=#0000ff0d p=16")
+            .child(ui::panel("h=5000 border=1 bordercolor=blue bg=hsla(0.6666666667,1,0.5,0.05) p=16")
                 .child(ui::panel("mb=20 w_full overflow=x")
-                    .child(ui::panel("w=2000 h=150 bg=#0080001a hover=bg:#00800033 border=1 bordercolor=green p=16")
+                    .child(ui::panel("w=2000 h=150 bg=hsla(0.3333333333,1,0.25,0.1) hover=bg=hsla(0.3333333333,1,0.25,0.2) border=1 bordercolor=green p=16")
                         .text("Scroll Horizontal", "")))
                 .text("Scroll Vertical", ""))
             |> ui::root

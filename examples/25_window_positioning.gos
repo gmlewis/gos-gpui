@@ -23,13 +23,6 @@
 //
 // Deviations, all on the binding's side:
 //
-//   * There is no `display_id` window option, so a window cannot be pinned to a
-//     particular display the way upstream's `WindowOptions::display_id` does.
-//     `open_window` takes absolute screen coordinates and resolves them against
-//     the primary display, so where upstream puts nine windows on *each* display
-//     this port puts all of them on one. The arithmetic that produces the
-//     positions is upstream's, run against `gpui::display_field(i, ..)`, and the labels
-//     still carry the id of the display each window is meant for.
 //   * The arithmetic keeps upstream's own quirks, which a multi-display Mac
 //     cannot see anyway because GPUI's macOS `Display::bounds()` reports the
 //     origin as (0, 0) for every display and only the size is real. Top Left is
@@ -72,7 +65,10 @@ const WINDOW_H: f64 = 75.0
 /// Upstream's `margin_offset`.
 const MARGIN: f64 = 150.0
 
-/// Upstream's `build_window_options`, minus `display_id` — see the deviations.
+/// Upstream's `build_window_options`: same kind, focus, movability, titlebar and
+/// background. `display=` is not here because it differs per window — `positioned`
+/// appends `display=<index>`, which is upstream's `display_id: Some(screen.id())`
+/// for the screen that window's bounds were computed against.
 const OPTIONS: &str = "kind=popup focus=false movable=false titlebar=none background=transparent"
 
 /// A positioned window's view.
@@ -99,13 +95,14 @@ fn positioned_view() {
 }
 
 /// One positioned window: `label` names it, `colour` is upstream's background,
-/// and `x`/`y` are the requested screen coordinates in pixels.
+/// `index` is the display it belongs on — upstream's `screen.id()` — and `x`/`y`
+/// are the requested screen coordinates in pixels.
 ///
 /// Its description is written into the window's *own* state before it is opened,
 /// under the id it is about to be given, so the description is there for its
 /// first frame to read. `window::allocate` hands out ids in the order windows are
 /// opened and the host took 1, so the n-th window opened here is id `n + 1`.
-fn positioned(label: String, colour: String, x: f64, y: f64) {
+fn positioned(index: i64, label: String, colour: String, x: f64, y: f64) {
     let n = gpui::state_int("positioned.count", 0) + 1
     gpui::set_int("positioned.count", n)
     let child = n + 1
@@ -114,8 +111,10 @@ fn positioned(label: String, colour: String, x: f64, y: f64) {
     gpui::set_float_in(child, "positioned.x", x)
     gpui::set_float_in(child, "positioned.y", y)
     // Upstream attaches no titlebar and so no title; `titlebar=none` is its
-    // stand-in, and the title is left empty to match.
-    gpui::open_window("", x, y, WINDOW_W, WINDOW_H, *OPTIONS)
+    // stand-in, and the title is left empty to match. `display=index` is
+    // upstream's `display_id`, so each of the nine is created on the display its
+    // bounds were computed for rather than on whichever one is primary.
+    gpui::open_window("", x, y, WINDOW_W, WINDOW_H, f"{OPTIONS} display={index}")
 }
 
 /// Upstream's nine windows for one display, in the order it opens them.
@@ -132,15 +131,15 @@ fn display_windows(index: i64) {
     let middle_x = dx + dw / 2.0 - WINDOW_W / 2.0
     let middle_y = dy + dh / 2.0 - WINDOW_H / 2.0
 
-    positioned(f"Top Left DisplayId({id})", "red", MARGIN, MARGIN)
-    positioned(f"Top Right DisplayId({id})", "red", right, top)
-    positioned(f"Bottom Left DisplayId({id})", "blue", left, bottom)
-    positioned(f"Bottom Right DisplayId({id})", "blue", right, bottom)
-    positioned(f"Top Center DisplayId({id})", "black", middle_x, MARGIN)
-    positioned(f"Left Center DisplayId({id})", "black", MARGIN, middle_y)
-    positioned(f"Center DisplayId({id})", "black", middle_x, middle_y)
-    positioned(f"Right Center DisplayId({id})", "black", dw - WINDOW_W - MARGIN, middle_y)
-    positioned(f"Bottom Center DisplayId({id})", "black", middle_x, dh - WINDOW_H - MARGIN)
+    positioned(index, f"Top Left DisplayId({id})", "red", MARGIN, MARGIN)
+    positioned(index, f"Top Right DisplayId({id})", "red", right, top)
+    positioned(index, f"Bottom Left DisplayId({id})", "blue", left, bottom)
+    positioned(index, f"Bottom Right DisplayId({id})", "blue", right, bottom)
+    positioned(index, f"Top Center DisplayId({id})", "black", middle_x, MARGIN)
+    positioned(index, f"Left Center DisplayId({id})", "black", MARGIN, middle_y)
+    positioned(index, f"Center DisplayId({id})", "black", middle_x, middle_y)
+    positioned(index, f"Right Center DisplayId({id})", "black", dw - WINDOW_W - MARGIN, middle_y)
+    positioned(index, f"Bottom Center DisplayId({id})", "black", middle_x, dh - WINDOW_H - MARGIN)
 }
 
 /// One line of the host window's display list.

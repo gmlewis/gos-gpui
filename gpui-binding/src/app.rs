@@ -1674,6 +1674,51 @@ fn process_requests(
     animate
 }
 
+/// Where gpui's `svg()` reads the bytes it draws.
+///
+/// `Application::new()` hands gpui the *unit type* as its asset source, and
+/// gpui's `impl AssetSource for ()` answers `Ok(None)` for every path. That is
+/// not "not found yet" — `SvgRenderer::render` takes the `None`, returns without
+/// rasterising, and the element paints nothing, for good. **So no `ui::icon` had
+/// ever drawn**: not the arrow in `01_animation` nor the one in `11_opacity`.
+///
+/// Nothing before this could see it. `gos check` resolves names and not
+/// `Kind::Icon`'s pixels, and the register said so in its own row for the icon
+/// element — "the element arms are read, not measured ... seeing it needs a
+/// window, which this machine's owner has forbidden". The window was allowed
+/// once, `scripts/pair.sh` photographed its first pair, and the arrow that
+/// upstream draws was not there.
+///
+/// Upstream installs a source of its own for exactly this reason — `Assets {}`
+/// in `animation.rs`, fifteen lines that read the path off the filesystem — and
+/// a Gosammer program has no way to hand `Application` one, so the binding does.
+///
+/// The path arriving here has already been through [`crate::view::asset_path`],
+/// which is where a program's declared root is tried first. This is a reader,
+/// then, not a second resolver: "which file does this icon name" is answered
+/// once, in one place, and gpui is handed the answer.
+struct FilesystemAssets;
+
+impl gpui::AssetSource for FilesystemAssets {
+    fn load(&self, path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        // A file that is not there is "nothing to draw", not a failure. `Svg`
+        // paints inside `log_err`, so an `Err` here would be logged once per
+        // frame for the life of the window, and every other asset this binding
+        // reads treats a miss as an absence rather than an error.
+        Ok(std::fs::read(path).ok().map(Into::into))
+    }
+
+    fn list(&self, path: &str) -> gpui::Result<Vec<gpui::SharedString>> {
+        Ok(std::fs::read_dir(path)?
+            .filter_map(|entry| {
+                Some(gpui::SharedString::from(
+                    entry.ok()?.path().to_string_lossy().into_owned(),
+                ))
+            })
+            .collect())
+    }
+}
+
 /// Opens the window and runs GPUI's event loop until the program quits.
 ///
 /// This call does not return until the app exits: the Gossamer view callback
@@ -1703,7 +1748,11 @@ pub fn run_app(
 
     let root_view = view.clone();
     let options = options.to_string();
-    Application::new().run(move |cx: &mut App| {
+    // `with_assets` before `run`, because the asset source has to be in place
+    // before the first frame draws: see `FilesystemAssets` for what gpui does
+    // with the default one and why no icon ever came out of it.
+    let app = Application::new().with_assets(FilesystemAssets);
+    app.run(move |cx: &mut App| {
         // Before any window exists: opening one draws it once, and that first
         // frame reads the default colours.
         // A fallback for frames drawn before a window exists. `init_colors`
@@ -1735,7 +1784,16 @@ pub fn run_app(
             }
         }
 
-        cx.activate(true);
+        // Only when the spec asked for it. An activated app is the one in front
+        // and its window is the key window, which on macOS is the difference
+        // between three coloured traffic lights and three grey ones. Every port
+        // that is a plain `gpui::run` wants that, so `run` still activates; the
+        // ports of the upstream examples that do not activate ask for
+        // `activate=false`, and then this is the one call that is not made. See
+        // `options::activate`.
+        if options::activate(main_window) {
+            cx.activate(true);
+        }
 
         // Closing the window (or the desktop's quit shortcut) ends the app.
         // `== 0`, not `<= 1`: with more than one window open, `<= 1` would

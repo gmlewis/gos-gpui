@@ -31,14 +31,22 @@
 //   lines to stdout. It is NOT a modal: the window behind it stays
 //   interactive and no platform dialog appears. The dialog says so on screen.
 //
-// Missing — no equivalent anywhere in the binding:
+// The Hide button is upstream's, and it is a real button:
 //
 //   Hide Application
-//   Upstream calls `cx.hide()` and then, three seconds later, `cx.activate(false)`
-//   from a `window.spawn` task. `cx.hide`, `window.spawn`, `cx.activate` and
-//   `Timer` tasks are all unexposed, so the button is drawn as an inert,
-//   dashed, greyed placeholder that names the gap rather than a live control
-//   that silently does nothing.
+//   `gpui::hide()` is upstream's `cx.hide()` — the platform's own Hide, every
+//   window of the application put away until the dock brings them back. What is
+//   NOT ported is the second half of upstream's handler: a `window.spawn` task
+//   sleeps three seconds and then calls `cx.activate(false)` to bring the
+//   application forward again, and `cx.activate` is exposed nowhere in the
+//   binding. So this port hides and stays hidden. `gpui::delay` could time a
+//   restore; there is no restore to time it to.
+//
+//   This was a dashed, greyed placeholder reading "Hide Application
+//   (unavailable)" until the pair's captures were compared: it was the ONLY
+//   region of this example's window that differed from upstream's, 11,467
+//   pixels of it, and the button it stood in for had been reachable from the
+//   binding all along.
 //
 // Also absent, and therefore not ported:
 //
@@ -53,19 +61,17 @@
 //
 // Deviations that are this port's rather than the binding's:
 //
-//   * Sub-window placement. Upstream asks for `Bounds::centered(None, ..)`,
-//     the centre of the primary display. The binding exposes displays by index
-//     only (no `primary_display`) and its `place=center` option, as of this
-//     revision, resolves to the same bounds as the explicit x/y it is handed,
-//     so the port computes the centred origin from `gpui::display_field(0, ..)`.
 //   * `open_window` requires a title; upstream's sub-windows set none, so "" is
 //     passed — the same empty bar: GPUI titles only a `Some` (mac/window.rs:740).
-//   * `titlebar=none` is the binding's spelling of a client-drawn title bar:
-//     on macOS it keeps the traffic lights and moves them to (12,12) so they
-//     sit inside the 32px bar, where upstream's `titlebar: None` leaves them
-//     where the platform puts them. On Linux it sets client decorations.
+//   * `titlebar=none` is the binding's spelling of gpui's own `titlebar: None`,
+//     which is what upstream passes: a full-size content view with no bar at
+//     all and **no traffic lights**, so the blue 32px bar this view draws is
+//     the only one the window has, exactly as in upstream's window. It used to
+//     mean a transparent titlebar with the lights moved to (12,12), which is
+//     the window `25_window_positioning` was measured against; on Linux the
+//     same request sets client decorations.
 //   * `Rect` and `DisplayInfo` are declared below. The binding returns
-//     geometry as five scalars rather than a struct.
+//     geometry as five scalars rather than a struct: it matches the reader's
 //     fields by a matching struct *name* declared in the program, so a port
 //     that reads `.x` / `.w` has to declare the shape (and its field order)
 //     itself.
@@ -90,28 +96,6 @@ use ui
 /// border_color(rgb(0xe0e0e0)) rounded_sm cursor_pointer` — `px_2` is 8px.
 fn button(id: String, label: String) -> ui::El {
     ui::button(id, label, "flex=none px=8 bg=#f7f7f7 active=opacity:0.85 border=1 bordercolor=#e0e0e0 rounded=sm cursor=pointer")
-}
-
-/// A button upstream has and the binding cannot express: inert, dashed, and
-/// labelled with the gap, rather than a live control that does nothing.
-fn unavailable(label: String) -> ui::El {
-    ui::panel("flex=none px=8 border=1 dashed bordercolor=#c0c0c0 rounded=sm color=#909090 bg=#fafafa")
-        .text(label, "")
-}
-
-/// The sub-window origin upstream asks for with
-/// `WindowBounds::Windowed(Bounds::centered(None, size(px(300.), px(300.)), cx))`:
-/// the centre of the primary display. See the header for why this is
-/// arithmetic over `display_field(0, ..)` instead.
-fn centred(width: f64, height: f64) -> (f64, f64) {
-    if gpui::display_count() < 1 {
-        return (0.0, 0.0)
-    }
-    let dx = gpui::display_field(0, "x")
-    let dy = gpui::display_field(0, "y")
-    let dw = gpui::display_field(0, "w")
-    let dh = gpui::display_field(0, "h")
-    (dx + (dw - width) / 2.0, dy + (dh - height) / 2.0)
 }
 
 /// Upstream's custom titlebar: `flex h(px(32.)) px_4 bg(blue) text_color(white)
@@ -179,8 +163,11 @@ fn open_sub(title: String, options: String, custom_titlebar: bool) {
     gpui::set_text_in(child, "sub.close_id", close_id)
     gpui::set_bool_in(child, "sub.custom_titlebar", custom_titlebar)
 
-    let x, y = centred(300.0, 300.0)
-    gpui::open_window(title, x, y, 300.0, 300.0, options)
+    // Upstream's `Bounds::centered(None, size(px(300.), px(300.)), cx)` is what
+    // `place=center` asks the binding for, and `None` is the primary display,
+    // which is what leaving `display=` out means. x and y are ignored while it
+    // is set, so they are passed as 0.
+    gpui::open_window(title, 0.0, 0.0, 300.0, 300.0, f"{options} place=center")
 }
 
 /// Upstream's `WindowDemo`: `p_4 flex flex_wrap bg(white) size_full
@@ -194,7 +181,7 @@ fn demo_panel() -> ui::El {
         .child(button("unmovable", "Unmovable"))
         .child(button("unresizable", "Unresizable"))
         .child(button("unminimizable", "Unminimizable"))
-        .child(unavailable("Hide Application (unavailable)"))
+        .child(button("hide", "Hide Application"))
         .child(button("resize", "Resize"))
         .child(button("prompt", "Prompt"))
         .child(button("prompt_zh", "Prompt (non-English)"))
@@ -230,6 +217,10 @@ fn handle_events() {
             open_sub("", "resizable=false", false)
         } else if id == "unminimizable" {
             open_sub("", "minimizable=false", false)
+        } else if id == "hide" {
+            // Upstream's `cx.hide()`. Its `window.spawn` task then re-activates
+            // the application three seconds later; see the header.
+            gpui::hide()
         } else if id == "resize" {
             // Upstream: `let content_size = window.bounds().size;
             // window.resize(size(content_size.height, content_size.width));`
