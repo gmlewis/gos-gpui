@@ -32,18 +32,22 @@
 // GPUI shadows drawn as ordinary elements — `shadow=lg` on the card and a
 // custom 20px black `BoxShadow` on the green box, the two shadow specs that do
 // execute here. The #CCCCFF panel keeps upstream's `cursor(CursorStyle::Arrow)`
-// (spelled `cursor=default`), which is inert anyway — the arrow is GPUI's
-// default cursor, and the binding only gives a plain box a hitbox when it also
-// carries `hover=`/`active=` or scrolling — and the inner `on_mouse_move(..)`
-// that called `cx.stop_propagation()` has nothing left to stop.
+// (spelled `cursor=default`), which changes nothing — the arrow is GPUI's
+// default cursor — and the inner `on_mouse_move(..)` that called
+// `cx.stop_propagation()` has nothing left to stop.
 //
-// Because that leaves almost nothing to see, the port also *approximates* the
-// pointer work the dead arm would have done, using the binding's pointer API:
-// a small readout panel (this port's addition, not upstream's) printing
-// `gpui::mouse_position()` and the edge `resize_edge()` picks — the computation
-// upstream feeds to `set_cursor_style` and `start_window_resize` — and an
-// `on_mouse` on the green box, standing in for upstream's `on_mouse_down` /
-// `on_click` handlers there.
+// That tree, and nothing else, is what this port draws. It drew one thing more
+// until round 97: a dark readout panel at the window's top-left, printing
+// `gpui::mouse_position()` and the edge the dead arm's own `resize_edge` picks,
+// with an `on_mouse` on the green box standing in for upstream's
+// `on_mouse_down` / `on_click` handlers there. That was an approximation of
+// pointer work macOS never performs — and a person putting the two windows side
+// by side could see it, which is exactly what Goal B forbids. It is gone, and
+// the three differences it carried went with it: the missing `set_cursor_style`
+// (upstream calls it *inside* the dead arm, so neither window shows a per-edge
+// resize cursor, and the `Server` arm's own `cursor(CursorStyle::Arrow)` is the
+// arrow either way), the live window size `resize_edge` was handed, and the
+// hover readout. All nine left are `invisible`; see `PAIRS.md` sec.3.
 //
 // Deviations:
 //
@@ -51,49 +55,19 @@
 //     macOS (above). Nothing that runs on macOS is missing.
 //   * `window.set_client_inset(shadow_size)` — not exposed by the binding and a
 //     no-op on macOS (src/platform.rs:548). Upstream's 10px inset never exists.
-//   * `window.insert_hitbox` / `HitboxBehavior` — not exposed. Upstream uses a
-//     full-window hitbox as the target of its per-edge resize cursor, so there
-//     is no `set_cursor_style` here; the readout prints the edge instead. The
-//     style language's `cursor=` is a static refinement, and the binding only
-//     gives a plain box a hitbox when it also carries `hover=`/`active=` or
-//     scrolling (gpui-binding/src/view.rs:579-591), so a per-frame cursor token
-//     could not take effect either.
-//   * `window.start_window_resize` / `start_window_move` / `show_window_menu` —
-//     not exposed, and no-ops on macOS anyway. The readout names the call
-//     upstream would have made, and `on_mouse("down up move right", "hello")`
-//     on the green box stands in for upstream's `on_mouse_down(Left) ->
-//     start_window_move()` and its `on_click` + `is_right_click() ->
-//     show_window_menu(..)` (the binding's `right` kind is a right-button
-//     press).
-//   * `window.refresh()` — not exposed. Upstream repaints on every mouse move
-//     (`on_mouse_move(|_e, window, _| window.refresh())`, which is in the dead
-//     arm); with nothing to trigger a frame, `mouse_position()` would freeze,
-//     so the port calls `gpui::animate()` and repaints every frame, as
-//     01_animation does.
+//   * `window.insert_hitbox` / `HitboxBehavior` / `window.set_cursor_style` /
+//     `window.start_window_resize` / `window.start_window_move` /
+//     `window.show_window_menu` — not exposed, and every one of them is called
+//     only inside the dead arm, so no macOS frame differs for the lack of them.
+//   * `window.refresh()` — not exposed. Every call upstream makes is either
+//     inside the dead arm or inside `observe_window_appearance`; a binding
+//     program's frame is rebuilt whenever the platform asks for one.
 //   * `cx.observe_window_appearance(..)` — not exposed; it only called
-//     `window.refresh()` on an appearance change, which the frame loop covers.
+//     `window.refresh()` on an appearance change, which the platform repaints.
 //   * `cx.stop_propagation()` — not exposed. No ancestor mouse handler survives
 //     in the `Server` arm, so it has nothing to stop.
-//   * `gpui::mouse_position()` is one frame stale: the binding reads it before
-//     the view callback runs, because a binding function has no `Window`.
-//     Upstream reads it during paint, inside its canvas closure.
-//   * `window.window_bounds().get_bounds().size` — no window size is exposed,
-//     so `resize_edge()` is handed the requested 600x600. Resizing the window
-//     moves upstream's band but not this readout's, and upstream's `size` is
-//     its window bounds where 600x600 is the content size.
-//   * `on_mouse`'s `move` kind fires only while a button is held — the binding
-//     requires `event.dragging()` (gpui-binding/src/view.rs:905-913) — so the
-//     hover readout comes from `mouse_position()`, not from `on_mouse`.
-//   * `on_mouse` is attached to an element and that element becomes the box
-//     that listens (`Kind::Mouse`, gpui-binding/src/view.rs): its style and its
-//     children are the wrapper's, so it keeps whatever size and position the
-//     style gives it, `size=full` included. This port still attaches it only to
-//     the green box, whose 200x100 size is fixed, because the drag it emulates
-//     is upstream's hit test on that box and not on the panel around it.
 //   * `id("window-backdrop")` and `id("hello")` — element ids belong to the
 //     binding.
-//   * Upstream's `&&` in `resize_edge` is written out as nested `if`s; the
-//     tests and their order are the same.
 //   * Colours are exact here: the green box's `BoxShadow` is
 //     `Hsla { h: 0., s: 0., l: 0., a: 1.0 }`, which is `#000000ff` with no
 //     rounding, and the card's shadow is GPUI's own `shadow=lg` preset.
@@ -106,113 +80,20 @@ use gpui
 use std::process
 use ui
 
-/// Upstream's `shadow_size = px(10.0)` — the client inset, and the width of the
-/// resize band the dead arm tests against.
-const SHADOW: f64 = 10.0
-
 /// Upstream's window: `Bounds::centered(None, size(px(600.0), px(600.0)), cx)`.
 const WINDOW: f64 = 600.0
 
-// ---- the dead arm's decision, kept visible ----------------------------
-
-/// Upstream's `resize_edge`, answering the edge's name instead of a
-/// `ResizeEdge`; `"none"` is upstream's `None`.
-fn resize_edge(x: f64, y: f64, shadow: f64, w: f64, h: f64) -> String {
-    if y < shadow {
-        if x < shadow {
-            "TopLeft"
-        } else if x > w - shadow {
-            "TopRight"
-        } else {
-            "Top"
-        }
-    } else if y > h - shadow {
-        if x < shadow {
-            "BottomLeft"
-        } else if x > w - shadow {
-            "BottomRight"
-        } else {
-            "Bottom"
-        }
-    } else if x < shadow {
-        "Left"
-    } else if x > w - shadow {
-        "Right"
-    } else {
-        "none"
-    }
-}
-
-/// What upstream's `on_mouse_down` on the backdrop would call for a pointer at
-/// this edge: `start_window_resize(edge)` on one, `start_window_move()` off
-/// them. Neither is exposed, and on macOS both are no-ops.
-fn press_note(edge: String) -> String {
-    if edge == "none" {
-        "start_window_move()"
-    } else {
-        f"start_window_resize({edge})"
-    }
-}
-
-/// The same for the green box, whose client-arm handlers upstream wires to
-/// `on_mouse_down(Left) -> start_window_move()` and to `on_click` +
-/// `is_right_click() -> show_window_menu(..)`. `kind` is the box's last
-/// pointer event; `x`/`y` are relative to its corner, as `on_mouse` reports.
-fn titlebar_note(kind: String, x: f64, y: f64) -> String {
-    match kind {
-        "down" => "left press -> start_window_move()",
-        "right" => "right press -> show_window_menu(..)",
-        "move" => f"dragging at {x:.0}, {y:.0}",
-        "up" => "left release",
-        _ => "quiet",
-    }
-}
-
-// ---- the readout (this port's addition) -------------------------------
-
-/// The pointer the binding can see, and the decision the dead arm would have
-/// taken from it. Upstream draws nothing like this; it is here so the example
-/// shows something that follows the pointer on macOS.
-fn readout(mx: f64, my: f64, edge: String, press: String, titlebar: String) -> ui::El {
-    ui::column("absolute top=8 left=8 p=8 rounded=6 gap=2 bg=#000000cc color=#ffffff font=sm")
-        .text("client-decoration arm, approximated", "color=#a6adc8")
-        .text(f"mouse_position()  {mx:.0}, {my:.0}", "")
-        .text(f"resize_edge()     {edge}", "")
-        .text(f"press would       {press}", "")
-        .text(f"green box         {titlebar}", "")
-}
-
 fn main() {
     let outcome = gpui::run("", WINDOW, WINDOW, || {
-        // Stands in for upstream's `on_mouse_move(..) -> window.refresh()`:
-        // repaint every frame so `mouse_position()` tracks the pointer.
-        gpui::animate()
-
-        for event in gpui::take_events() {
-            let id, kind = gpui::event_parts(event)
-            if id == "hello" {
-                gpui::set_text("hello.last", kind)
-            }
-        }
-
-        let mx, my = gpui::mouse_position()
-        let edge = resize_edge(mx, my, SHADOW, WINDOW, WINDOW)
-        let press = press_note(edge)
-        let last = gpui::state_text("hello.last", "")
-        let drag_x = gpui::state_float("hello.x", 0.0)
-        let drag_y = gpui::state_float("hello.y", 0.0)
-        let titlebar = titlebar_note(last, drag_x, drag_y)
-
         // Upstream's tree in the `Decorations::Server` arm, which is the arm
-        // macOS takes: root, the #CCCCFF panel, the white card, the green box.
+        // macOS takes: the transparent backdrop, the #CCCCFF panel, the white
+        // card, the green box. Nothing else is drawn.
         ui::panel("size=full bg=transparent")
             .child(
                 ui::column("bg=#ccccff size=full justify=around cursor=default")
                     .child(ui::row("w=full justify=around")
                         .child(ui::panel("flex size=300 bg=white justify=center items=center shadow=lg border=1 bordercolor=#0000ff font=xl color=#ffffff")
-                            .child(ui::rect("w=200 h=100 bg=green shadow=#000000ff,0,0,20,0")
-                                .on_mouse("down up move right", "hello")))))
-            .child(readout(mx, my, edge, press, titlebar))
+                            .child(ui::rect("w=200 h=100 bg=green shadow=#000000ff,0,0,20,0")))))
             |> ui::root
     })
 

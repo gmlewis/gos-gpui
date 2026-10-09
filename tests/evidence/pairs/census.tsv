@@ -89,21 +89,15 @@
 25_window_positioning.gos	54	invisible	the labels reproduce DisplayId's Debug through display_field
 25_window_positioning.gos	57	invisible	titlebar=none is asked for, so the titlebar the binding attaches is invisible
 25_window_positioning.gos	61	visible	the host window's own size is explicit, as everywhere in these ports
-26_window_shadow.gos	50	invisible	the Decorations::Client arm cannot run on macOS
-26_window_shadow.gos	52	invisible	set_client_inset is not exposed and is a no-op on macOS
-26_window_shadow.gos	54	visible	no set_cursor_style, so the per-edge resize cursor is absent
-26_window_shadow.gos	61	invisible	start_window_resize / start_window_move / show_window_menu are no-ops on macOS
-26_window_shadow.gos	68	invisible	window.refresh() is not exposed; the frame loop covers it
-26_window_shadow.gos	73	invisible	observe_window_appearance only called window.refresh()
-26_window_shadow.gos	75	invisible	stop_propagation has nothing to stop in the Server arm
-26_window_shadow.gos	77	invisible	mouse_position() is one frame stale
-26_window_shadow.gos	80	visible	resize_edge is handed the requested 600x600 rather than the live window size
-26_window_shadow.gos	84	visible	the hover readout comes from the last drag, because move needs a held button
-26_window_shadow.gos	87	invisible	on_mouse's element becomes the listening wrapper; its style and children are the wrapper's
-26_window_shadow.gos	93	invisible	element ids belong to the binding
-26_window_shadow.gos	95	invisible	&& is written out as nested ifs; the tests and their order are the same
-26_window_shadow.gos	97	invisible	the colours are exact -- a note, not a difference
-26_window_shadow.gos	101	invisible	div() becomes ui::rect / ui::panel / ...; a Gossamer frame rebuilds the tree
+26_window_shadow.gos	54	invisible	the Decorations::Client arm cannot run on macOS
+26_window_shadow.gos	56	invisible	set_client_inset is not exposed and is a no-op on macOS
+26_window_shadow.gos	58	invisible	insert_hitbox / set_cursor_style / start_window_resize / start_window_move / show_window_menu are called only inside the dead arm, so no macOS frame differs
+26_window_shadow.gos	62	invisible	window.refresh() is not exposed; the platform asks for a frame
+26_window_shadow.gos	65	invisible	observe_window_appearance only called window.refresh()
+26_window_shadow.gos	67	invisible	stop_propagation has nothing to stop in the Server arm
+26_window_shadow.gos	69	invisible	element ids belong to the binding
+26_window_shadow.gos	71	invisible	the colours are exact -- a note, not a difference
+26_window_shadow.gos	75	invisible	div() becomes ui::rect / ui::panel / ...; a Gossamer frame rebuilds the tree
 27_window.gos	56	visible	sub-windows are centred on the primary display, not placed by display id
 27_window.gos	61	invisible	both bar the same: gpui sets a title only for Some(title), and "" is empty either way (mac/window.rs:740)
 27_window.gos	63	visible	titlebar=none moves the traffic lights into a 32px client-drawn bar
