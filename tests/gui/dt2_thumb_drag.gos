@@ -59,7 +59,7 @@
 // "error[GR0005]: module `ui` does not exist" for a file outside `examples/` — and the example is
 // not a module, so the rule below is not a call into it. That transcription is the one soft
 // joint in this check, exactly as it is in `tests/gui/dt1_thumb_track.gos`; the example's own
-// copy is exercised by running it, which `./scripts/tiers.sh` and `./scripts/regress.sh 02` do.
+// copy is exercised by running it, which `./scripts/tiers.sh examples/02_data_table.gos` does.
 //
 // # The two negative controls
 //
@@ -259,7 +259,7 @@ fn main() {
                 let id, kind = gpui::event_parts(event.clone())
                 // Read off the event, in the frame's own closure: a pair-returning binding
                 // called from a module-level function faults under the JIT
-                // (`CAPABILITIES.md`, round 93).
+                // ("Notes and limits" in `README.md`).
                 let px, py = gpui::pointer_xy(event.clone())
                 if id == "thumb" {
                     let thumb_x = gpui::element_bounds("thumb", "x")

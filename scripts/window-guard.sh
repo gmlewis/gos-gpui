@@ -23,19 +23,19 @@
 # What headless mode still allows, and it is most of the work: `gos check` (which compiles the
 # binding exactly the way the toolchain does), `gos test tests` (the `#[test]` cases, which need no
 # window), `gos build` (a compile and a link; running the binary is what opens a window),
-# `scripts/docs.sh`, and `scripts/capabilities.sh`.
+# `scripts/docs.sh`, and `scripts/pair-census.sh`.
 
 set -uo pipefail
 
 reason="headless mode: the owner of this machine asked that nothing open a window"
 
-# Bulk runs are a second decision, not the same one. `scripts/regress.sh` opens twenty-seven windows and
-# `scripts/probes.sh` thirty-nine; on 2026-10-06 one `DSH_ALLOW_WINDOWS=1` was enough to start the
-# twenty-seven, and the owner of the machine — who had said "I will watch" about *one* probe — found
-# their machine unusable. So a suite that opens a window per example now needs a flag of its own:
+# Bulk runs are a second decision, not the same one. `scripts/probes.sh` opens a window per
+# probe; on 2026-10-06 one `DSH_ALLOW_WINDOWS=1` was enough to start a sweep of them, and the
+# owner of the machine — who had said "I will watch" about *one* probe — found their machine
+# unusable. So a suite that opens a window per program now needs a flag of its own:
 #
 #   DSH_ALLOW_WINDOWS=1 ./scripts/tiers.sh tests/gui/foo.gos          # one program, a window or two
-#   DSH_ALLOW_WINDOWS=1 DSH_ALLOW_WINDOWS_BULK=1 ./scripts/regress.sh # twenty-seven windows, asked for
+#   DSH_ALLOW_WINDOWS=1 DSH_ALLOW_WINDOWS_BULK=1 ./scripts/probes.sh  # one window per probe, asked for
 #
 # `--bulk <what>` is how a suite says which it is.
 

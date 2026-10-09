@@ -46,7 +46,7 @@
 // them `_GTK_FRAME_EXTENTS`. The advertisement is read below rather than assumed, which is
 // why the checks are written against the word it forces and not against the literal
 // `"server"`: an image that gained a compositor would move this probe onto the other arm
-// rather than fail it. See `CAPABILITIES.md`, "Unreachable", for the arm itself.
+// rather than fail it.
 //
 // # The frame is built on every pass, and no check returns early
 //

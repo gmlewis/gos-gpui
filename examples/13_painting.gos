@@ -15,7 +15,7 @@
 //
 // Upstream paints the five black quads with `window.paint_quad` and everything
 // else with `window.paint_path`. `paint_quad` is deliberately not exposed (an
-// absolute `rect` reproduces it — see PORTING.md), so the quads are rects here
+// absolute `rect` reproduces it), so the quads are rects here
 // and the paths go through `gpui::paint_paths`. Both are in window
 // coordinates: the root carries no padding, so an absolute `rect` lands where
 // upstream's `Bounds` put the quad.

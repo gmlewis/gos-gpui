@@ -40,7 +40,7 @@
 // A probe cannot `use ui` (`error[GR0005]: module \`ui\` does not exist` for a file
 // outside `examples/`), so it cannot call the example's own `open_sub`; the spec that
 // function opens with is **transcribed** here, as DT1's, DT2's and MP3's rules are.
-// What exercises the example's own copy is `./scripts/regress.sh 27` and the tiers over
+// What exercises the example's own copy is the five tiers over
 // `examples/27_window.gos`.
 //
 // # The red

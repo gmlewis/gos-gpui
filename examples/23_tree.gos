@@ -19,7 +19,7 @@
 //     `activate=false` — and the two windows come out identical, 0 differing
 //     pixels, measured. **Invisible**: the same three lights, the same colours.
 //     (The examples whose upstream *does* call `cx.activate(false)` are the ones
-//     that need the opposite: see `PAIRS.md` §7.2.)
+//     that need the opposite: `activate=true` puts the lights back.)
 
 use gpui
 use std::env

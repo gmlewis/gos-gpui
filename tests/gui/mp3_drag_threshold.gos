@@ -203,7 +203,7 @@ fn main() {
         // helpers they feed. That is round 93's finding, met a second time this round inside a
         // function called `drain`: a pair-returning binding called from a module-level function
         // faults under the JIT (`gossamer: fault inside JIT-compiled body 'drain'`, exit 127).
-        // See `## Round 93` in `CAPABILITIES.md`.
+        // See "Notes and limits" in `README.md`.
         let which = if f >= 4 && f <= 6 { "a" } else if f >= 8 && f <= 10 { "b" } else if f >= 12 && f <= 14 { "c" } else { "" }
         if which != "" {
             for event in gpui::take_events() {
@@ -288,7 +288,7 @@ fn origin_y() -> f64 {
 /// The point and the modifiers arrive as **arguments**, taken off the event by the frame's own
 /// closure, and that is not a style choice: `gpui::pointer_xy` returns a pair of floats and round
 /// 93 measured that calling it from a module-level function faults under the JIT inside the
-/// callee. See `## Round 93` in `CAPABILITIES.md`.
+/// callee. See "Notes and limits" in `README.md`.
 fn pointer_event(which: String, kind: String, x: f64, y: f64) {
     if kind != "move" {
         return

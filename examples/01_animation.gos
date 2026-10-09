@@ -29,7 +29,8 @@
 //     three runs at 0 differing pixels in the 32px bar. Asking for
 //     `activate=false` instead is *worse*: it makes the port's window genuinely
 //     not key, three grey lights, and put 1,281–1,640px into this pair. See
-//     `PAIRS.md` §7.2. Invisible: the same three lights in the same three
+//     See "Testing" in `README.md` for the counting idiom. Invisible: the
+//     same three lights in the same three
 //     colours.
 
 use gpui

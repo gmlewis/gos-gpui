@@ -31,7 +31,7 @@
 // *where it was told to*, and no probe of placement can pass there whatever this
 // crate does — which is why the probe declares `// linux:` above rather than being
 // counted as a failure. The frame *is* honoured on macOS, and the row's `tested`
-// status rests on the run recorded in CAPABILITIES.md.
+// status rests on the run recorded under `tests/evidence/`.
 
 use gpui
 use std::process

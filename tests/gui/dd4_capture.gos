@@ -137,7 +137,7 @@ fn main() {
                 if id == "box" {
                     // Off the event, in the frame's own closure: `gpui::pointer_xy` faults
                     // under the JIT when it is called from a module-level function
-                    // (`CAPABILITIES.md`, round 93).
+                    // ("Notes and limits" in `README.md`).
                     let x, y = gpui::pointer_xy(event.clone())
                     gpui::list_push("k", kind)
                     gpui::list_push_float("px", x)

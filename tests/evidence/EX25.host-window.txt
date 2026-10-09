@@ -1,6 +1,6 @@
 EX25 — the host window `gpui::run` opens, and what `show=false` does to it.
 
-`PAIRS.md` §4.5 left one policy call to the owner: `examples/25_window_positioning.gos` is
+One policy call was left to the owner: `examples/25_window_positioning.gos` is
 the pair where the binding's own host window is a tenth window on the port's side and
 upstream has no tenth. The section weighed `show=false` against the risk that a macOS
 `NSWindow` which is never ordered also never draws — which would mean the host's view
@@ -38,7 +38,7 @@ example ships, and it reads the same as run 2.
 The host's view ran in every one of them, and this is not an inference from the window
 count: run 2 and run 3 opened their nine *from the host's own callback*, under
 `gpui::window_id() != 1` — a callback that never ran would have opened nothing. So a
-never-ordered `NSWindow` in this binding still renders frames, which is what `PAIRS.md`
+never-ordered `NSWindow` in this binding still renders frames, which is what the
 §4.5 needed and did not have.
 
 --- and the pictures
@@ -101,6 +101,6 @@ above had been reading as though it were the only difference. It now passes
 Windows on this machine's other displays, if a display is connected later, are outside the
 crop; the count of nine is one display's worth, as upstream's is. And the Linux asymmetry
 stands and is not measured here: gpui's Linux backend never reads `show`
-(`PAIRS.md` §5 — no tier photographs a GPUI window on Linux), so on that platform the host
+(no tier of this project photographs a GPUI window on Linux), so on that platform the host
 is an ordinary tenth window on the screen even with `show=false`. It is not a tier that
 this project's pairs are decided on.

@@ -9,7 +9,7 @@
 # `gos` polls it for five minutes and then errors — which under a
 # `timeout 30` is indistinguishable from a program that never quits.
 #
-# Called by `scripts/regress.sh`, `scripts/probes.sh` and `scripts/tiers.sh` before their
+# Called by `scripts/probes.sh` and `scripts/tiers.sh` before their
 # first run. Prints what it removed, and nothing when there is nothing to do.
 
 set -uo pipefail

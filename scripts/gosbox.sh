@@ -79,7 +79,7 @@ timeout_s="${GOSBOX_TIMEOUT:-30}"
 die() { echo "gosbox: $*" >&2; exit 2; }
 
 for d in "$CACHE/$TOOLCHAIN" "$CACHE/$GOSSAMER"; do
-  [ -d "$d" ] || die "no such toolchain or source: $d (see CAPABILITIES.md, 'The container')"
+  [ -d "$d" ] || die "no such toolchain or source: $d (see the header of this script)"
 done
 
 # `docker run` on a stopped Docker Desktop fails with a message nobody reads twice; say it once.
@@ -162,7 +162,7 @@ incmd() { inbox bash -lc "export PATH=$CONTAINER_PATH; $1"; }
 # the pid of the `gos` that made it; a lock whose owner is gone is meant to be reclaimed, but when
 # it is not, the next `gos` polls it and then errors — which under a `timeout 30` is
 # indistinguishable from a program that never quits. `scripts/unlock-stale-build.sh` does this for
-# the Mac's own cache, and `scripts/regress.sh`, `probes.sh` and `tiers.sh` all call it. This does
+# the Mac's own cache, and `scripts/probes.sh` and `scripts/tiers.sh` call it too. This does
 # the same for the container's, which is *not* the Mac's: `/root` is a persistent volume, so a lock
 # left by a container that was killed mid-build survives to hang the next run.
 #

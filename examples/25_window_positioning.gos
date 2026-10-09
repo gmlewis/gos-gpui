@@ -40,8 +40,8 @@
 //     window server lists nine windows for this process and no tenth, and the
 //     host's own view still ran — it is what opened the nine. The one asymmetry is
 //     the container: gpui's Linux backend never reads `show` at all, so there the
-//     host is an ordinary window like any other. No tier photographs a GPUI window
-//     on Linux (`PAIRS.md` §5).
+//     host is an ordinary window like any other. No tier of this project
+//     photographs a GPUI window on Linux, so that is not measured here.
 //   * Upstream never asks for its app to be activated, so none of its nine is a
 //     key window. `gpui::run` activates by default and the port asks for
 //     upstream's state instead, as `activate=false` — the call `23_tree` and

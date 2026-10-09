@@ -80,8 +80,8 @@
 //     window's. So the port activates too, which is what plain `gpui::run` does,
 //     and the pair's title bars agree. Asking for `activate=false` instead is
 //     *worse*: it makes the port's window genuinely not key — three grey lights —
-//     and put 5,701px into this pair, all of it those three 14x14 lights. See
-//     `PAIRS.md` §7.2. **Invisible**: the same three lights in the same three
+//     and put 5,701px into this pair, all of it those three 14x14 lights.
+//     **Invisible**: the same three lights in the same three
 //     colours.
 
 use gpui

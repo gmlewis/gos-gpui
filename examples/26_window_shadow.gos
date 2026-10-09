@@ -47,7 +47,8 @@
 // (upstream calls it *inside* the dead arm, so neither window shows a per-edge
 // resize cursor, and the `Server` arm's own `cursor(CursorStyle::Arrow)` is the
 // arrow either way), the live window size `resize_edge` was handed, and the
-// hover readout. All ten left are `invisible`; see `PAIRS.md` sec.3.
+// hover readout. All ten left are `invisible`; see
+// `tests/evidence/pairs/census.tsv`.
 //
 // Deviations:
 //
@@ -85,7 +86,7 @@
 //     `activate=false`. **Invisible**: the same three lights, the same colours —
 //     and with it this pair is now 0 differing pixels over the whole window, the
 //     title bar's material included. That last part was 18,478px before the flag
-//     was added; `PAIRS.md` §7.1 records the older figure.
+//     was added.
 
 use gpui
 use std::process

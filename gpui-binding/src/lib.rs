@@ -2379,7 +2379,7 @@ gossamer_binding::register_module!(
     /// what a program got is [`gpui::window_decorations`]. On macOS neither is a
     /// request the platform hears (`PlatformWindow::request_decorations` is a no-op
     /// default there, `gpui-0.2.2/src/platform.rs:534`), so the window keeps its
-    /// system titlebar however it is asked — see `CAPABILITIES.md`, "Unreachable".
+    /// system titlebar however it is asked.
     fn request_window_decorations(client: bool) {
         store::request(store::Request::RequestDecorations { client })
     }

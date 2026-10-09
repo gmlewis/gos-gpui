@@ -54,10 +54,10 @@
 // not a module, so neither `port_top` below nor upstream's is a call into it. That
 // transcription is the one soft joint in this check, exactly as it is in
 // `tests/gui/mp3_drag_threshold.gos`; the example's own copy is exercised by running it, which
-// `./scripts/tiers.sh` and `./scripts/regress.sh 02` do.
+// `./scripts/tiers.sh examples/02_data_table.gos` does.
 //
-// Two more things came out of writing this down. Neither is fixed here, and both are recorded in
-// `CAPABILITIES.md`'s `DW8` row and in `PAIRS.md` §3 rather than in the example.
+// Two more things came out of writing this down. Neither is fixed here, and both are
+// measured in `tests/evidence/` rather than in the example.
 //
 // The first is that `ui::scrollbar` exists and is the obvious thing to reach for. Its thumb,
 // though, is the track's *share of the document* — `thumb_pixels` in `gpui-binding/src/scroll.rs`

@@ -466,7 +466,7 @@ fn main() {
             let id, kind = gpui::event_parts(event.clone())
             // Read here, in the frame's own closure, and not in a function of its own:
             // a pair-returning binding called from a module-level function faults under
-            // the JIT. See `## Round 93` in `CAPABILITIES.md`.
+            // the JIT. See "Notes and limits" in `README.md`.
             let px, py = gpui::pointer_xy(event.clone())
             if id == "thumb" {
                 let thumb_x = gpui::element_bounds("thumb", "x")

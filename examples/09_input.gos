@@ -14,7 +14,8 @@
 // the text back with `gpui::state_text(key, "")`.
 //
 // Deviations:
-//   * the widget is not Gossamer code — see above and PORTING.md;
+//   * the widget is not Gossamer code — see above, and "What this cannot do"
+//     in `README.md`;
 //   * upstream binds thirteen actions through the application keymap
 //     (`cx.bind_keys` / `on_action`, `input.rs:680-694`) and the binding owns
 //     the one keymap, so the editor matches those thirteen on the element

@@ -240,8 +240,8 @@ fn main() {
         // here rather than inside `handle_event`. That is not a style choice: a pair-returning
         // binding called from a module-level function faults under the JIT — `gossamer: fault
         // inside JIT-compiled body '<fn>'`, exit 127 — so the point is read off the event in the
-        // frame's own closure and handed to the handler as an argument. `## Round 93` in
-        // `CAPABILITIES.md` has the repro; `tests/gui/mp3_drag_threshold.gos` met it a second
+        // frame's own closure and handed to the handler as an argument. "Notes and limits"
+        // in `README.md` has it; `tests/gui/mp3_drag_threshold.gos` met it a second
         // time and is written the same way.
         for event in gpui::take_events() {
             let id, kind = gpui::event_parts(event.clone())

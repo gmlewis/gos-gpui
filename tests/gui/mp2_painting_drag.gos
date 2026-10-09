@@ -240,8 +240,7 @@ fn main() {
 /// The point and the modifier flag arrive as **arguments**, taken off the event by the frame's own
 /// closure, and that is not a style choice. `gpui::pointer_xy` returns a pair of floats, and round
 /// 93 measured that calling it from a module-level function — which this would otherwise be —
-/// faults under the JIT inside the callee. See `## Round 93` in `CAPABILITIES.md` for the twelve
-/// lines that show it and the five calls it is not.
+/// faults under the JIT inside the callee. See "Notes and limits" in `README.md`.
 fn extend_stroke(key: String, kind: String, x: f64, y: f64, shifted: bool) {
     if kind == "down" {
         gpui::set_float("start.x", x)

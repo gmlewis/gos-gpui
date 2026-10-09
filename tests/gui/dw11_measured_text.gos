@@ -32,8 +32,7 @@
 //
 // # What is not checked here
 //
-// Tooltip sizing. It is the row's third clause and it is *not* what this probe covers; see
-// the row in `CAPABILITIES.md` for where it stands.
+// Tooltip sizing. It is the row's third clause and it is *not* what this probe covers.
 //
 //     ./scripts/gosbox.sh run tests/gui/dw11_measured_text.gos
 //     ./scripts/gosbox.sh tiers tests/gui/dw11_measured_text.gos

@@ -33,7 +33,7 @@
 # # Why it is not in any suite
 #
 # It moves the **real pointer**, and the click it posts lands in whatever window is under that point.
-# So it is not run by `scripts/probes.sh`, by `scripts/regress.sh` or by `scripts/tiers.sh`: it needs the
+# So it is not run by `scripts/probes.sh` or by `scripts/tiers.sh`: it needs the
 # Accessibility permission granted to the process that runs it, and it takes the pointer away from
 # whoever is using the machine. A probe that uses it says so in its header (`// needs: scripts/pointer.sh`)
 # and is skipped by name. `scripts/pointer.sh owner <x> <y>` is what a caller uses to check that its own

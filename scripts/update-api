@@ -16,10 +16,10 @@
 //      files, and of what kind?
 //   3. Which of those could a script fix, and which are always a human's?
 //
-// It deliberately does NOT generate API. Measured against this binding, a
-// signature-driven generator reaches about 16% of the remaining work and would
-// be actively wrong about the style surface - it would emit 2,915 functions
-// where the token language needs 45. See API-COVERAGE.md.
+// It deliberately does NOT generate API. A signature-driven generator can only
+// reach the mechanical part of what is left, and it would be actively wrong
+// about the style surface - it would emit 2,915 functions where the token
+// language needs 45. See "What this cannot do" in README.md.
 //
 // `gpui-macros` is checked too, and stops the run: it generates 82 of the
 // methods this binding calls from prefix/suffix tables, so if its surface moves

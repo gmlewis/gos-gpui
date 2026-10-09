@@ -1,6 +1,6 @@
 EX27 — the two rows 27_window.gos had left `visible`, measured.
 
-`PAIRS.md` §3 carried two rows for this pair. One said `titlebar=none` moves the traffic
+The census carried two rows for this pair. One said `titlebar=none` moves the traffic
 lights into a client-drawn bar; the other said an Invisible sub-window keeps the program
 alive after the visible ones close. Both were taken to this machine's window server rather
 than argued, and the first turned out to be a live difference — just not the one stated.
@@ -8,8 +8,8 @@ than argued, and the first turned out to be a live difference — just not the o
 Unless a line says otherwise, the port side is `examples/27_window.gos` as it stands, run
 as `gos run --main-thread`; the upstream side is `tools/upstream/target/debug/examples/window`;
 buttons are pressed with `scripts/pointer.sh click`; a window is photographed with
-`screencapture -x -o -l<window>`. All measurements are the project's own idiom
-(`PAIRS.md` §7.1): the count of pixels whose R, G or B differ by any amount.
+`screencapture -x -o -l<window>`. All measurements are the project's own idiom,
+"Testing" in `README.md`: the count of pixels whose R, G or B differ by any amount.
 
 --- 1. the Custom Titlebar sub-window
 
@@ -27,7 +27,7 @@ pressed, and the sub-window photographed whole.
 upstream passes, so the port and upstream ask for the same window: a full-size content
 view, no bar at all, and no traffic lights for a bar to carry. The blue bar in the picture
 is the view's own. On Linux the same request sets client decorations, which no tier of
-this project photographs (`PAIRS.md` §5).
+this project photographs.
 
 --- 2. and it was one, before the button helper was fixed
 

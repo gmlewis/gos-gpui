@@ -11,7 +11,7 @@
 #
 #   ./scripts/screen-awake.sh      # exit 0 when the screen is awake, 3 when locked
 #
-# Callers: `scripts/tiers.sh`, `scripts/probes.sh`, `scripts/regress.sh`.
+# Callers: `scripts/tiers.sh` and `scripts/probes.sh`.
 set -uo pipefail
 
 # `lsappinfo front` names the frontmost process; while the session is locked that is
