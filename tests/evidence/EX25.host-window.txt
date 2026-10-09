@@ -1,0 +1,106 @@
+EX25 — the host window `gpui::run` opens, and what `show=false` does to it.
+
+`PAIRS.md` §4.5 left one policy call to the owner: `examples/25_window_positioning.gos` is
+the pair where the binding's own host window is a tenth window on the port's side and
+upstream has no tenth. The section weighed `show=false` against the risk that a macOS
+`NSWindow` which is never ordered also never draws — which would mean the host's view
+never ran, and then the nine positioned windows would not open either, and the whole
+example would be dead. It declined the change on the grounds that the evidence "lives on
+the owner's desk". It does not: `scripts/pointer.sh windows` reads the window server's own
+list, and it was built after that section was written.
+
+--- the measurement, three runs, one string between them
+
+All three are `examples/25_window_positioning.gos` byte-for-byte except for the options
+string passed to `gpui::run_with`, run against the tree as it stands. The window server
+list is `scripts/pointer.sh windows`, filtered to the runner's pid.
+
+    1. options `""`                    (show and activate both default)
+       10 windows: nine at layer 101, plus
+       `43519 0 1000 510 560 452`      ← the host, layer 0, 560x420 of content + a 32px titlebar
+
+    2. options `"show=false"`         (activate still defaults)
+        9 windows: the same nine at layer 101, and nothing at layer 0
+
+    3. options `"show=false activate=false"`   (what the example now passes)
+        9 windows: the same nine at layer 101, and nothing at layer 0
+
+The nine are at upstream's own coordinates in all three runs, window for window:
+
+    150,150   2060,150   150,1215   2060,1215   1105,150   150,683   1105,683   2060,683   1105,1215
+    each 350x75 or 350x76
+
+Run 2 is the one that decides the question, because it isolates `show`: `activate=false`
+only skips `cx.activate(true)` (`gpui-binding/src/app.rs:1794`, `if options::activate(..)`),
+and skipping an activation call cannot create or destroy a window. Run 3 is what the
+example ships, and it reads the same as run 2.
+
+The host's view ran in every one of them, and this is not an inference from the window
+count: run 2 and run 3 opened their nine *from the host's own callback*, under
+`gpui::window_id() != 1` — a callback that never ran would have opened nothing. So a
+never-ordered `NSWindow` in this binding still renders frames, which is what `PAIRS.md`
+§4.5 needed and did not have.
+
+--- and the pictures
+
+`screencapture -x -R 1000,510,560,452` — the rectangle the host occupies in run 1 — with
+each run alive:
+
+  * run 1: the host window, with its titlebar and traffic lights, drawing its own panel:
+    the nine-line display list, `displays: 5; nine 350x75 windows each, margin 150`, and
+    the footnote about `Application::run`.
+  * run 3: the terminal that was behind it. Nothing of this process is in that rectangle.
+    The only part of the frame that belongs to the pair is `Center DisplayId(5)`, at
+    (1105, 683) — one of the nine, correctly placed and correctly labelled, caught inside
+    the crop because it overlaps it.
+  * run 3, the Top Left window on its own (`-R 150,150,350,75`): red fill, `Top Left
+    DisplayId(5)`, `origin: 150px, 150px size: 350px, 75px` and `cx.bounds() origin:
+    150px, 150px size 350px, 75px`. Upstream's own text, drawn by a window whose host has
+    never been ordered.
+
+--- the activation bullet, and why it is not a pixel either
+
+Round 107 found that giving an example `activate=false` had *created* a difference in
+`10_on_window_close_quit` rather than removing one — on this system `cx.activate(false)`
+does not stop a window becoming key, and upstream's traffic lights came up in colour where
+the port's did not. So the activation bullet example 25 gained here had to be measured
+rather than argued, even though all nine of its windows are `titlebar=none` and have no
+lights to come up.
+
+Two more copies of the example — one with `"show=false"`, one with
+`"show=false activate=false"` — run one after the other, the window server list read in
+each (nine windows both times, nothing at layer 0), and the Top Left window photographed
+in both. Cropped to the window's own `350x75` (`EX25.activate-a.png`, `EX25.activate-b.png`)
+the two differ by **222** pixels; cropped to the interior, 5px inside every edge, they
+differ by **0**.
+
+The 222 are the rounded corners, and what is in them is the desktop through them, not the
+window. The control says so: two captures of the *same* run, seconds apart, differ by
+**701** pixels in that same band — more than the two options do — while their interiors are
+`0` as well. The terminal behind was scrolling between captures, and a popup's corner is
+transparent onto it. Inside the window there is nothing for activation to change: the same
+red fill, the same two lines of text, frame after frame.
+
+--- what this settles
+
+The two `visible` rows for `25_window_positioning.gos` are `invisible`, and the census rows
+say so with this file as the note. The pair is nine windows on both sides, at the same
+coordinates, with the same content.
+
+--- the deviation this turned up on the way
+
+Upstream's `Application::new().run(..)` never asks for its app to be activated, so none of
+its nine windows is in a key window's app. The binding's host window activates by default
+(`options::activate`, `app.rs:1794`), and `23_tree` and `24_uniform_list` already pass
+`activate=false` for exactly this reason. Example 25 did not, and the tenth-window row
+above had been reading as though it were the only difference. It now passes
+`activate=false` as well, which is upstream's own state rather than a concession.
+
+--- what is not checked here
+
+Windows on this machine's other displays, if a display is connected later, are outside the
+crop; the count of nine is one display's worth, as upstream's is. And the Linux asymmetry
+stands and is not measured here: gpui's Linux backend never reads `show`
+(`PAIRS.md` §5 — no tier photographs a GPUI window on Linux), so on that platform the host
+is an ordinary tenth window on the screen even with `show=false`. It is not a tier that
+this project's pairs are decided on.

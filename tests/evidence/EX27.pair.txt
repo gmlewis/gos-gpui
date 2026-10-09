@@ -1,0 +1,101 @@
+EX27 — the two rows 27_window.gos had left `visible`, measured.
+
+`PAIRS.md` §3 carried two rows for this pair. One said `titlebar=none` moves the traffic
+lights into a client-drawn bar; the other said an Invisible sub-window keeps the program
+alive after the visible ones close. Both were taken to this machine's window server rather
+than argued, and the first turned out to be a live difference — just not the one stated.
+
+Unless a line says otherwise, the port side is `examples/27_window.gos` as it stands, run
+as `gos run --main-thread`; the upstream side is `tools/upstream/target/debug/examples/window`;
+buttons are pressed with `scripts/pointer.sh click`; a window is photographed with
+`screencapture -x -o -l<window>`. All measurements are the project's own idiom
+(`PAIRS.md` §7.1): the count of pixels whose R, G or B differ by any amount.
+
+--- 1. the Custom Titlebar sub-window
+
+The example's third button opens a 300x300 window with `titlebar=none`, and its view draws
+upstream's own blue 32px bar across the top of it. Both binaries were run, the button
+pressed, and the sub-window photographed whole.
+
+    upstream   EX27.titlebar-upstream.png     318x318   (the window and its shadow)
+    port       EX27.titlebar-port.png         318x318
+                                                        ->  0 differing pixels
+    the two interiors, 10px inside every edge  298x298
+                                                        ->  0 differing pixels
+
+`titlebar=none` is the binding's spelling of gpui's own `titlebar: None`, which is what
+upstream passes, so the port and upstream ask for the same window: a full-size content
+view, no bar at all, and no traffic lights for a bar to carry. The blue bar in the picture
+is the view's own. On Linux the same request sets client decorations, which no tier of
+this project photographs (`PAIRS.md` §5).
+
+--- 2. and it was one, before the button helper was fixed
+
+The port's helper wraps `ui::button`, which supplies `justify=center`. Upstream's
+hand-built button sets no justification, and a div's own `justify_content` is `flex-start`.
+Nothing shows that in the main panel, whose boxes hug their labels:
+
+    the two main windows, whole 800x632           ->  0 differing pixels
+    their button bands, 800x90                    ->  0 differing pixels
+       (EX27.main-upstream.png / EX27.main-port.png, and the same band cropped out
+        of the run made before the fix, EX27.panel-upstream.png / EX27.panel-port-before.png)
+
+and everything shows it in the sub-window, where upstream's `p_8` panel stretches the
+button across the window, so the label's justification decides where the label is:
+
+    upstream versus the port as it was   EX27.titlebar-port-before.png
+                                                        ->  584 differing pixels
+    upstream versus the port now         EX27.titlebar-port.png
+                                                        ->  0 differing pixels
+
+The 584 are the "Close" label, which upstream left-aligns and the port centred. `button` in
+`examples/27_window.gos` now passes `justify=start` back, and `EX27.titlebar-port-before.png`
+records a build that is no longer in the tree. The rest of the button chrome — the
+`flex_none`, the `px_2`, the fill, the border, the corner, the cursor — was upstream's
+already.
+
+--- 3. the Invisible sub-window
+
+The fourth button opens a window with `show=false`. On macOS that builds the `NSWindow` and
+never orders it (`platform/mac/window.rs:849-853` calls neither `makeKeyAndOrderFront_` nor
+`orderFront_`), so it is in the application's window list and not on the screen: the window
+server lists it in neither capture below, and lists no window for a run that has only it.
+The question was whether closing the visible windows then ends the program on one side and
+not the other. Four runs, one button press apart, each ended by closing the main window with
+its own close button:
+
+    port      Invisible open, then main closed    alive, and no window on the screen
+    port      nothing else open, then main closed gone
+    upstream  nothing else open, then main closed alive, and no window on the screen
+    upstream  Invisible open, then main closed    alive, and no window on the screen
+
+The pair that decides it is the first two. The port's `run_app` registers
+`cx.on_window_closed(..)` and ends the program only when `cx.windows()` is empty
+(`gpui-binding/src/app.rs:1794`), and an un-ordered window is still a window — so with the
+Invisible sub-window open, the port is in upstream's state and the two agree. The first run
+is self-validating: had the press missed, no Invisible window would exist and the port
+would have exited exactly as it does in the second run. ⌘Q / Ctrl+Q ends either side in any
+of the four.
+
+What is left is the last case, where nothing at all is open: there the port ends and
+upstream's `Application::run` runs on with an empty screen. That is real, and it is not a
+pixel in any window — there is no window. It is the same asymmetry `25_window_positioning`
+has, in the other direction: this pair's port quits where upstream never does, and that
+pair's port keeps a window upstream has not got.
+
+--- what this settles
+
+Both rows for `27_window.gos` are `invisible`, and the census rows say so with this file as
+the note. The main windows are 0 differing pixels over their whole 800x632, and the Custom
+Titlebar sub-windows are 0 over their whole 318x318. The one difference that was a pixel —
+the sub-window's Close label — is gone, and the run that had it is stored.
+
+--- what is not checked here
+
+The eleven button presses other than the two used here are not photographed as a sequence;
+each opens a window and each window's own content is upstream's `SubWindow`, which section 1
+measures for the one that carries the extra bar. The Popup, Unmovable, Unresizable and
+Unminimizable windows are window-server properties, not pixels. And the two prompt buttons
+open this port's emulated in-window dialog, whose difference from the native modal is
+upstream's `window.prompt(..)` being unreachable and is stated in the example's header —
+that is a row of its own, not this one.

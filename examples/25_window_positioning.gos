@@ -6,7 +6,7 @@
 // order; the count grows with the number of displays.
 //
 // Upstream loops over `cx.displays()` inside `Application::run`'s closure and
-// opens all nine windows there, once. Here that loop runs from `gpui::run`'s
+// opens all nine windows there, once. Here that loop runs from `gpui::run_with`'s
 // view callback, guarded by a state flag: a Gossamer view callback is
 // re-invoked every frame, so an unguarded open would spawn a fresh nine windows
 // per frame. `gpui::open_window` is deferred to after the frame that asked for
@@ -31,10 +31,25 @@
 //     *width* and Bottom Center its y from the display's *height*, so neither
 //     follows a display whose origin is not (0, 0). The port reproduces all of
 //     it window for window rather than "fixing" it.
-//   * `gpui::run` always opens one window of its own, and upstream's app opens
-//     none — it only opens the positioned ones. That host window is the one
-//     whose callback does the opening, and it lists the connected displays.
-//   * A positioned window is not given a view of its own. `gpui::run`'s view
+//   * `gpui::run` opens one window of its own and upstream's app opens none — it
+//     only opens the positioned ones. That host window is the one whose callback
+//     does the opening, and it lists the connected displays. It is opened with
+//     `show=false`, which on macOS builds the `NSWindow` and never orders it
+//     (`platform/mac/window.rs:849-853` calls neither `makeKeyAndOrderFront_` nor
+//     `orderFront_`), so there is no tenth window on the screen. Measured: the
+//     window server lists nine windows for this process and no tenth, and the
+//     host's own view still ran — it is what opened the nine. The one asymmetry is
+//     the container: gpui's Linux backend never reads `show` at all, so there the
+//     host is an ordinary window like any other. No tier photographs a GPUI window
+//     on Linux (`PAIRS.md` §5).
+//   * Upstream never asks for its app to be activated, so none of its nine is a
+//     key window. `gpui::run` activates by default and the port asks for
+//     upstream's state instead, as `activate=false` — the call `23_tree` and
+//     `24_uniform_list` make for the same reason. All nine are `titlebar=none`, so
+//     there are no lights to give it away; measured, with the flag and without it
+//     the window interior is the same 0 pixels. What is left is which app is in
+//     front — outside "the window, its decorations and the client area". **Invisible.**
+//   * A positioned window is not given a view of its own. `gpui::run_with`'s view
 //     draws every window, and this port tells them apart with `gpui::window_id`
 //     — the host window is 1 and the positioned ones are 2, 3, … in the order
 //     they were opened. Each one reads the description written for it just
@@ -51,8 +66,10 @@
 //     invisible here because the port asks for `titlebar=none`, and the title is
 //     left empty. Upstream's labels are the text drawn *inside* each window, not
 //     titles, and they are reproduced there.
-//   * Upstream's window is 350x75 with a 150px margin, which the port keeps; the
-//     host window's size is explicit, as everywhere in these ports.
+//   * Upstream's window is 350x75 with a 150px margin, which the port keeps. The
+//     host's own size is still explicit — `run_with` takes one, and a window with
+//     no size is not a thing here — but the host is never ordered, so that number
+//     is not a pixel of the pair.
 
 use gpui
 use std::process
@@ -73,7 +90,7 @@ const OPTIONS: &str = "kind=popup focus=false movable=false titlebar=none backgr
 
 /// A positioned window's view.
 ///
-/// It is the one view `gpui::run` was given, and it is running for a window that
+/// It is the one view `gpui::run_with` was given, and it is running for a window that
 /// is not the host — the host is window 1 and this is one of the nine. What it
 /// draws comes from the description `positioned` wrote for it, under this
 /// window's own id, before the window existed.
@@ -153,7 +170,11 @@ fn display_line(index: i64) -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run("", 560.0, 420.0, || {
+    // `show=false` leaves the host window un-ordered, which is the one thing that
+    // makes this pair ten windows on one side and nine on the other; `activate=false`
+    // is upstream's own state, since it never activates its app. See the deviations
+    // above. The host's view still runs and is still what opens the nine.
+    let outcome = gpui::run_with("", 560.0, 420.0, "show=false activate=false", || {
         // Every window runs this view; the host is 1 and the positioned ones are
         // the rest, told apart by what `positioned` wrote for them.
         if gpui::window_id() != 1 {

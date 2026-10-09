@@ -68,8 +68,10 @@
 //     all and **no traffic lights**, so the blue 32px bar this view draws is
 //     the only one the window has, exactly as in upstream's window. It used to
 //     mean a transparent titlebar with the lights moved to (12,12), which is
-//     the window `25_window_positioning` was measured against; on Linux the
-//     same request sets client decorations.
+//     the window `25_window_positioning` was measured against. Measured, the two
+//     Custom Titlebar windows — upstream's example and this port's — are **0
+//     differing pixels** over the whole 298x298 frame. On Linux the same request
+//     sets client decorations, which no tier of this project photographs.
 //   * `Rect` and `DisplayInfo` are declared below. The binding returns
 //     geometry as five scalars rather than a struct: it matches the reader's
 //     fields by a matching struct *name* declared in the program, so a port
@@ -80,11 +82,20 @@
 //     each sub-window its own close event id and each window handles only its
 //     own; the API does not itself scope an event to a window.
 //   * An Invisible sub-window is still an open window, so closing every
-//     visible window leaves the program running (the binding quits only when
-//     no window at all remains). ⌘Q / Ctrl+Q ends it.
+//     visible window leaves the program running. Measured on both binaries:
+//     with it open, closing the main window leaves upstream's example and this
+//     port both running, so the pair agrees there; without it, this port ends
+//     the app when the last window closes and upstream's runs on with nothing
+//     on screen at all. That last is real and is not a pixel in any window.
+//     ⌘Q / Ctrl+Q ends it either way.
 //   * `ui::button` supplies its own `flex items=center justify=center
-//     cursor=pointer`; upstream's hand-built button gets the equivalent from
-//     its explicit helpers. The rest of the button chrome is upstream's.
+//     cursor=pointer`; upstream's hand-built button sets none of the three, and
+//     what it leaves behind is a div, whose `justify_content` is `flex-start`.
+//     `button` above hands `justify=start` back, so the label sits where
+//     upstream's does — see its doc. It is not a hypothetical: before that, the
+//     sub-window's Close label was 584 differing pixels from upstream's, and the
+//     main panel's buttons were 0 either way, because their boxes hug the text.
+//     The rest of the button chrome is upstream's.
 
 use gpui
 use std::process
@@ -94,8 +105,17 @@ use ui
 /// so the id is how a click reaches the program; the style is upstream's
 /// `flex_none px_2 bg(rgb(0xf7f7f7)) active(opacity 0.85) border_1
 /// border_color(rgb(0xe0e0e0)) rounded_sm cursor_pointer` — `px_2` is 8px.
+///
+/// `justify=start` is not upstream's — upstream writes no justification at all,
+/// and a div's own `justify_content` is `flex-start`. `ui::button` supplies
+/// `justify=center` for the buttons this port draws elsewhere, and it is passed
+/// back to `start` here so that this button is upstream's rather than `ui::button`'s.
+/// It shows wherever the button is wider than its label: in the main panel the box
+/// hugs the text and the two are the same pixels, and in a sub-window, where
+/// upstream's `p_8` panel stretches the button across the window, it is the
+/// difference between the label at the left edge and the label in the middle.
 fn button(id: String, label: String) -> ui::El {
-    ui::button(id, label, "flex=none px=8 bg=#f7f7f7 active=opacity:0.85 border=1 bordercolor=#e0e0e0 rounded=sm cursor=pointer")
+    ui::button(id, label, "flex=none justify=start px=8 bg=#f7f7f7 active=opacity:0.85 border=1 bordercolor=#e0e0e0 rounded=sm cursor=pointer")
 }
 
 /// Upstream's custom titlebar: `flex h(px(32.)) px_4 bg(blue) text_color(white)
