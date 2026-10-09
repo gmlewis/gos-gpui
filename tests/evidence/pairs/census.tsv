@@ -21,12 +21,11 @@
 # line does not begin a deviation, is reported.
 #
 # pair	line	class	note
-02_data_table.gos	23	visible	interaction only: the drag stops tracking when the pointer leaves the element, and drops the grab offset upstream's move handler adds
-02_data_table.gos	32	invisible	the row builder is reached through run_with_rows instead of cx.processor
-02_data_table.gos	41	forced	upstream's quotes come from rand::rng(); there is no fixed target to match
-02_data_table.gos	47	invisible	the visible row range is obtained differently; the same rows are drawn
-02_data_table.gos	52	invisible	ui::list takes 22.0 as the row height, the port's reading of upstream's measured height
-02_data_table.gos	55	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
+02_data_table.gos	20	invisible	the row builder is reached through run_with_rows instead of cx.processor
+02_data_table.gos	29	forced	upstream's quotes come from rand::rng(); there is no fixed target to match
+02_data_table.gos	35	invisible	the visible row range is obtained differently; the same rows are drawn
+02_data_table.gos	40	invisible	ui::list takes 22.0 as the row height, the port's reading of upstream's measured height
+02_data_table.gos	43	invisible	a Gossamer frame rebuilds the tree; every pixel is the same
 03_drag_drop.gos	33	invisible	the ghost is a tree element, not GPUI's drag-preview layer; gpui paints the preview after the root and the ghost is the root stack's last child, so the paint order matches
 03_drag_drop.gos	40	invisible	an invisible full-window on_mouse overlay restores the same behaviour
 03_drag_drop.gos	50	invisible	animate() keeps the ghost following; the same pixels
@@ -41,10 +40,10 @@
 08_image_loading.gos	70	visible	the window is larger than upstream's centred 300x300 default
 08_image_loading.gos	77	visible	the outer column is `justify=center` where upstream spreads one child with `justify_around`
 09_input.gos	17	invisible	the editor is Rust-side code; the shell it draws is the same
-09_input.gos	18	visible	interaction only: keystrokes are matched by the editor, not by the application keymap
-09_input.gos	21	invisible	focus is taken when the editor is created rather than at startup
-09_input.gos	25	invisible	the shell is reproduced; the log is fed by observe_keystrokes
-09_input.gos	29	visible	interaction only: Reset clears the log as well as the text
+09_input.gos	18	invisible	the thirteen keys are matched on the element instead of through the keymap; the same text results
+09_input.gos	23	forced	the editor is a document editor -- it holds breaks and handles the keys that move by them, where upstream binds neither; DW1 plus ui::editor(key, placeholder, style) handing out the widget whole are the proof
+09_input.gos	35	invisible	focus is taken when the editor is created rather than at startup
+09_input.gos	39	invisible	the shell is reproduced, and Reset is upstream's own -- on_reset_click clears the keystroke log and resets the text too (input.rs:622-627)
 10_on_window_close_quit.gos	7	invisible	interaction only: cmd-w is not wired; the desktop quit shortcut is bound instead
 11_opacity.gos	12	invisible	asset paths point at examples/assets/ rather than the crate's own examples/image/
 11_opacity.gos	14	invisible	every image carries a binding-allocated id, so the window repaints; frame 0 either way

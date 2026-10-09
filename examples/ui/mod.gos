@@ -109,6 +109,20 @@ impl El {
         gpui::on_mouse(handle, kinds, id).into()
     }
 
+    /// Report pointer events for this element **wherever the pointer is**, not
+    /// only while it is over the element. `kinds` is any of `down`, `up` and
+    /// `move`, and each raises `"<id>|<kind>"` exactly as `on_mouse` does.
+    ///
+    /// This is how a drag is kept alive after the pointer has left the element
+    /// it began on — upstream's own instrument for the data table's scrollbar.
+    /// A press anywhere in the window is reported, so gate it yourself against
+    /// this element's rectangle, which is what `gpui::element_bounds` reads
+    /// back.
+    pub fn on_mouse_window(&self, kinds: String, id: String) -> El {
+        let handle: i64 = self.into()
+        gpui::on_mouse_window(handle, kinds, id).into()
+    }
+
     /// Paint a run of built paths — each entry in `backgrounds` lines up with
     /// the path at the same index, and is a colour or a `grad=…` token.
     pub fn paths(&self, handles: Vec<i64>, backgrounds: Vec<String>, style: String) -> El {

@@ -12,23 +12,11 @@
 //   * one generated quote per row, its 24 fields under a header of the same
 //     fixed widths, the row tinted green or red by its own change;
 //   * a header line naming the visible row range;
-//   * a grey scrollbar thumb over the body, 8x100 with a hover refinement.
-//
-// One of the binding's limits meets this example — a drag is tracked only while
-// the pointer is over the element the handler is on — so read the deviations
-// before comparing the two windows.
+//   * a grey scrollbar thumb over the body, 8x100 with a hover refinement, which
+//     drags the list the way upstream's does.
 //
 // Deviations:
 //
-//   * The drag is element-scoped, where upstream captures the pointer
-//     window-wide. Upstream registers `window.on_mouse_event` handlers so a drag
-//     keeps tracking after the pointer leaves the thumb; `gpui::on_mouse`
-//     reports only while the pointer is over the element it was attached to. The
-//     thumb therefore listens through a 16-pixel strip at the right edge rather
-//     than on the 8x100 thumb itself: a vertical drag stays inside the strip for
-//     its whole length, so the drag works, and the strip is narrow enough that
-//     the wheel over the body still reaches the list. A drag that leaves the
-//     strip sideways stops, which is the difference from upstream.
 //   * `cx.processor` does not exist, and the row builder is not `ui::list`'s
 //     argument. It is the same hook — handed a row index instead of a whole
 //     range, and called only for the rows on screen — but it is given to
@@ -396,13 +384,16 @@ fn clamp01(v: f64) -> f64 {
 /// `gpui::scroll_to` moves the list, and answers for a `ui::list` as well as for a scrolled
 /// container, because a uniform list runs its scrolling through a `ScrollHandle` of its own.
 ///
-/// The 16-pixel strip listens rather than the 8x100 thumb. `gpui::on_mouse`
-/// reports only while the pointer is over the element it is attached to, so a
-/// handler on the thumb itself would stop tracking the moment a drag left it;
-/// on the strip, a vertical drag stays inside for its whole length. The strip is
-/// narrow so that the wheel over the body still reaches the list, and it sits at
-/// the right edge where a scrollbar belongs. The thumb carries `right=0` inside
-/// it, so the thumb's own right edge is 4 pixels in — upstream's `right_1()`.
+/// The thumb carries a **window-level** pointer listener, `gpui::on_mouse_window`, which is
+/// upstream's own instrument: `data_table.rs:320-364` hangs its three handlers on
+/// `window.on_mouse_event(..)` rather than on the element, so a drag keeps tracking after the
+/// pointer has left the thumb and the release is heard wherever it happens. An element-level
+/// `gpui::on_mouse` is gated on the element's own hitbox being hovered, so it would stop the
+/// moment the pointer left. A window-level listener is told about every press in the window,
+/// so the press is gated on the thumb's own rectangle (`gpui::element_bounds`), which is
+/// upstream's `thumb_bounds.contains(&ev.position)`. The thumb stays 8 wide: an element's
+/// hitbox is what gpui hit-tests for the wheel, so a wider strip would swallow the wheel over
+/// the body.
 fn scrollbar() -> ui::El {
     let h = gpui::scroll_bounds("items", "h")
     let max = gpui::scroll_max_offset("items", "y")
@@ -419,32 +410,60 @@ fn scrollbar() -> ui::El {
     }
     let top = clamp(h * percentage, THUMB_MARGIN, ceiling)
 
-    ui::rect("absolute right=4 top=0 w=16 h=full bg=#00000000")
-        .on_mouse("down move", "thumb")
-        .child(ui::rect(f"absolute top={top} right=0 h={THUMB_HEIGHT} w={THUMB_WIDTH} bg=#c0c0c0 rounded=lg hover=bg:#a0a0a0"))
+    ui::rect(f"absolute top={top} right=4 h={THUMB_HEIGHT} w={THUMB_WIDTH} bg=#c0c0c0 rounded=lg hover=bg:#a0a0a0")
+        .on_mouse_window("down move up", "thumb")
 }
 
 // ---- the frame --------------------------------------------------------
 
 fn main() {
     let outcome = gpui::run_with_rows("", 1280.0, 1000.0, "", table_row, || {
-        // A drag of the scrollbar. `<id>.y` is the pointer's position inside the
-        // strip, and the strip is the viewport, so the fraction is upstream's —
-        // `(ev.position.y - table_bounds.origin.y) / table_bounds.size.height`
-        // (`data_table.rs:356-359`) — and the offset it asks for is the offset the
-        // list is set to. Upstream also adds the press's offset inside the thumb;
-        // that term is the thumb's own rectangle in window pixels, which a program
-        // can work out from the placement above and `scroll_bounds("items", "y")`,
-        // and this does not, so a drag puts the thumb's top under the pointer
-        // rather than holding the point that was grabbed.
+        // The scrollbar drag, upstream's rule term for term (`data_table.rs:322-366`).
+        //
+        // A press on the thumb starts a drag. Upstream stores where inside the thumb it
+        // landed — `ev.position - thumb_bounds.origin - table_bounds.origin`, its
+        // `drag_position` — and every later move keeps that point under the pointer:
+        // the pointer's window `y`, less the table's own `y`, plus the point grabbed,
+        // over the viewport's height, is how far down the content the thumb's top sits.
+        // Because the listener is window-level, both the press and the move arrive
+        // wherever the pointer is, so the press is gated on the thumb's rectangle —
+        // `pointer_xy` against `element_bounds("thumb", ..)` is upstream's
+        // `thumb_bounds.contains(&ev.position)` — and the moves are held open by a flag
+        // the press sets and the release clears, which is upstream's `ev.dragging()`.
         for event in gpui::take_events() {
-            let id, _data = gpui::event_parts(event)
+            let id, kind = gpui::event_parts(event.clone())
+            // Read here, in the frame's own closure, and not in a function of its own:
+            // a pair-returning binding called from a module-level function faults under
+            // the JIT. See `## Round 93` in `CAPABILITIES.md`.
+            let px, py = gpui::pointer_xy(event.clone())
             if id == "thumb" {
-                let h = gpui::scroll_bounds("items", "h")
+                let thumb_x = gpui::element_bounds("thumb", "x")
+                let thumb_y = gpui::element_bounds("thumb", "y")
+                let thumb_w = gpui::element_bounds("thumb", "w")
+                let thumb_h = gpui::element_bounds("thumb", "h")
+                let table_y = gpui::scroll_bounds("items", "y")
+                let table_h = gpui::scroll_bounds("items", "h")
                 let max = gpui::scroll_max_offset("items", "y")
-                if h > 0.0 && max > 0.0 {
-                    let y = gpui::state_float("thumb.y", 0.0)
-                    gpui::scroll_to("items", 0.0, -clamp01(y / h) * max)
+                if kind == "down" {
+                    let inside = px >= thumb_x && px <= thumb_x + thumb_w &&
+                        py >= thumb_y && py <= thumb_y + thumb_h
+                    if inside {
+                        gpui::set_float("thumb.grab", py - thumb_y - table_y)
+                        gpui::set_bool("thumb.held", true)
+                    }
+                } else if kind == "up" {
+                    gpui::set_bool("thumb.held", false)
+                } else if kind == "move" {
+                    if gpui::state_bool("thumb.held", false) && table_h > 0.0 {
+                        let grab = gpui::state_float("thumb.grab", 0.0)
+                        let percentage = clamp01((py - table_y + grab) / table_h)
+                        // Upstream's `scroll_height - table_height` is `max`, so the
+                        // upper clamp is `max + table_h - THUMB_HEIGHT`. The list parks
+                        // the offset it is given at the end of the range, which is the
+                        // same clamp `max`.
+                        let span = (max + table_h) - (THUMB_HEIGHT as f64)
+                        gpui::scroll_to("items", 0.0, -clamp(max * percentage, 0.0, span))
+                    }
                 }
             }
         }

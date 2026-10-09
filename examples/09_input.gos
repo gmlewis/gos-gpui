@@ -16,8 +16,22 @@
 // Deviations:
 //   * the widget is not Gossamer code — see above and PORTING.md;
 //   * upstream binds thirteen actions through the application keymap
-//     (`cx.bind_keys` / `on_action`); the binding owns the one keymap, so the
-//     editor matches keystrokes itself. Same keys, different plumbing;
+//     (`cx.bind_keys` / `on_action`, `input.rs:680-694`) and the binding owns
+//     the one keymap, so the editor matches those thirteen on the element
+//     itself. All thirteen leave the same text either way — different plumbing,
+//     the same pixels;
+//   * the editor is a document editor, not upstream's one-line example. The
+//     widget handles the keys a document needs and a one-line example had no
+//     use for: `enter` splits the line, and `up`, `down`, `pageup`, `pagedown`,
+//     their shift-extended twins and `cmd-left`/`cmd-right` move by it.
+//     Upstream binds nothing for any of those, and the one path that could put
+//     a break in its text — a paste — strips them (`input.rs:133`), so its text
+//     can never hold one. That is visible the moment any of those keys is
+//     pressed: `tests/gui/ed1_editor_keys.gos` types `f5 a f5 enter b up Z home
+//     H` and reads the document back after each one. It is forced rather than
+//     chosen — `ui::editor(key, placeholder, style)` hands out the binding's
+//     editor whole, with no way for a program to narrow its key set, and
+//     register row `DW1` is that editor's own check;
 //   * upstream focuses the input at startup; here the editor takes focus the
 //     once, when it is created, since a binding function has no `Window` to
 //     focus it with afterwards — clicking, tabbing away and returning all
@@ -25,8 +39,9 @@
 //   * upstream's shell is `InputExample` — a header, this log and a Reset
 //     button. That shell is reproduced here, with the log fed by
 //     `gpui::observe_keystrokes`, which sees every keystroke whether or not the
-//     editor handled it, exactly as upstream's `cx.observe_keystrokes` does;
-//   * Reset clears the text and the log; upstream's handler clears the text.
+//     editor handled it, exactly as upstream's `cx.observe_keystrokes` does,
+//     and with Reset doing what upstream's own `on_reset_click` does — clear
+//     `recent_keystrokes` and reset the text (`input.rs:622-627`).
 
 use gpui
 use std::process
