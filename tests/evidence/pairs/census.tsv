@@ -32,13 +32,8 @@
 03_drag_drop.gos	54	invisible	handlers are plain functions over the store; cx.listener has no equivalent
 04_gif_viewer.gos	8	invisible	the image loads by path instead of through AssetSource; the same pixels
 04_gif_viewer.gos	11	invisible	the image's id is unstable, so frames are requested continuously; frame 0 either way
-08_image_loading.gos	36	visible	no custom asset type, so cell 3's fallback is staged rather than timed out
-08_image_loading.gos	42	visible	no Img::with_loading / Img::with_fallback
-08_image_loading.gos	57	visible	nothing in the binding reports a failed image
-08_image_loading.gos	60	visible	no cx.remove_asset, so a clicked cell never leaves its loading state
-08_image_loading.gos	65	invisible	cell 4 is faithful -- a note, not a difference
-08_image_loading.gos	70	visible	the window is larger than upstream's centred 300x300 default
-08_image_loading.gos	77	visible	the outer column is `justify=center` where upstream spreads one child with `justify_around`
+08_image_loading.gos	55	invisible	a custom Asset with a Duration is unreachable (AX2); cells 2 and 3's 5s comes from the port's own gpui::task timer, and the subtrees are the same elements at the same times
+08_image_loading.gos	69	invisible	both pulse from phase 0 on a 3s cycle; the sampled alpha can differ by a frame
 09_input.gos	17	invisible	the editor is Rust-side code; the shell it draws is the same
 09_input.gos	18	invisible	the thirteen keys are matched on the element instead of through the keymap; the same text results
 09_input.gos	23	forced	the editor is a document editor -- it holds breaks and handles the keys that move by them, where upstream binds neither; DW1 plus ui::editor(key, placeholder, style) handing out the widget whole are the proof
@@ -71,13 +66,12 @@
 20_text_layout.gos	38	invisible	ui::styled_text wraps the StyledText in a div, the same nesting
 20_text_layout.gos	42	invisible	a Gossamer frame rebuilds the tree; the tree itself is the same
 21_text_wrapper.gos	23	invisible	the root div's id is not set; layout is unaffected
-22_text.gos	35	visible	the "GPUI Typography" menu is absent from the menu bar
-22_text.gos	40	invisible	init_colors runs once at startup, which is what makes default_color work
-22_text.gos	42	invisible	the type scale is derived in f64; the difference is under a thousandth of a pixel
-22_text.gos	46	invisible	ui::panel is the bare div upstream uses
-22_text.gos	51	invisible	the character list is written already cut into rows
-22_text.gos	56	invisible	the scroll box's id is not set
-22_text.gos	59	invisible	a Gossamer frame rebuilds the tree; next_id has no counterpart
+22_text.gos	35	invisible	init_colors runs once at startup, which is what makes default_color work
+22_text.gos	37	invisible	the type scale is derived in f64; the difference is under a thousandth of a pixel
+22_text.gos	41	invisible	ui::panel is the bare div upstream uses
+22_text.gos	46	invisible	the character list is written already cut into rows
+22_text.gos	51	invisible	the scroll box's id is not set
+22_text.gos	54	invisible	a Gossamer frame rebuilds the tree; next_id has no counterpart
 23_tree.gos	7	invisible	40 levels render where upstream renders 50
 24_uniform_list.gos	7	invisible	ui::list takes 22.0 explicitly, the port's reading of upstream's measured height
 24_uniform_list.gos	10	invisible	the builder is handed to run_with_rows instead of being uniform_list's argument

@@ -1,0 +1,30 @@
+EX22 — after: the same check, green on every tier.
+
+The red is in `EX22.before.txt` beside this file: the same probe with its `set_menus` call
+removed — which is what `examples/22_text.gos` did until round 101 — reading the menu bar back
+empty, `FAIL EX22 the platform was handed 0 line(s) of menu bar, not the one empty menu upstream
+installs: #[]`.
+
+--- all five tiers
+
+$ ./scripts/gosbox.sh tiers tests/gui/ex22_text_menu.gos
+ok     check: check: ok (1 items typed)
+ok     run: OK EX22 the menu bar is upstream's exactly: one menu named "GPUI Typography" with nothing under it —
+ok     run-nosjit: OK EX22 the menu bar is upstream's exactly: one menu named "GPUI Typography" with nothing under it —
+ok     build: build: 84745472B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+ok     build-release: build: 25320456B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+--- and the bulk pass, where it is one line among the suite's
+
+$ ./scripts/gosbox.sh probes
+ok     ex22_text_menu: OK EX22 the menu bar is upstream's exactly: one menu named "GPUI Typography" with nothing under it —
+gosbox: 53/53 passed
+gosbox: 13 skipped (each names what it needs)
+gosbox: 1 flaky (passed only on a retry)
+
+The OK line is cut at 100 columns there; the transcript is the one above.
+
+This is not a photograph, and it could not be: on Linux there is no menu *bar* to photograph —
+`LinuxPlatform::set_menus` stores the menu and draws nothing (`platform/linux/platform.rs:474`),
+which is upstream's own behaviour on Linux. What is checked is what the platform was handed, read
+back through `App::get_menus()`.

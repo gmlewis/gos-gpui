@@ -1,0 +1,77 @@
+MR4 — after (group): a group a program can ask about, read back from the rectangles the frame drew.
+
+The row is "interactive-element event completeness: click variants, mouse up/move/exit,
+`stop_propagation`, group hover", and this file is about its group hover clause. Its siblings are
+`tests/evidence/MR4.after.txt` (the click count), `tests/evidence/MR4.stop.after.txt` (the
+`stop_propagation` modifier) and `tests/gui/km7_pointer_beyond.gos` (the element-level `exit`).
+
+--- green
+
+    $ ./scripts/gosbox.sh tiers tests/gui/mr4_group_hover.gos
+    ok     check: check: ok (38 items typed)
+    ok     run: OK MR4 `gpui::group_hovered` answered by name: true with the pointer over each of two members of `card` on opposite sides of the window, false with the pointer over nothing, over a member of a different group, and — for the same name — over the other member of `card`; and `group=` gave every member its own readable rectangle, read back by its own id through `gpui::element_bounds`
+    ok     run-nosjit: OK MR4 `gpui::group_hovered` answered by name: true with the pointer over each of two members of `card` on opposite sides of the window, false with the pointer over nothing, over a member of a different group, and — for the same name — over the other member of `card`; and `group=` gave every member its own readable rectangle, read back by its own id through `gpui::element_bounds`
+    ok     build: build: 85427432B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+    ok     build-release: build: 25634256B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+`tests/evidence/MR4.group.before.txt` is the same probe against 329133c — fifteen FAILs and no
+verdict.
+
+--- the two halves of gpui's group hover, and which one a program can have
+
+gpui's idea is `Interactivity::group_hover` (`gpui-0.2.2/src/elements/div.rs:680`): an element
+declares `.group(name)`, and another element refines **its own style** while any member of that
+group is hovered — a card that lifts while the pointer is over anything inside it. Both halves
+exist upstream and neither is reachable from the binding:
+
+  * the **style refinement** needs a `GroupStyle` on the element that restyles, which the binding's
+    style tokens do not express; and
+  * the **answer** — *is a member hovered* — would come from `GroupHitboxes` (`elements/div.rs:2876`),
+    which is `pub(crate)`, and which is keyed by name to **one** hitbox: `GroupHitboxes::get` returns
+    the last id pushed (`:1845` push, `:1876` pop), so gpui's own registry cannot represent a group
+    of two members at all.
+
+So the binding asks the second question its own way, out of the one thing it already keeps: the
+**rectangle** it records for every box that asked for one. `group=<name>` names an element as a
+member, and it asks for that rectangle the same way `bounds` does — a member with no rectangle is a
+member nothing can answer about, and the member needs an `id=` as well, because two members of one
+group are told apart by it and the second without one would overwrite the first. `group_hovered`
+then answers whether this frame's pointer is inside any of them, and `element_bounds` answers for
+each member by its own id.
+
+That is deliberately **not** `on_hover`, which is gpui's other hover reading: `on_hover` is a
+**single slot** on an element, filled once (`elements/div.rs:525`, with a `debug_assert!` on a
+second call). An element needing both a hover and a group membership would be fighting itself for
+it. This takes no slot at all.
+
+--- the pointer is the frame's, and the test is a rectangle
+
+`MOUSE_BOUNDS` is written when the frame is painted and the position is the one
+`view::mouse_position()` reads — `MOUSE_AT[win]`, set from `window.mouse_position()` at the start of
+every frame (`gpui-binding/src/view.rs:1153`). So the answer is about **the frame being built**
+rather than about the last event, which is the same frame gpui's own `group_hover` styles are
+resolved against, and it is why the probe takes a snapshot with `gpui::set_bool` in each frame and
+reads the flags in the last one: a reader that answered from the last event would be answering a
+different question from the styles it stands beside.
+
+The difference from gpui's own test is **z-order**. A member covered by something drawn over it
+still answers `true` here, where `hitbox.is_hovered(window)` would answer `false`. A group is a box
+on screen either way and nothing upstream asks the question another way, but it is not the same
+function and this file says so rather than implying the stronger claim.
+
+--- the probe
+
+Three members in two groups, four pointer positions, each the centre of its box. `card` has a
+member on the left (`(20,20) 100x80`, so its centre is `(70,60)`) and a member on the right
+(`(250,20) 100x80`, centre `(300,60)`), so a group that "worked" by remembering one rectangle would
+be caught by the right-hand one; `other` is a second group the pointer is put over separately
+(`(20,180) 100x80`, centre `(70,220)`); and `(5,5)` — the window's own corner, over none of them — is
+the false control. Eight flags are asserted — four positions × two group names — and the pointer
+moves to them in the order nothing, left member, `other`'s member, right member. A `state_bool` slot is read
+with the **opposite** of the expected value as its default, so a slot the frame callback never
+wrote reads back as the failure it is rather than as a pass.
+
+Seven `element_bounds` readings come with the flags, because the group answer is built out of the
+members' rectangles and a probe that asserted only the booleans could be satisfied by three
+coincidentally-placed boxes. The probe is `// container:` — the pointer is driven through XTEST —
+so `scripts/probes.sh` skips it on this Mac and the five container tiers are its witness.

@@ -1,0 +1,87 @@
+// DW7 — the asset widget's loading and fallback subtrees, and the rule behind them.
+//
+// Headless: `gos test tests`. This file covers the half of the row that needs no window — the
+// rule that decides *which* subtree is due. The other half, that the element actually draws it,
+// is `tests/gui/dw7_image_states.gos`, which needs a window and runs in the container.
+//
+// The row is "asset widget: `image_request` with loading and fallback subtrees, embeddable
+// assets". Upstream's `image_loading.rs` installs two closures on every cell —
+//
+//     img(..).with_fallback(|| Self::fallback_element().into_any_element())
+//            .with_loading(|| Self::loading_element().into_any_element())
+//
+// — and gpui draws `fallback` when the load came back `Some(Err)` (`img.rs:366-372`) and
+// `loading` when it is still `None` and `LOADING_DELAY` (200ms, `img.rs:31`) has passed
+// (`:373-395`). The binding has neither call, so through `ui::image` a still-loading image and an
+// errored one are both blank.
+//
+// The binding's own images are always a filesystem path: `Kind::Image` resolves through
+// `asset_path` and hands `img()` a `PathBuf`, which is `Resource::Path` (`img.rs:100-104`), which
+// the loader reads with `fs::read` (`img.rs:601`). For a source like that, "the loader will
+// fail" and "there is no readable file here" are the same statement — so the rule is a `stat`,
+// and it is testable without a window.
+//
+// Pass means: a file that is there is not missing, a file that is not there is, a directory is
+// not a file, and the rule resolves through the same `asset_root` the element's own resolution
+// uses — so a program that declares a root gets the same answer from the rule and from the
+// element.
+
+use gpui
+use std::fs
+
+/// Upstream's `IMAGE`: the crate's own `examples/image/app-icon.png`, which this repo keeps a
+/// copy of under `examples/assets/`.
+const PRESENT: &str = "examples/assets/app-icon.png"
+
+/// Upstream's fourth cell, verbatim — the path that is not there.
+const ABSENT: &str = "this/file/really/shouldn't/exist/or/won't/be/an/image/I/hope"
+
+#[test]
+fn a_file_that_is_there_is_not_missing() {
+    gpui::asset_root("")
+    assert(
+        gpui::image_missing(*PRESENT) == false,
+        f"a path that resolves to a readable file is not missing: {PRESENT}",
+    )
+}
+
+#[test]
+fn a_file_that_is_not_there_is_missing() {
+    gpui::asset_root("")
+    assert(
+        gpui::image_missing(*ABSENT) == true,
+        f"a path nothing can be read from is missing, so the fallback is due: {ABSENT}",
+    )
+}
+
+#[test]
+fn a_directory_is_not_a_file() {
+    gpui::asset_root("")
+    // `fs::read` on a directory is an error, so the loader would fail and the fallback is due —
+    // the rule has to agree with the loader, not with "the path exists".
+    assert(
+        gpui::image_missing("examples/assets") == true,
+        "a directory is not a readable image, so the fallback is due",
+    )
+}
+
+#[test]
+fn the_rule_resolves_through_the_declared_root() {
+    let _ = fs::remove_dir_all("/tmp/gpui-dw7-root")
+    assert(fs::create_dir_all("/tmp/gpui-dw7-root").is_ok(), "the declared root")
+    assert(
+        fs::write("/tmp/gpui-dw7-root/only-here.png", "not really a png".as_bytes()).is_ok(),
+        "an asset under it",
+    )
+    gpui::asset_root("/tmp/gpui-dw7-root")
+    assert(
+        gpui::image_missing("only-here.png") == false,
+        f"the root is searched first, so the file is found: {gpui::asset_path("only-here.png")}",
+    )
+    assert(
+        gpui::image_missing("nowhere.png") == true,
+        "and a name the root does not have is missing",
+    )
+    gpui::asset_root("")
+    let _ = fs::remove_dir_all("/tmp/gpui-dw7-root")
+}

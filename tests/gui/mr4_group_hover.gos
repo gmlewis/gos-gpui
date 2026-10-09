@@ -1,0 +1,305 @@
+// MR4 — group hover: `group=<name>` as a membership, read back as a rectangle.
+//
+// container: the pointer is driven from outside the process by `xdotool` through XTEST, against
+// the X server the window really sits on, because the clause is about where the pointer *is*. The
+// Mac has no such server — and on this Mac a run *is* a window, which `scripts/window-guard.sh`
+// forbids — so `scripts/probes.sh` and `scripts/tiers.sh` skip this one by name. It runs in the
+// container:
+//
+//   ./scripts/gosbox.sh tiers tests/gui/mr4_group_hover.gos
+//
+// # What this exists for
+//
+// MR4's row is "interactive-element event completeness: click variants, mouse up/move/exit,
+// `stop_propagation`, group hover". `tests/gui/mr4_click_count.gos` and
+// `tests/gui/mr4_stop_propagation.gos` are the other two clauses; this is the group.
+//
+// gpui has the idea as a *style*: `Interactivity::group_hover` (`elements/div.rs:680`) refines one
+// element while another is hovered — a card that lifts when the pointer is over anything inside
+// it. Two things put it out of the binding's reach as it stands. The registry that answers for it,
+// `GroupHitboxes`, is `pub(crate)` (`elements/div.rs:2876`), and it is keyed by the *last* hitbox
+// pushed for a name, so a group of several members is not what it holds. And a style refinement is
+// not something a **program** can read: it changes pixels, and the clause is about completeness of
+// the event vocabulary a program writes against.
+//
+// So the binding builds the half a program can act on. `Interactivity::group_hover` also sets
+// `GroupStyle { group, style }` and makes `should_insert_hitbox` true (`:1701`), which is why a
+// member is an interactive element with a hitbox; the binding instead records the member's own
+// **rectangle** — the same `MOUSE_BOUNDS` entry the `bounds` token asks for, written a second time
+// under the key `group.<name>.<id>` — and `gpui::group_hovered(name)` answers whether the pointer
+// is inside any of them (`gpui-binding/src/view.rs`, `record_box` and `group_hovered`).
+//
+// # The four places the pointer is put
+//
+// Two members of `card`, on opposite sides of the window and not touching; one member of a
+// different group; and a point inside the window and inside none of them. Every phase asks **both**
+// names, because a `group_hovered` that answered "true" passes every phase that asks one question:
+//
+//   * over nothing                — `card` false, `other` false. A reading that is always true fails
+//     here and nowhere else.
+//   * over the left member        — `card` true, `other` false.
+//   * over the `other` member     — `card` false, `other` true. A reading that answered "is the
+//     pointer over a box that asked for its bounds" fails here and nowhere else.
+//   * over the right member       — `card` true, `other` false. A reading that remembered one
+//     rectangle per name — which is what gpui's own registry holds — fails here and nowhere else.
+//
+// And the rectangles are read back by their own ids at the end, because `group=` is a second way
+// to ask for the box: a member with no `id=` would share its group's single entry, and the phase
+// above could not tell the two members apart.
+
+use gpui
+use std::os::exec
+use std::process
+use std::strconv
+
+/// The title the window is opened with, and what `xdotool` is told to look for.
+const TITLE: String = "mr4group"
+
+const WIN_W: f64 = 400.0
+const WIN_H: f64 = 300.0
+
+/// The two members of the group `card`, on opposite sides of the window and not touching, so that
+/// "the pointer is over a member" cannot be satisfied by one of them standing in for the other.
+const LEFT_X: f64 = 20.0
+const LEFT_Y: f64 = 20.0
+const LEFT_W: f64 = 100.0
+const LEFT_H: f64 = 80.0
+
+const RIGHT_X: f64 = 250.0
+const RIGHT_Y: f64 = 20.0
+const RIGHT_W: f64 = 100.0
+const RIGHT_H: f64 = 80.0
+
+/// A member of a **different** group. It is the discriminator against "any box with a rectangle".
+const OTHER_X: f64 = 20.0
+const OTHER_Y: f64 = 180.0
+const OTHER_W: f64 = 100.0
+const OTHER_H: f64 = 80.0
+
+/// Where the pointer is put, in window coordinates: the centre of each box, and one point inside
+/// the window and inside none of them.
+const AT_NONE_X: f64 = 5.0
+const AT_NONE_Y: f64 = 5.0
+const AT_LEFT_X: f64 = LEFT_X + LEFT_W / 2.0
+const AT_LEFT_Y: f64 = LEFT_Y + LEFT_H / 2.0
+const AT_RIGHT_X: f64 = RIGHT_X + RIGHT_W / 2.0
+const AT_RIGHT_Y: f64 = RIGHT_Y + RIGHT_H / 2.0
+const AT_OTHER_X: f64 = OTHER_X + OTHER_W / 2.0
+const AT_OTHER_Y: f64 = OTHER_Y + OTHER_H / 2.0
+
+/// Run a program and answer its stdout, trimmed, with anything that went wrong printed.
+fn shell(program: String, args: Vec<String>) -> String {
+    match exec::run(program.clone(), args) {
+        Ok(out) => {
+            if out.code != 0 {
+                println(f"FAIL MR4 {program} exited {out.code}: {out.stderr.trim()}")
+            }
+            out.stdout.trim().clone()
+        }
+        Err(problem) => {
+            println(f"FAIL MR4 could not run {program}: {problem}")
+            String::new()
+        }
+    }
+}
+
+/// One `key=value` line out of `xdotool getwindowgeometry --shell`, as a number, or `-1.0`.
+fn field(text: String, key: String) -> f64 {
+    for line in text.split("\n") {
+        if let Some((name, value)) = line.split_once("=") {
+            if name.trim() == key {
+                return match strconv::parse_f64(value.trim().clone()) {
+                    Ok(number) => number,
+                    Err(_) => -1.0,
+                }
+            }
+        }
+    }
+    -1.0
+}
+
+/// One point, from the binding's own origin.
+fn at(ox: f64, oy: f64, x: f64, y: f64) -> (f64, f64) {
+    (ox + x, oy + y)
+}
+
+/// The xdotool words that put the pointer at `(x, y)` **and then wait a real second**, so that the
+/// frames which follow read a settled pointer rather than one still in flight.
+///
+/// The wait is inside the invocation and not a `sleep` in the probe because `gos` blocks the frame
+/// callback inside this `exec::run` for the whole second, so nothing the probe does can slip
+/// between the move and the settling. `mousemove --sync` is deliberately *not* used — `xdotool
+/// 3.20160805.1` spends its whole ~17.8s retry budget in that wait whenever the pointer is already
+/// at the destination, which is the finding `tests/gui/mr4_click_count.gos` paid for.
+fn move_to(ox: f64, oy: f64, x: f64, y: f64) -> Vec<String> {
+    let spot = at(ox, oy, x, y)
+    let sx = spot.0.round() as i64
+    let sy = spot.1.round() as i64
+    #["mousemove", f"{sx}", f"{sy}", "sleep", "1"]
+}
+
+/// A point as it will be compared: `"12.5,30.25"`, to two decimals.
+fn point(x: f64, y: f64) -> String {
+    f"{x:.2},{y:.2}"
+}
+
+/// Whether two points are the same to within a hundredth of a pixel.
+fn same(x: f64, y: f64, ex: f64, ey: f64) -> bool {
+    let dx = x - ex
+    let dy = y - ey
+    (if dx < 0.0 { -dx } else { dx }) < 0.01 && (if dy < 0.0 { -dy } else { dy }) < 0.01
+}
+
+/// Write a failure down: print it, and count it. The verdict at the end reads the count, which is
+/// what stops a check from failing and then falling through to a passing line.
+fn fail(message: String) {
+    println(f"FAIL MR4 {message}")
+    gpui::set_int("fails", gpui::state_int("fails", 0) + 1)
+}
+
+/// One number against what it should be, to a hundredth.
+fn expect_number(what: String, got: f64, want: f64) {
+    if !same(got, 0.0, want, 0.0) {
+        fail(f"{what} read {point(got, 0.0)}, not {want}")
+    }
+}
+
+/// The same for a flag.
+///
+/// The default handed to `state_bool` is the **opposite** of what the phase expects, in every call
+/// below. A slot that was never written — because the frame that would have written it failed —
+/// therefore reads as the failure it is, instead of passing for a reading that agrees.
+fn expect_flag(what: String, got: bool, want: bool) {
+    if got != want {
+        fail(f"{what} read {got}, not {want}")
+    }
+}
+
+/// Ask both groups about this frame's pointer and keep the pair under `prefix`.
+///
+/// `group_hovered` is not a listener: it is a reading of **this frame** — the pointer
+/// `Window::mouse_position` gave at the start of the frame, against the rectangles the previous
+/// frame's paint recorded. So it is asked once per phase, after the pointer has been moved and
+/// settled, and kept under the phase's own name: a store holds one slot per key, and a reading
+/// taken after the next move cannot say anything about the one before it.
+fn snapshot(prefix: String) {
+    gpui::set_bool(f"{prefix}.card", gpui::group_hovered("card"))
+    gpui::set_bool(f"{prefix}.other", gpui::group_hovered("other"))
+}
+
+fn main() {
+    let outcome = gpui::run(TITLE, WIN_W, WIN_H, || {
+        let f = gpui::frame()
+        gpui::animate()
+
+        // ---- frame 3: find the window, and put the pointer where nothing is ------------------
+        //
+        // The origin is the binding's own, `gpui::window_field("inner_x")`, and not `xdotool`'s
+        // reading of the same window: the binding's is the number a recorded rectangle and a
+        // pointer position are both measured against, so it is the one to post relative to. They
+        // are compared rather than assumed equal, because a window manager that frames the client
+        // puts the two apart.
+        if f == 3 && gpui::state_int("phase", 0) == 0 {
+            gpui::set_int("phase", 1)
+            let found = shell("xdotool", #["search", "--name", TITLE])
+            let hits = found.lines()
+            if hits.is_empty() {
+                fail(f"no window named {TITLE} on this display (xdotool said `{found}`)")
+                gpui::quit()
+            } else {
+                let geometry = shell(
+                    "xdotool",
+                    #["getwindowgeometry", "--shell", hits[0].trim().clone()],
+                )
+                let win_x = field(geometry.clone(), "X")
+                let win_y = field(geometry.clone(), "Y")
+                let ox = gpui::window_field("inner_x")
+                let oy = gpui::window_field("inner_y")
+                if !same(win_x, win_y, ox, oy) {
+                    println(f"note MR4 xdotool puts the window at {point(win_x, win_y)} and the binding at {point(ox, oy)}; posting relative to the binding's")
+                }
+                gpui::set_float("origin_x", ox)
+                gpui::set_float("origin_y", oy)
+                let _ = shell("xdotool", move_to(ox, oy, AT_NONE_X, AT_NONE_Y))
+            }
+        }
+
+        // ---- the pointer, one place per phase, three frames of slack after each move ---------
+        //
+        // Each phase reads the place the move three frames back settled on, and then posts the
+        // next move. `gos` blocks that frame inside `exec::run` for the move's own second, so the
+        // motion is queued before the frames after it run; three frames is one more than the one
+        // MP1 measured an event needing to land, and well inside the next phase.
+        let phase = gpui::state_int("phase", 0)
+        let ox = gpui::state_float("origin_x", 0.0)
+        let oy = gpui::state_float("origin_y", 0.0)
+
+        if f == 6 && phase == 1 {
+            gpui::set_int("phase", 2)
+            snapshot("p0")
+            let _ = shell("xdotool", move_to(ox, oy, AT_LEFT_X, AT_LEFT_Y))
+        }
+        if f == 9 && phase == 2 {
+            gpui::set_int("phase", 3)
+            snapshot("p1")
+            let _ = shell("xdotool", move_to(ox, oy, AT_OTHER_X, AT_OTHER_Y))
+        }
+        if f == 12 && phase == 3 {
+            gpui::set_int("phase", 4)
+            snapshot("p2")
+            let _ = shell("xdotool", move_to(ox, oy, AT_RIGHT_X, AT_RIGHT_Y))
+        }
+        if f == 15 && phase == 4 {
+            gpui::set_int("phase", 5)
+            snapshot("p3")
+        }
+
+        // ---- the four places, and the rectangles the answers are built out of -----------------
+        if f == 18 && phase == 5 {
+            expect_flag("`card` with the pointer over nothing", gpui::state_bool("p0.card", true), false)
+            expect_flag("`other` with the pointer over nothing", gpui::state_bool("p0.other", true), false)
+
+            expect_flag("`card` with the pointer over the left member", gpui::state_bool("p1.card", false), true)
+            expect_flag("`other` with the pointer over the left member", gpui::state_bool("p1.other", true), false)
+
+            expect_flag("`card` with the pointer over a member of `other`", gpui::state_bool("p2.card", true), false)
+            expect_flag("`other` with the pointer over a member of `other`", gpui::state_bool("p2.other", false), true)
+
+            expect_flag("`card` with the pointer over the right member", gpui::state_bool("p3.card", false), true)
+            expect_flag("`other` with the pointer over the right member", gpui::state_bool("p3.other", true), false)
+
+            // `group=` is a second way to ask for the box, so a member is still addressable by its
+            // own id and each member answers for its own rectangle. Without this, the phase above
+            // could be satisfied by two members sharing one entry — which is what a member with no
+            // `id=` gets, and what gpui's own registry holds.
+            expect_number("the left member's x", gpui::element_bounds("left", "x"), LEFT_X)
+            expect_number("the left member's y", gpui::element_bounds("left", "y"), LEFT_Y)
+            expect_number("the left member's width", gpui::element_bounds("left", "w"), LEFT_W)
+            expect_number("the left member's height", gpui::element_bounds("left", "h"), LEFT_H)
+            expect_number("the right member's x", gpui::element_bounds("right", "x"), RIGHT_X)
+            expect_number("the right member's width", gpui::element_bounds("right", "w"), RIGHT_W)
+            expect_number("the `other` member's y", gpui::element_bounds("other", "y"), OTHER_Y)
+
+            if gpui::state_int("fails", 0) == 0 {
+                println(f"OK MR4 `gpui::group_hovered` answered by name: true with the pointer over each of two members of `card` on opposite sides of the window, false with the pointer over nothing, over a member of a different group, and — for the same name — over the other member of `card`; and `group=` gave every member its own readable rectangle, read back by its own id through `gpui::element_bounds`")
+            }
+            gpui::quit()
+        }
+
+        // ---- the tree --------------------------------------------------------------------------
+        //
+        // Two members of `card`, one member of `other`, and nothing overlapping: every reading
+        // above is about one box at a time.
+        let left = gpui::rect(f"absolute left={LEFT_X} top={LEFT_Y} w={LEFT_W} h={LEFT_H} bg=#3366ff id=left group=card")
+        let right = gpui::rect(f"absolute left={RIGHT_X} top={RIGHT_Y} w={RIGHT_W} h={RIGHT_H} bg=#3366ff id=right group=card")
+        let other = gpui::rect(f"absolute left={OTHER_X} top={OTHER_Y} w={OTHER_W} h={OTHER_H} bg=#33aa66 id=other group=other")
+
+        let root = gpui::children(gpui::stack("size=full bg=#ffffff"), #[left, right, other])
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

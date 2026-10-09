@@ -146,10 +146,14 @@ fn is_known(key: &str) -> bool {
         // interaction refinements (handled by `view`, listed here so they are
         // not reported as unknown)
         | "hover" | "active" | "focus"
+        // the group this element is a member of, for `gpui::group_hovered`
+        | "group"
         // the keymap context an element puts itself on the stack of
         | "ctx"
         // the scrollbar thumb's colour
         | "thumb"
+        // the element's own box, reported back to the program
+        | "bounds"
         // the editor's own chrome: what it paints that is not a box
         | "caret" | "sel" | "gutter" | "gutterbg" | "gutterfg" | "softwrap"
     ) || is_theme_field(key.strip_prefix("theme.").unwrap_or(""))
@@ -376,6 +380,61 @@ pub fn wants_focus(spec: &str) -> bool {
         "tabstop" | "tabindex" => true,
         _ => false,
     })
+}
+
+/// Whether `spec` asks for its element's own box to be reported back.
+///
+/// The `bounds` token. `gpui::element_bounds(id, field)` answers from a map the *paint* fills, and
+/// until this token existed only two kinds of element were put in it: one carrying a pointer
+/// listener and one carrying a slider. A box that merely wanted to know how big it came out had
+/// nothing to listen with, which made "build a box sized to its content and read back its bounds"
+/// unsayable — the whole of `DW11`'s first clause.
+///
+/// A bare `bounds` counts, and `bounds=0` does not, the same reading [`wants_focus`] gives its own
+/// tokens. A div that asks for it gets an *out-of-flow, unpainted, full-size strip* as its first
+/// child, because gpui hands a div the bounds of its children and never its own
+/// (`Div::on_children_prepainted`, `gpui-0.2.2/src/elements/div.rs:1243`) — the technique round 61
+/// found for the pointer rows, reused here for a box that listens to nothing.
+///
+/// It applies to a `gpui::panel`/`column`/`row`/`stack` box and to `gpui::text`. On an element that
+/// already reports — one with a pointer listener or a slider — it changes nothing, because those
+/// paths record the same box by the same strip.
+pub fn wants_bounds(spec: &str) -> bool {
+    tokens(spec).into_iter().any(|(key, value)| match key.as_str() {
+        "bounds" => value
+            .as_deref()
+            .map(|v| v != "0" && v != "false")
+            .unwrap_or(true),
+        // A group member is read **back as a rectangle** — see [`group`] — so `group=` is the
+        // second way to ask for one, and it is spelled here rather than at each call site
+        // because a member with no rectangle is a member nothing can answer about.
+        "group" => true,
+        _ => false,
+    })
+}
+
+/// The `group=<name>` token in `spec`, if it carries one.
+///
+/// Names the element as a member of a **group**, which is what `gpui::group_hovered` answers
+/// about: a program asks whether any member of a group is under the pointer.
+///
+/// gpui has the same idea as a *style* — `Interactivity::group_hover` (`elements/div.rs:680`)
+/// refines one element while another is hovered — and the binding does not use it, because the
+/// registry that would answer for it is `pub(crate)` (`elements/div.rs:2876`, `GroupHitboxes`) and
+/// because a style refinement is not something a *program* can read. The reading is the half a
+/// program can act on, and it is built out of the one thing the binding does have: the rectangle
+/// an element's box is recorded in (`MOUSE_BOUNDS`), which `group=` therefore asks for the same
+/// way `bounds` does. So a member is a box with a rectangle, and the answer is the pointer
+/// being inside one of them.
+///
+/// The member needs an `id=` as well: two members of one group are told apart by it, and without
+/// one the second member's rectangle overwrites the first's.
+pub fn group(spec: &str) -> Option<String> {
+    tokens(spec)
+        .into_iter()
+        .find(|(key, _)| key == "group")
+        .and_then(|(_, value)| value)
+        .filter(|name| !name.is_empty())
 }
 
 /// The `id=<name>` token in `spec`, if it carries one.

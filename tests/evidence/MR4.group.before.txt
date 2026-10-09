@@ -1,0 +1,92 @@
+MR4 — before (group): at 329133c there is no group a program can ask about, and the name is not
+merely absent from the answer — it is not a name at all.
+
+The row's check — `tests/gui/mr4_group_hover.gos` — against a binding built from 329133c. `check`
+says `ok (38 items typed)` and means nothing by it: `gos check` compiles the binding but resolves no
+`gpui::` name in the program's source, so a probe whose claim the binding cannot answer still
+type-checks.
+
+    $ ./scripts/gosbox.sh tiers tests/gui/mr4_group_hover.gos
+    ok     check: check: ok (38 items typed)
+    FAIL   run: exited 0 — no verdict
+           gpui: unknown style tokens: group=card
+           gpui: noted: unknown style tokens: group=card
+           gpui: unknown style tokens: group=other
+           gpui: noted: unknown style tokens: group=other
+           note MR4 xdotool puts the window at 601.00,480.00 and the binding at 600.00,458.00; posting relative to the binding's
+           gpui: noted: the view callback failed: UnresolvedName("gpui::group_hovered")
+           gpui: noted: the view callback failed: UnresolvedName("gpui::group_hovered")
+           gpui: noted: the view callback failed: UnresolvedName("gpui::group_hovered")
+    FAIL   run-nosjit: exited 0 — no verdict
+           gpui: unknown style tokens: group=card
+           gpui: noted: unknown style tokens: group=card
+           gpui: unknown style tokens: group=other
+           gpui: noted: unknown style tokens: group=other
+           note MR4 xdotool puts the window at 601.00,480.00 and the binding at 600.00,458.00; posting relative to the binding's
+           gpui: noted: the view callback failed: UnresolvedName("gpui::group_hovered")
+           gpui: noted: the view callback failed: UnresolvedName("gpui::group_hovered")
+           gpui: noted: the view callback failed: UnresolvedName("gpui::group_hovered")
+    FAIL   build: exited 1
+           error: build: native backend failed: auditing LLVM IR symbols in /tmp/gos-build-41-learn-gpui/llvm/chunk0.ll: llvm backend internal lowering bug: undefined symbols before LLVM tools: @gpui::group_hovered referenced from snapshot
+    FAIL   build-release: exited 1
+           warning: the static-musl release link is unavailable (the musl target or matching Gossamer runtime is not installed); linking dynamically against the host libc instead. Run `rustup target add aarch64-unknown-linux-musl` and reinstall Gossamer to restore self-contained release binaries.
+           error: build: native backend failed: auditing LLVM IR symbols in /tmp/gos-build-718-learn-gpui/llvm/chunk0.ll: llvm backend internal lowering bug: undefined symbols before LLVM tools: @gpui::group_hovered referenced from __closure_0, snapshot
+
+`tiers` prints at most eight lines of a failed tier's log, and the reading this file is about is
+*below* that cut — the eight lines above are all diagnostics. The whole log, from
+`./scripts/gosbox.sh run tests/gui/mr4_group_hover.gos 60`, is twenty-four lines and ends so:
+
+    FAIL MR4 `card` with the pointer over nothing read true, not false
+    FAIL MR4 `other` with the pointer over nothing read true, not false
+    FAIL MR4 `card` with the pointer over the left member read false, not true
+    FAIL MR4 `other` with the pointer over the left member read true, not false
+    FAIL MR4 `card` with the pointer over a member of `other` read true, not false
+    FAIL MR4 `other` with the pointer over a member of `other` read false, not true
+    FAIL MR4 `card` with the pointer over the right member read false, not true
+    FAIL MR4 `other` with the pointer over the right member read true, not false
+    FAIL MR4 the left member's x read 0.00,0.00, not 20
+    FAIL MR4 the left member's y read 0.00,0.00, not 20
+    FAIL MR4 the left member's width read 0.00,0.00, not 100
+    FAIL MR4 the left member's height read 0.00,0.00, not 80
+    FAIL MR4 the right member's x read 0.00,0.00, not 250
+    FAIL MR4 the right member's width read 0.00,0.00, not 100
+    FAIL MR4 the `other` member's y read 0.00,0.00, not 180
+
+**Fifteen readings, and not one of them is a measurement of anything.** The eight flags each read
+back exactly the value the probe hands `gpui::state_bool` as its **default** — which the probe
+passes as the opposite of what it expects precisely so that a slot no frame ever wrote reads back
+as the failure it is. Eight slots written by no frame, seven rectangles recorded as nothing, and
+the numbers say so. What makes this a before-red rather than an absence of evidence is the
+twenty-four-line log around it: the probe ran, found the window, drove the pointer through four
+places and reached its last phase.
+
+**Four notes, one per snapshot call, and that count is the shape of the failure.** `snapshot`
+(`tests/gui/mr4_group_hover.gos:185`) is two lines and both of them are `gpui::group_hovered`, so a
+frame that reaches it can raise at most the first — the unresolved name aborts the function, not
+the frame, and the frame goes on to build its tree and paint. Frames 6, 9, 12 and 15 call it, and
+the log holds exactly four notes. The frame at 18 is the one that reports, and it calls nothing
+unresolved, which is why there are readings to read at all. `unknown style tokens: group=card` is
+printed twice per name and not once per frame, because the name is not a token the binding knows:
+the box that carries it records no rectangle under its own id, which is the seven `0.00,0.00`
+readings above.
+
+**The two build tiers do not say "no such name".** `check` is the tier this register has always
+called misleading for exactly this reason, but the build tiers are not the plain answer either: the
+native backend refuses the module at its own symbol audit — `llvm backend internal lowering bug:
+undefined symbols before LLVM tools: @gpui::group_hovered referenced from snapshot`, and in release
+`from __closure_0, snapshot`. The `snapshot` it names is the probe's own function, which is where
+the two sides of this file meet: the same four calls the four notes come from. Nothing above is a
+diagnostic a program could act on, and it is the reason the row's before-red is the readings in the
+run tiers and not any line a compiler printed.
+
+**The note line is not a reading.** `xdotool` puts the window at `601.00,480.00` and the binding at
+`600.00,458.00`, which is the window manager's frame against the client area the binding paints in;
+the probe prints the disagreement and then posts every move relative to **its own** origin, so
+nothing below depends on the two agreeing. The same line heads the sibling before-reds.
+
+**The same twenty-four lines, on every run of it.** This is the log as it stands after `scripts/gosbox.sh`
+stopped handing the runner a build from a tree it was no longer staging — the harness defect the
+round-104 entry in `CAPABILITIES.md` records in full. `exit=0` on every run: the program reached its
+last frame and quit, and the two `run` tiers are `exited 0 — no verdict` rather than `124`.
+
+`tests/evidence/MR4.group.after.txt` is the same probe against the working tree.

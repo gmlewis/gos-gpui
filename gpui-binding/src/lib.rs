@@ -913,6 +913,25 @@ gossamer_binding::register_module!(
         view::push(Kind::Plain, format!("flex col overflow=y {}", style), String::new())
     }
 
+    /// A tooltip: what appears over an element while the pointer rests on it.
+    ///
+    /// Made like any other container — `gpui::tooltip("w=auto p=4 bg=#333333 bounds")` and then
+    /// `gpui::child(tooltip, …)` for its content — and given to the element it belongs to the
+    /// same way, `gpui::child(element, tooltip)`. It is **not** drawn beside that element's
+    /// other children: gpui draws it *over* them, at the pointer, half a second after the
+    /// pointer stops moving on the element (`elements/div.rs:48`, `TOOLTIP_SHOW_DELAY`).
+    ///
+    /// Its style is a whole box's, because that is what it is — gpui lays the tooltip out as a
+    /// root of its own with the space its content asks for
+    /// (`gpui-0.2.2/src/window.rs:2102`, `AvailableSpace::min_size()`), which makes `w=auto` mean
+    /// what it means anywhere else and makes the `bounds` token read back a real box inside one.
+    ///
+    /// Nothing here is a *tooltip*: the box, its padding, its background and its sizing are the
+    /// same vocabulary every other element uses, and only the moment it is laid out is gpui's.
+    fn tooltip(style: String) -> i64 {
+        view::push(Kind::Tooltip, style, String::new())
+    }
+
     // -----------------------------------------------------------------
     // measuring text
     // -----------------------------------------------------------------
@@ -944,6 +963,39 @@ gossamer_binding::register_module!(
     /// widest digit rather than from a guess. Answers `0.0` for an empty string.
     fn text_advance(ch: String, style: String) -> f64 {
         view::text_advance(&ch, &style)
+    }
+
+    /// Where character `index` begins, in pixels from the start of the run.
+    ///
+    /// The hit test upstream's `input.rs` paints a caret and a selection with —
+    /// `bounds.left() + line.x_for_index(cursor)` — asked of a run that is not the
+    /// editor: "where did the third character of this word end up?", "how wide is
+    /// everything before the comma?", "put my marker there".
+    ///
+    /// `index` is a **byte** offset into `text`, the unit `gpui::text_line*` offsets
+    /// and the editor's own caret use. `0.0` at the start of the run, and the run's
+    /// whole width — what [`gpui::text_width`] answers — at or past its end, so a
+    /// program can walk a line without measuring it first. A newline is flattened
+    /// into a space, as it is for every measurement here.
+    fn text_x_of_index(text: String, index: i64, style: String) -> f64 {
+        view::text_x_of_index(&text, index, &style)
+    }
+
+    /// Which character boundary lies nearest `x` — the inverse of
+    /// [`gpui::text_x_of_index`].
+    ///
+    /// A click becomes a caret position with this; a caret position becomes a pixel
+    /// with the other. Answers a byte offset: `0` for an `x` at or before the run's
+    /// start, and between two characters the nearer of the two. The one boundary that
+    /// is not a character's own start is the end of the line, so an `x` past the last
+    /// character answers the run's **length** — `LineLayout::closest_index_for_x`
+    /// (`gpui-0.2.2/src/text_system/line_layout.rs:75`) walks character starts and
+    /// falls through to the line's length, and this is that function. Together with
+    /// `gpui::element_bounds` on the run's own box — `x` is a coordinate *inside* that
+    /// box, so subtract its `x` first — this is a program's whole hit test, which is
+    /// what upstream's `input.rs:181` does with it.
+    fn text_index_at(text: String, x: f64, style: String) -> i64 {
+        view::text_index_at(&text, x, &style)
     }
 
     /// The `gpui::HighlightStyle` properties a highlight's property half sets,
@@ -1337,8 +1389,69 @@ gossamer_binding::register_module!(
     }
 
     /// A raster image loaded from a file path.
+    ///
+    /// The path resolves through [`gpui::asset_path`], so a program that declared a root gets
+    /// its assets from there. [`gpui::image_request`] is this with the two subtrees an image
+    /// can draw instead of itself.
     fn image(path: String, style: String) -> i64 {
-        view::push(Kind::Image(path), style, String::new())
+        view::push(Kind::Image { path, loading: 0, fallback: 0 }, style, String::new())
+    }
+
+    /// A raster image with a loading subtree and a fallback subtree.
+    ///
+    /// `loading` and `fallback` are handles to elements the program has described — `0` for
+    /// none. While the load is in flight the element draws `loading` in place of the picture,
+    /// once `LOADING_DELAY` (200ms) has passed since the load started; if the load fails it
+    /// draws `fallback`. With neither subtree it behaves exactly as [`gpui::image`].
+    ///
+    /// The rule is GPUI's own (`elements/img.rs:366-401`) — the state of the ordinary image
+    /// loader, which is also what upstream's `Img::with_loading` / `Img::with_fallback` read —
+    /// and [`gpui::image_state`] reports which subtree was drawn, which is the only way a
+    /// program can hear that an image failed. [`gpui::image_missing`] answers the fallback's
+    /// condition without a window.
+    ///
+    /// The subtrees are drawn *in place of* the picture, under the image's own style, so they
+    /// are not this element's children and must not also be attached with [`gpui::child`].
+    fn image_request(path: String, style: String, loading: i64, fallback: i64) -> i64 {
+        view::push(Kind::Image { path, loading, fallback }, style, String::new())
+    }
+
+    /// What the image element `id` drew the last time it was rendered: `"image"`, `"loading"`,
+    /// `"fallback"` or `"blank"`.
+    ///
+    /// `""` means this window has not rendered an image by that id. `blank` is a picture that
+    /// is not there yet and has no loading subtree, or one that failed with no fallback — the
+    /// two are deliberately the same word, because they are the same picture. Like the other
+    /// readers here it is one frame behind the tree it reports on.
+    fn image_state(id: String) -> String {
+        view::image_state(crate::window::current(), &id)
+    }
+
+    /// Whether the image named `name` would draw its fallback subtree, because there is no
+    /// readable file at the path it resolves to.
+    ///
+    /// This is the fallback's own condition, and it is what a program can check without a
+    /// window: an image's source is always a filesystem path, so "the loader will fail" and
+    /// "there is no regular file here" are the same statement. A directory answers `true` —
+    /// `fs::read` on one is an error, so the loader would fail there too — and a path that is
+    /// not a readable regular file (a device, a pipe) is not an image asset at all, which is
+    /// the one kind of source the rule does not speak for.
+    fn image_missing(path: String) -> bool {
+        view::image_missing(&path)
+    }
+
+    /// Throw away what GPUI has loaded for the image at `path`, so the next frame loads it
+    /// again from the beginning — the loading subtree, then the picture or its fallback.
+    ///
+    /// Upstream's `image_loading.rs` hangs this off a click on every cell
+    /// (`cx.remove_asset::<..>(..)`), which is how its examples are meant to be re-run without
+    /// restarting the program. The whole of the caching is one entry in the app's
+    /// `loading_assets` map, keyed by the asset type and a hash of the source, and it is the
+    /// same entry a plain [`gpui::image`] reads — the binding never pushes an image cache of
+    /// its own — so this forgets the picture for both. A path nothing has loaded yet is not an
+    /// error: there is nothing to forget.
+    fn image_evict(path: String) {
+        store::request(store::Request::ForgetAsset { path })
     }
 
     /// An SVG, tinted by the style's `color=`.
@@ -1588,9 +1701,47 @@ gossamer_binding::register_module!(
     // -----------------------------------------------------------------
 
     /// Report pointer events for `element`. `kinds` is any of
-    /// `down`, `up`, `move`, `click`, `right`, and each one raises
+    /// `down`, `up`, `move`, `click`, `right`, `scroll`, `exit`, and each one raises
     /// `"<id>|<kind>"` and writes `<id>.x` / `<id>.y` into the state store,
     /// relative to the element's own top-left corner.
+    ///
+    /// Three of the kinds write more than a position:
+    ///
+    ///   * `down`, `up`, `click` and `right` also write **`<id>.count`**, the platform's own
+    ///     count of consecutive clicks — `1` for a single click, `2` for the second of a double
+    ///     click, and so on. It is the platform's number and not one a program can compute: the
+    ///     interval that decides whether two presses are one gesture or two is the backend's
+    ///     (`gpui-0.2.2/src/platform/linux/x11/client.rs:1103`, `DOUBLE_CLICK_INTERVAL`).
+    ///   * `scroll` also writes **`<id>.dx`** / **`<id>.dy`**, the wheel's delta, and
+    ///     **`<id>.scroll_lines`**, which says what unit those two are in: `true` for a notched
+    ///     wheel's *lines*, `false` for a precise device's *pixels*. They are not the same unit
+    ///     and both arrive here, so the slot alone would not say which.
+    ///   * `exit` is the pointer leaving the element, and it is the odd one out. gpui gives an
+    ///     element no exit event, so this is the **transition of the element's own hover**, which
+    ///     gpui evaluates on a mouse *move* (`elements/div.rs:2270`). Two consequences, both real:
+    ///     the point it reports is the one the pointer was last seen at — where it left from, not
+    ///     where it went — and it needs one more move to arrive at all. A pointer that leaves the
+    ///     *window* produces no further move, so use [`gpui::on_mouse_window`]'s `exit` for that:
+    ///     it is `MouseExitEvent`, gpui reports it directly, and it carries its own position.
+    ///
+    /// `scroll` is also gated differently from the rest: gpui asks
+    /// `hitbox.should_handle_scroll(window)` (`elements/div.rs:318`), which tests the whole
+    /// hit-test list, where `down`/`up`/`move` ask `hitbox.is_hovered(window)` (`:128`), which
+    /// tests only the hovered prefix. So the wheel reaches an element with something on top of
+    /// it, and the presses do not.
+    ///
+    /// **`down!` is `down` plus a stop.** Any kind word may carry a trailing `!`, which asks for
+    /// the same report **and** for the event to stop where it landed: the listener calls
+    /// `cx.stop_propagation()` before it returns, so no listener registered earlier hears it.
+    /// `"down! up"` reports both and stops only the press.
+    ///
+    /// gpui's dispatch runs the capture pass in registration order and then the bubble pass over
+    /// the same list reversed, breaking out of each the moment `cx.propagate_event` goes false
+    /// (`gpui-0.2.2/src/window.rs:3695-3714`), and elements register in paint order — parents
+    /// before children. The reverse order is therefore child-first, and what a stop withholds the
+    /// event from is the **ancestors**. That is what a stop is for here: a control that handles
+    /// its own presses without the panel around it also reacting. The stop is about the one event
+    /// and not the next — `cx.propagate_event` is reset for every event (`window.rs:3584`).
     ///
     /// **Heard only while the pointer is over the element.** gpui gates every element
     /// listener on the element's hitbox being hovered
@@ -1612,10 +1763,11 @@ gossamer_binding::register_module!(
 
     /// Report pointer events for `element` **wherever the pointer is**, not only over it.
     ///
-    /// `kinds` is any of `down`, `up` and `move` — the same names [`gpui::on_mouse`] takes,
-    /// and the same three it reports, so a program reading `"<id>|<kind>"` cannot tell the
-    /// two apart. They are read as words: `"down up move"` and `"down,up,move"` name the same
-    /// three. What differs is where the pointer had to be for the event to arrive:
+    /// `kinds` is any of `down`, `up`, `move`, `exit` and `scroll` — the same names
+    /// [`gpui::on_mouse`] takes, and the same payloads it writes, so a program reading
+    /// `"<id>|<kind>"` cannot tell the two apart. They are read as words: `"down up move"` and
+    /// `"down,up,move"` name the same three. What differs is where the pointer had to be for the
+    /// event to arrive:
     /// these are registered on the **window**, through `Window::on_mouse_event`, whose
     /// listeners gpui dispatches for every mouse event wherever it lands
     /// (`gpui-0.2.2/src/window.rs:3421`, `:3677-3714`). `click` and `right` are not among
@@ -1630,11 +1782,26 @@ gossamer_binding::register_module!(
     /// `thumb_bounds.contains(&ev.position)` does; without a gate, every press anywhere in
     /// the window is reported.
     ///
+    /// **`exit` here means the pointer left the window**, which is the only `exit` that
+    /// arrives without the pointer having to move again afterwards. gpui's element-level exit is
+    /// a change of hover, and gpui evaluates hover on a mouse move
+    /// (`gpui-0.2.2/src/elements/div.rs:2270`), so a pointer that leaves the window and stops
+    /// produces no element-level exit at all. `MouseExitEvent` is dispatched from the platform
+    /// directly (`src/platform/linux/x11/client.rs:1233`) and carries its own position, so
+    /// listening for `exit` here is how a program learns the pointer has gone for good. A drag
+    /// that runs off the edge of the window is the case that needs it.
+    ///
     /// **It is live, not installed.** The listeners are registered while the frame that
     /// draws the element is being painted, and gpui dispatches them for the mouse events
     /// that follow — then clears the list when the next frame is drawn (`window.rs:743`).
     /// So an element a program stops drawing stops hearing its events one frame later, and
     /// there is no way to leave a window-wide listener behind or to undo one.
+    ///
+    /// The `!` suffix [`gpui::on_mouse`] documents works here too, and stops among the window
+    /// listeners rather than among elements: a window listener runs in gpui's bubble pass over
+    /// `Window::mouse_listeners`, so `"down!"` here withholds the press from the window listeners
+    /// registered *before* it and does not stop an element's own listener at all. Reaching for it
+    /// is usually a sign the gate on [`gpui::element_bounds`] is the thing wanted instead.
     fn on_mouse_window(element: i64, kinds: String, id: String) -> i64 {
         view::push(
             Kind::Mouse {
@@ -1743,6 +1910,37 @@ gossamer_binding::register_module!(
     /// The pointer's position in the window.
     fn mouse_position() -> (f64, f64) {
         view::mouse_position()
+    }
+
+    /// Whether any element that declared `group=<name>` is under the pointer right now.
+    ///
+    /// The `group=<name>` style token names an element as a member of a group, and this answers
+    /// the one question a program can ask about one: whether the pointer is over **any** member.
+    /// It is the reading half of gpui's `group_hover` (`gpui-0.2.2/src/elements/div.rs:680`),
+    /// which refines *one* element's style while *another* is hovered — a card that lifts when
+    /// the pointer is over anything inside it. The style refinement is not what a program can
+    /// act on; this is.
+    ///
+    ///     gpui::row("id=card group=card p=8")      // the member: needs `id=` and gets a box
+    ///     gpui::text("Save", "id=save group=card") // a second member, told apart by its own id
+    ///     if gpui::group_hovered("card") { .. }    // true while the pointer is over either
+    ///
+    /// A member is read as a **rectangle** — `group=` asks for one the way `bounds` does, and
+    /// [`gpui::element_bounds`] then answers for the member by its own `id` — so a member with no
+    /// `id=` is invisible to this, and two members of one group are told apart by their ids.
+    ///
+    /// **It is this frame's pointer, and a rectangle test.** The position is the one
+    /// [`gpui::mouse_position`] reads, taken from the window at the start of the frame, so the
+    /// answer is about the frame being built rather than the last event. And a member covered by
+    /// something drawn over it still answers `true`, where gpui's own `hitbox.is_hovered` would
+    /// answer `false`; a group is a box on screen either way, but it is not the same test.
+    ///
+    /// The reading is not `on_hover`: gpui's `on_hover` is a **single slot**, filled once per
+    /// element (`elements/div.rs:525`), and an element needing both a hover and this would be
+    /// fighting itself for it. This asks about rectangles the frame already recorded and takes no
+    /// slot at all.
+    fn group_hovered(name: String) -> bool {
+        view::group_hovered(&name)
     }
 
     /// Move focus to the next focusable element.
@@ -2155,6 +2353,78 @@ gossamer_binding::register_module!(
     /// does: fill the display's work area, or go back to the size it had.
     fn zoom_window() {
         store::request(store::Request::ZoomWindow)
+    }
+
+    /// Who draws the window's decoration: `"server"` (the window manager draws the
+    /// titlebar and the frame) or `"client"` (the program does).
+    ///
+    /// This is the platform's **answer to a request**, not a record of one. A program
+    /// that draws its own titlebar asks for `"client"` with
+    /// [`gpui::request_window_decorations`] and then reads this to find out whether it
+    /// got it: an X11 window manager with no compositor refuses, and goes on answering
+    /// `"server"`, because the client cannot draw a frame the server is also drawing.
+    ///
+    /// Read at the start of every frame, so it is the state as of this frame and can
+    /// change under a program — a maximized window is no longer tiled, and this is the
+    /// same reading `gpui::Decorations` is.
+    fn window_decorations() -> String {
+        view::decorations().0.to_string()
+    }
+
+    /// Ask the platform who draws the window's decoration.
+    ///
+    /// `true` asks to draw them itself — the program supplies the titlebar, the drag
+    /// and the resize band — and `false` asks for the platform's own. A **request**:
+    /// what a program got is [`gpui::window_decorations`]. On macOS neither is a
+    /// request the platform hears (`PlatformWindow::request_decorations` is a no-op
+    /// default there, `gpui-0.2.2/src/platform.rs:534`), so the window keeps its
+    /// system titlebar however it is asked — see `CAPABILITIES.md`, "Unreachable".
+    fn request_window_decorations(client: bool) {
+        store::request(store::Request::RequestDecorations { client })
+    }
+
+    /// How wide a strip the program has set aside for its own window decoration.
+    ///
+    /// The width of the titlebar a program draws itself, and of the border it draws its
+    /// resize band in: the platform is told so that anything *it* draws around the
+    /// window — a shadow, a frame — sits outside that strip rather than over it. `0`
+    /// until [`gpui::set_client_inset`] has been called, which is the platform's own
+    /// initial state.
+    fn client_inset() -> f64 {
+        view::decorations().1
+    }
+
+    /// Set aside `px` columns for the program's own window decoration.
+    ///
+    /// Read back with [`gpui::client_inset`]. On X11 this is written straight onto the
+    /// window as `_GTK_FRAME_EXTENTS`, so a program can check that the window manager's
+    /// server heard it and not merely that the binding remembered it.
+    fn set_client_inset(px: f64) {
+        store::request(store::Request::SetClientInset { px })
+    }
+
+    /// Hand the window to the window manager to be dragged, until the button that asked
+    /// comes up.
+    ///
+    /// This is what a program-drawn titlebar calls when it is pressed: gpui reads the
+    /// pointer where it is and asks the window manager to take the window from there, so
+    /// the program passes no coordinates — the press *is* the coordinates. On X11 that
+    /// is the `_NET_WM_MOVERESIZE` client message, and the window manager moves the
+    /// window itself from then on. A no-op on macOS (`platform.rs:536`).
+    fn start_window_move() {
+        store::request(store::Request::StartWindowMove)
+    }
+
+    /// Hand the window to the window manager to be resized by `edge`, until the button
+    /// comes up.
+    ///
+    /// `edge` is one of `top-left`, `top`, `top-right`, `right`, `bottom-right`,
+    /// `bottom`, `bottom-left`, `left` — the eight variants of `gpui::ResizeEdge`,
+    /// spelled out. Anything else is reported rather than guessed at: a program that
+    /// says `"bottomleft"` is told, because a resize by the wrong edge is a *silently*
+    /// wrong window. A no-op on macOS (`platform.rs:537`).
+    fn start_window_resize(edge: String) {
+        store::request(store::Request::StartWindowResize { edge })
     }
 
     /// One window option, as the window itself answers it.

@@ -226,6 +226,21 @@ pub enum Request {
     ToggleFullscreen,
     /// Zoom (maximize) the window, or put it back to the size it had.
     ZoomWindow,
+    /// Ask the platform who draws the window's decoration: the window manager
+    /// (`false`) or the program itself (`true`).
+    RequestDecorations { client: bool },
+    /// Tell the platform how wide the invisible strip a program draws its own
+    /// window decoration in is, so that anything the platform draws around the
+    /// window is offset by it.
+    SetClientInset { px: f64 },
+    /// Hand the window to the window manager to be dragged until the button that
+    /// asked for it comes up. This is what a program-drawn titlebar calls on a
+    /// press, and it is `gpui::Window::start_window_move`.
+    StartWindowMove,
+    /// Hand the window to the window manager to be resized by `edge`, for as long
+    /// as the button is held. `edge` is one of `top-left`, `top`, `top-right`,
+    /// `right`, `bottom-right`, `bottom`, `bottom-left`, `left`.
+    StartWindowResize { edge: String },
     /// Set the window's rem size, which every `rem` length and every ramp size
     /// is measured against.
     SetRemSize { px: f64 },
@@ -251,6 +266,9 @@ pub enum Request {
     SetTheme { name: String },
     /// Put `text` on the system clipboard.
     SetClipboard { text: String },
+    /// Throw away what has been loaded for the asset at `path`, so the next frame
+    /// loads it again.
+    ForgetAsset { path: String },
 }
 
 /// Pending requests, one queue per window. A frame is answered by the window it

@@ -32,11 +32,6 @@
 // `cx.text_context` nor `rem_size`, which is what the placeholder asked for.
 //
 // Deviations:
-//   * `cx.set_menus` is not called; the binding owns the macOS menu bar and
-//     exposes no API for it. Upstream installs one empty menu named "GPUI
-//     Typography", so that name is missing from the menu bar and nothing else
-//     is. This is the only API the example reaches for that the binding does
-//     not publish, and no element in the window depends on it.
 //   * `cx.init_colors()` is not called: the binding runs it once at startup
 //     (gpui-binding/src/app.rs), which is what makes `default_color` work.
 //   * The type scale is derived in f64 here against f32 upstream, so a
@@ -183,6 +178,21 @@ fn main() {
     // px(0.0)), size(px(920.), px(720.))))`; `pos=0,0` is that placement, and the
     // title is upstream's.
     let outcome = gpui::run_with("GPUI Typography", 920.0, 720.0, "pos=0,0", || {
+        // Upstream installs its one menu from `Application::run`'s closure,
+        // before it opens the window:
+        //
+        //     cx.set_menus(vec![Menu { name: "GPUI Typography".into(), items: vec![] }]);
+        //
+        // An empty menu is a name in the menu bar and nothing under it, which is
+        // all upstream asks for and all this passes. `gpui::set_menus` is a
+        // request the binding runs after the frame, so the first frame is where
+        // it belongs — and the flag keeps a Gossamer rebuild from re-installing
+        // it every frame.
+        if !gpui::state_bool("menus", false) {
+            gpui::set_bool("menus", true)
+            gpui::set_menus("GPUI Typography", #[])
+        }
+
         // `div().size_full()` with no direction of its own; `ui::panel` is the
         // same bare `div()`.
         ui::panel("size=full")

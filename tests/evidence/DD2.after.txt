@@ -1,0 +1,118 @@
+DD2 — after: gpui's own drag protocol, all four of its states, reaching the program.
+
+The row is "drag threshold, drag-over/move states and drop-target feedback". The register had
+it classified as route **A** — *add to the binding's event-kind vocabulary* — on the strength
+of a finding from round 31: `InteractiveElement::on_drag_move` exists upstream but the binding
+"cannot register one", so a program could never hear a drag. That finding is wrong, and the
+row's own text said so before this round's work: `on_drag_move` is a fluent method on any
+element, and the binding's `on_mouse` already wraps elements it owns. What the binding could
+not do was make one *fire*, because it had no drag to move.
+
+--- the row's own check, against a binding built from 329133c
+
+`gos check` does not resolve `gpui::` names, so the red is the run, in the container. At HEAD
+the four kinds are not registered at all: the press lands, no drag arms, and the source and the
+target hear nothing. The probe's phase machine is driven by readings, so it stalls at the first
+one and prints seven FAILs rather than fifteen.
+
+    $ ./scripts/gosbox.sh tiers tests/gui/dd2_drag_states.gos
+    ok     check: check: ok (37 items typed)
+    FAIL   run: exited 0 — no verdict
+           note DD2 xdotool puts the window at 451.00,380.00 and the binding at 450.00,358.00; posting relative to the binding's
+           FAIL DD2 the `drag` the source raised read 0, not 1
+           FAIL DD2 the target's `over` while a payload is over it read false, not true
+           FAIL DD2 the `over` the target raised read 0, not 1
+           FAIL DD2 the payload the target was handed read ``, not `src`
+           FAIL DD2 the target's `over` after the drag left it read true, not false
+           FAIL DD2 the `out` the target raised read 0, not 1
+           FAIL DD2 the target's `over` when the drag came back read false, not true
+    FAIL   run-nosjit: exited 0 — no verdict
+           note DD2 xdotool puts the window at 451.00,380.00 and the binding at 450.00,358.00; posting relative to the binding's
+           FAIL DD2 the `drag` the source raised read 0, not 1
+           FAIL DD2 the target's `over` while a payload is over it read false, not true
+           FAIL DD2 the `over` the target raised read 0, not 1
+           FAIL DD2 the payload the target was handed read ``, not `src`
+           FAIL DD2 the target's `over` after the drag left it read true, not false
+           FAIL DD2 the `out` the target raised read 0, not 1
+           FAIL DD2 the target's `over` when the drag came back read false, not true
+    ok     build: build: 85015112B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+    ok     build-release: build: 24582760B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+--- green
+
+    $ ./scripts/gosbox.sh tiers tests/gui/dd2_drag_states.gos
+    ok     check: check: ok (37 items typed)
+    ok     run: OK DD2 gpui's own drag protocol reached the program: a press on the source that moved past `DRAG_THRESHOLD` armed a drag and raised `drag`; a target heard `over` while the payload was over it and `out` when it left, each once per crossing; the release over it raised `drop`, carrying the source's own payload in `<id>.drag_value` and the point in the target's own space; and a second drag released on empty window raised a second `drag` and no second `drop`
+    ok     run-nosjit: OK DD2 gpui's own drag protocol reached the program: a press on the source that moved past `DRAG_THRESHOLD` armed a drag and raised `drag`; a target heard `over` while the payload was over it and `out` when it left, each once per crossing; the release over it raised `drop`, carrying the source's own payload in `<id>.drag_value` and the point in the target's own space; and a second drag released on empty window raised a second `drag` and no second `drop`
+    ok     build: build: 85439624B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+    ok     build-release: build: 25635104B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+--- what made it fire
+
+Four kinds, and they are two ends of one gesture rather than four of a kind.
+
+`drag` makes the element a **source**. It is `InteractiveElement::on_drag::<String, DragPreview>`
+(`gpui-0.2.2/src/elements/div.rs:499`), whose payload is the element's own id, and whose drag
+image is a `DragPreview` entity that re-renders the element's subtree under the pointer — so a
+drag looks like the thing being dragged, which is what makes this the protocol and not a
+notification. gpui arms it itself: the press is stored when it lands on the hovered hitbox, and
+any later move while the button is down and the pointer has travelled more than
+`DRAG_THRESHOLD` past the press takes the listener and sets `cx.active_drag`
+(`elements/div.rs:2122-2185`). **The threshold is gpui's and the program never sees it** — which
+is the row's first clause, and the probe checks it by moving less than a threshold first and
+reading nothing.
+
+`over` and `drop` make the element a **target**, and `over` is two events, not one:
+`"<id>|over"` when the payload crosses in and `"<id>|out"` when it crosses out, with the state in
+`<id>.over`. The state and the transition are both needed — the state is what a drop target
+paints itself from, the transition is what a program counts — and the probe asserts them
+separately for exactly that reason.
+
+--- the bug this round found, which was not in the drag protocol at all
+
+The first green attempt was not green: the source raised `drag` twice and the target heard
+nothing at all — no `over`, no `out`, no `drop`, no payload. The reading that suggested itself
+was that the X server had merged two motions into one, so the move that *armed* the drag was
+also the move that entered the target — a move too late for a listener that runs on the capture
+pass (`elements/div.rs:282-296`) of the very event whose bubble pass arms the drag
+(`:2151-2175`). That was wrong. A window-level `move` listener on the source, added as a
+temporary instrument, showed gpui being handed **eight** moves for the eight the probe posted,
+in order, with both motions of the first gesture among them: the moves arrived, the drag armed,
+and only the report was missing.
+
+`window::current()` is `0` inside any gpui listener that runs after the frame that registered
+it. Only the frame itself runs inside `window::with` (`gpui-binding/src/app.rs:52`), so a
+reporter that reaches for the current window there writes into the window that does not exist,
+and the probe — which *is* a frame — never sees it. Every other reporter in `view.rs` is handed
+a captured `win` by its caller for that reason; these two read their own. They do not now, and
+the same mistake would have been invisible in a probe that only asserted a count.
+
+The instrument stayed only long enough to disprove the compression story and is gone; the
+probe's header records that the story was wrong, because a plausible diagnosis left in a
+comment is worse than no comment.
+
+--- the event stream, which reads like the protocol
+
+With the reports landing, the probe prints the whole gesture, and the order is a reading of
+gpui's dispatch rather than of the probe:
+
+    win|move  win|move  src|drag  tgt|over  win|move  tgt|out  win|move
+    tgt|over  win|move  tgt|drop  win|move  win|move  src|drag  win|move
+
+`tgt|over` precedes the `win|move` of the same event, because `over` fires on the capture pass
+and the window-level listener on the bubble pass. Both motions of the first gesture are in the
+stream, which is what the window-level listener was added to prove.
+
+--- the other half, and what is not claimed
+
+**`over` is decided by the binding, not by gpui.** gpui's `on_drag_move` is gated on the drag's
+type and on the dispatch phase, *not* on hover (`elements/div.rs:282-296`), so every element
+carrying the listener hears every move of a drag — the binding compares the point against
+`event.bounds` to decide in or out. That is the same test gpui's own hit-testing uses for a
+plain hover, so it agrees in every case the probe can build; it does not respect z-order, so a
+drag over a stack of two overlapping targets is reported to both. Nothing in the row asks for
+that, and nothing upstream does it either, but it is not the same thing as `hitbox.is_hovered`.
+
+The macOS half of this row is not claimed here and does not need to be: the drag protocol is
+gpui's own and runs above the platform, and `dd2_drag_states.gos` drives it through a real X
+server in the container. `tests/evidence/DD2.before.txt` is the same probe against 329133c.

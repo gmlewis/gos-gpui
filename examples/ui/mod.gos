@@ -79,6 +79,12 @@ impl El {
         self.child(image(path, style))
     }
 
+    /// An image with the loading and fallback subtrees GPUI swaps in for it; see
+    /// `ui::image_request`.
+    pub fn image_request(&self, path: String, style: String, loading: Option<El>, fallback: Option<El>) -> El {
+        self.child(image_request(path, style, loading, fallback))
+    }
+
     /// Text with per-byte-range highlights; see `ui::styled_text`.
     pub fn styled_text(&self, content: String, highlights: Vec<String>, style: String) -> El {
         self.child(styled_text(content, highlights, style))
@@ -101,17 +107,62 @@ impl El {
     }
 
     /// Report pointer events for this element. `kinds` is any of `down`,
-    /// `up`, `move`, `click`, `right`; each raises `"<id>|<kind>"` and writes
-    /// `<id>.x` / `<id>.y` into the state store, relative to this element's
-    /// top-left corner.
+    /// `up`, `move`, `click`, `right`, `scroll`, `exit`; each raises
+    /// `"<id>|<kind>"` and writes `<id>.x` / `<id>.y` into the state store,
+    /// relative to this element's top-left corner.
+    ///
+    /// Three of the kinds write more than a point: `down`, `up` and `click`
+    /// also put the platform's own click count in `<id>.count` — 2 for the
+    /// second press of a double click — and `scroll` puts the wheel's delta in
+    /// `<id>.dx` / `<id>.dy`, with `<id>.scroll_lines` saying whether that is a
+    /// count of lines or of pixels.
+    ///
+    /// Any kind word may carry a trailing `!`, which asks for the report **and**
+    /// for the event to stop where it landed: `"down!"` reports the press and
+    /// keeps it from going on, and `"down! up"` reports both and stops only the
+    /// press. What a stop withholds the event from is the element's
+    /// **ancestors** — gpui dispatches to the child before the parent — so it is
+    /// how a control handles its own presses without the panel around it
+    /// reacting too. `El::on_mouse_window` takes the same `!` and stops among
+    /// the window's own listeners instead.
+    ///
+    /// An element whose style carries `group=<name>` is a **member** of that
+    /// group, and `gpui::group_hovered("<name>")` answers whether the pointer is
+    /// over any member of it. That is the reading half of gpui's `group_hover`,
+    /// which refines one element's style while another is hovered; it is the
+    /// half a program can act on. A member needs an `id=` of its own, and gets a
+    /// readable rectangle the way `bounds` does, so `gpui::element_bounds`
+    /// answers for it by that id.
+    ///
+    /// Three more are the **drag** states, and they are two ends of one
+    /// gesture rather than three of a kind. `drag` makes this element a
+    /// *source*: gpui arms a real drag once the pointer has moved more than its
+    /// own `DRAG_THRESHOLD` past the press, carries this element's id as the
+    /// payload, and draws the element under the pointer while it is in flight.
+    /// `over` and `drop` make it a *target*: `over` raises `"<id>|over"` while a
+    /// drag is inside it and `"<id>|out"` when it leaves, writing
+    /// `<id>.over` — the state, true while the payload is over it — and `drop`
+    /// raises `"<id>|drop"` when the release lands inside it. All four write the
+    /// payload to `<id>.drag_value`, so a target knows *what* is over it, and
+    /// `drag`/`over`/`out`/`drop` are the four words `kinds` reads.
     pub fn on_mouse(&self, kinds: String, id: String) -> El {
         let handle: i64 = self.into()
         gpui::on_mouse(handle, kinds, id).into()
     }
 
     /// Report pointer events for this element **wherever the pointer is**, not
-    /// only while it is over the element. `kinds` is any of `down`, `up` and
-    /// `move`, and each raises `"<id>|<kind>"` exactly as `on_mouse` does.
+    /// only while it is over the element. `kinds` is any of `down`, `up`,
+    /// `move`, `scroll` and `exit`, and each raises `"<id>|<kind>"` exactly as
+    /// `on_mouse` does.
+    ///
+    /// `exit` is the one that means something different here: at element level
+    /// it is the pointer leaving *the element*, and at window level — this call
+    /// — it is the pointer leaving *the window*.
+    ///
+    /// A kind word may carry a trailing `!`, as in `El::on_mouse`, and here it
+    /// stops among the window's listeners: the press stops being offered to the
+    /// window listeners registered *before* this one, and an element's own
+    /// listener is not touched at all.
     ///
     /// This is how a drag is kept alive after the pointer has left the element
     /// it began on — upstream's own instrument for the data table's scrollbar.
@@ -198,6 +249,32 @@ pub fn progress(value: f64, style: String) -> El { gpui::progress(value, style).
 pub fn icon(path: String, style: String) -> El { gpui::icon(path, style).into() }
 
 pub fn image(path: String, style: String) -> El { gpui::image(path, style).into() }
+
+/// An image that draws one of two subtrees in the picture's place: `loading`
+/// while the load is in flight and past GPUI's `LOADING_DELAY` (200ms), and
+/// `fallback` if the load failed. `None` for either means the image draws
+/// nothing there, which is what a plain `ui::image` does for both.
+///
+/// This is GPUI's own `Img::with_loading` / `with_fallback`, decided from the
+/// loader's real state rather than from a closure. Handed over, not chained on:
+/// the binding draws them under this element's style, so they must **not** also
+/// be attached with `.child(..)`.
+///
+/// `gpui::image_state(id)` reads back which of the four it drew — `image`,
+/// `loading`, `fallback` or `blank` — and `gpui::image_evict(path)` throws the
+/// loaded bytes away so the next frame loads again.
+pub fn image_request(path: String, style: String, loading: Option<El>, fallback: Option<El>) -> El {
+    gpui::image_request(path, style, subtree_of(loading), subtree_of(fallback)).into()
+}
+
+/// A subtree handle, or `0` for "none" — the binding's own spelling of it.
+fn subtree_of(el: Option<El>) -> i64 {
+    let mut handle: i64 = 0
+    if let Some(node) = el {
+        handle = handle_of(node)
+    }
+    handle
+}
 
 pub fn rect(style: String) -> El { gpui::rect(style).into() }
 

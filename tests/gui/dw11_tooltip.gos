@@ -1,0 +1,274 @@
+// DW11, the tooltip clause — a tooltip is a box sized to its content, drawn over its target at
+// the pointer, and it is not there at all until the pointer rests.
+//
+// container: the tooltip is raised by a real pointer resting on a real window for half a
+// second, and that pointer is driven from outside the process by `xdotool` through XTEST. The
+// Mac has no X server to receive it — and `scripts/window-guard.sh` keeps a window from opening
+// there at all — so `scripts/probes.sh` and `scripts/tiers.sh` skip this one by name:
+//
+//   ./scripts/gosbox.sh tiers tests/gui/dw11_tooltip.gos
+//
+// # What this exists for
+//
+// "Tooltip sizing" is the third thing the DW11 row asks for, and the only one of the three that
+// is about a *second* layout: gpui does not lay a tooltip out beside the element it belongs to.
+// It lifts it out and lays it out as **a root of its own**, at the pointer, with
+// `AvailableSpace::min_size()` — `Window::prepaint_tooltip`, `gpui-0.2.2/src/window.rs:2102` —
+// half a second after the pointer stops moving on the target (`TOOLTIP_SHOW_DELAY`,
+// `elements/div.rs:48`). Everything the binding says about a box is a statement about gpui's
+// layout, so a box inside a tooltip is where those statements have to be re-measured rather
+// than assumed to carry over.
+//
+// # Pass means all five
+//
+//   * **absent**: before the pointer has been anywhere near the target, the tooltip's box
+//     reports nothing at all — the whole subtree does not exist;
+//   * **it appears**: after the pointer is posted onto the target and left there, the box
+//     shows up, which is the pointer, the hitbox and gpui's own 500ms clock all working;
+//   * **sized to its content**: its width is its own padding plus the run of text inside it,
+//     read back rather than predicted — and its height is the text's plus that padding too;
+//   * **at the pointer**: its top-left corner is the pointer's own position plus the one-pixel
+//     offset gpui puts it at, read back from the tooltip's own box rather than from the style
+//     that asked for it;
+//   * **not a child**: the target is `w=auto`, so if the tooltip were laid out beside the
+//     target's other children the target would have come out as wide as the tooltip. It is its
+//     own text plus its own padding, exactly.
+//
+// # The frame is built on every pass, and no check returns early
+//
+// The tree below is described *after* the checks, and a check that returns out of the callback
+// leaves the frame with no tree at all — no prepaint, so no `bounds`, so the very reading the
+// next check waits on never arrives. This probe hung on exactly that for its first run: an
+// early `return` taken while `target.w` was still `0` is a program that can never learn what
+// `target.w` is. Every branch falls through to `gpui::root` instead, and the only way out is
+// `gpui::quit`, which asks the app to stop rather than aborting the callback that called it.
+//
+// # What is not checked here
+//
+// That the tooltip goes away again. gpui hides it in `prepaint_tooltip`'s
+// `check_visible_and_update` once the pointer leaves, and the binding's `bounds` registry keeps
+// the last box it saw rather than clearing it, so the *absence* of a box is only observable
+// before the first time one is ever painted. That is the check above; the disappearance is not.
+
+use gpui
+use std::math
+use std::os::exec
+use std::process
+
+/// The title the window is opened with, and what `xdotool` is told to look for. One word, so
+/// that the search cannot match anything else on the display.
+const TITLE: String = "dw11tip"
+
+const LABEL: String = "Tip"
+const SPEC: String = "fs=16"
+
+/// The tooltip's own padding, and the target's. Different numbers on purpose: a check that
+/// confused one box's padding for the other's would read as a failure.
+const PAD: f64 = 8.0
+const TARGET_PAD: f64 = 6.0
+
+/// gpui lays a tooltip out at the pointer **plus one pixel**, in both directions —
+/// `Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size)`,
+/// `gpui-0.2.2/src/window.rs:2104`.
+const TIP_OFFSET: f64 = 1.0
+
+/// How long the probe waits for gpui's own 500ms clock before calling it a failure. Long
+/// enough that a slow first frame is not the fault being reported.
+const PATIENCE: f64 = 8.0
+
+/// Run a program and answer its stdout, trimmed, with anything that went wrong printed.
+fn shell(program: String, args: Vec<String>) -> String {
+    match exec::run(program.clone(), args) {
+        Ok(out) => {
+            if out.code != 0 {
+                println(f"FAIL DW11 {program} exited {out.code}: {out.stderr.trim()}")
+            }
+            out.stdout.trim().clone()
+        }
+        Err(problem) => {
+            println(f"FAIL DW11 could not run {program}: {problem}")
+            String::new()
+        }
+    }
+}
+
+/// The xdotool subcommand that posts one pointer move, as a list of words.
+fn move_to(x: f64, y: f64) -> Vec<String> {
+    let sx = x.round() as i64
+    let sy = y.round() as i64
+    #["mousemove", "--sync", f"{sx}", f"{sy}"]
+}
+
+fn field(id: String, name: String) -> f64 {
+    gpui::element_bounds(id, name)
+}
+
+/// Whether two lengths differ by more than `slack`. Written as the *positive* question so that
+/// the chain of checks below reads as a chain of faults rather than a chain of negations.
+fn off(a: f64, b: f64, slack: f64) -> bool {
+    math::abs(a - b) > slack
+}
+
+fn main() {
+    let outcome = gpui::run(TITLE, 700.0, 400.0, || {
+        // A frame is only painted when something asks for one. gpui's delayed tooltip show
+        // wakes the app by itself, but the probe still has to go on being painted for that
+        // wake-up to become a frame.
+        gpui::animate()
+        let f = gpui::frame()
+        let phase = gpui::state_int("phase", 0)
+
+        if f == 2 {
+            // Every style string written below has to be one the binding knows, or a token
+            // that drifted out of `is_known` would pass here as a box that silently ignored
+            // it — and a tooltip that ignored `w=auto` would be sized by something else.
+            let specs = #[
+                "id=target absolute left=120 top=90 w=auto p=6 bounds bg=#336699",
+                "id=tip w=auto p=8 bounds bg=#222222",
+                "id=targettext fs=16 bounds color=#ffffff",
+                "id=tiptext fs=16 bounds color=#ffffff",
+            ]
+            for s in specs {
+                let unknown = gpui::unknown_style_tokens(s.clone())
+                if unknown.len() != 0 {
+                    println(f"FAIL DW11 {unknown.len()} of the tokens in \"{s}\" are not tokens the binding knows")
+                    gpui::quit()
+                }
+            }
+        }
+
+        if phase == 0 {
+            // The target's own box is the handle on everything below: it says the tree has been
+            // laid out and painted at least once, and it is where the pointer is posted.
+            // `element_bounds` answers 0 for a box that has never been painted, so this is also
+            // the guard that the reading is real — a guard, not a wait, so that the frame below
+            // still gets its tree.
+            let tw = field("target", "w")
+            if tw > 0.0 {
+                // 1. Nothing has been hovered yet, so there is no tooltip — not an empty one,
+                // not a zero-sized one: no box was ever laid out under that name.
+                let absent = field("tip", "w")
+                if absent > 0.0 {
+                    println(f"FAIL DW11 a tooltip reported a box {absent} wide before the pointer had been anywhere near its target")
+                    gpui::quit()
+                } else {
+                    gpui::set_float("absent", absent)
+
+                    // Find the window and post the pointer onto the middle of the target. The
+                    // origin is taken from the binding (`gpui::window_field("inner_x")`) rather
+                    // than from `xdotool`'s own reading of the same window, because the
+                    // binding's is the space a pointer event is measured in, and so the space
+                    // the tooltip's position will be asserted in — `MP1` posts its gesture
+                    // relative to the same number.
+                    let found = shell("xdotool", #["search", "--name", TITLE])
+                    let hits = found.lines()
+                    if hits.is_empty() {
+                        println(f"FAIL DW11 no window named {TITLE} on this display (xdotool said `{found}`)")
+                        gpui::quit()
+                    } else {
+                        let ox = gpui::window_field("inner_x")
+                        let oy = gpui::window_field("inner_y")
+                        let tx = field("target", "x")
+                        let ty = field("target", "y")
+                        let th = field("target", "h")
+                        let sx = (tx + tw / 2.0).round()
+                        let sy = (ty + th / 2.0).round()
+                        let _ = shell("xdotool", move_to(ox + sx, oy + sy))
+                        // The point in the *window's* own space, which is what the tooltip's
+                        // position is measured against.
+                        gpui::set_float("px", sx)
+                        gpui::set_float("py", sy)
+                        gpui::set_float("t0", gpui::now())
+                        gpui::set_int("phase", 1)
+                    }
+                }
+            }
+        }
+
+        if phase == 1 {
+            let w = field("tip", "w")
+            if w > 0.0 {
+                let h = field("tip", "h")
+                let x = field("tip", "x")
+                let y = field("tip", "y")
+                let tw = field("tiptext", "w")
+                let th = field("tiptext", "h")
+                let measured = gpui::text_width(LABEL.clone(), SPEC)
+                let px = gpui::state_float("px", 0.0)
+                let py = gpui::state_float("py", 0.0)
+                let targetw = field("target", "w")
+                let targettextw = field("targettext", "w")
+                let absent = gpui::state_float("absent", 0.0)
+
+                // 3. The tooltip is its content plus its padding, read back rather than
+                // predicted. One exclusive chain ending in the verdict.
+                if tw <= 0.0 || th <= 0.0 {
+                    println(f"FAIL DW11 the tooltip appeared but its text has no box: {tw}x{th}")
+                    gpui::quit()
+                } else if off(w - tw, 2.0 * PAD, 0.001) {
+                    println(f"FAIL DW11 a `w=auto p=8` tooltip laid out {w} wide around text of {tw}: that is {w - tw} of padding, not {2.0 * PAD}")
+                    gpui::quit()
+                } else if off(h - th, 2.0 * PAD, 0.001) {
+                    println(f"FAIL DW11 the tooltip is {h} tall around text of {th}: that is {h - th} of padding, not {2.0 * PAD}")
+                    gpui::quit()
+                }
+                // ...and the run inside it is the run this window's own text system measures, so
+                // a tooltip is an ordinary layout in an ordinary layer and not a second,
+                // separate one.
+                else if off(tw, measured, 0.5) {
+                    println(f"FAIL DW11 gpui::text_width says {measured} for \"{LABEL}\" and the same run inside a tooltip laid out at {tw}")
+                    gpui::quit()
+                }
+                // 4. It is drawn at the pointer, one pixel in and one pixel down.
+                else if off(x, px + TIP_OFFSET, 2.0) || off(y, py + TIP_OFFSET, 2.0) {
+                    println(f"FAIL DW11 the pointer was posted to ({px}, {py}) and the tooltip laid out at ({x}, {y}), not at the pointer plus gpui's one-pixel offset")
+                    gpui::quit()
+                }
+                // 5. The tooltip is not a child of its target. The target is `w=auto`, so a
+                // tooltip laid out beside its other children would have widened it to the
+                // tooltip's own width plus the target's padding — and it is exactly its own text
+                // plus its own padding instead.
+                else if off(targetw - targettextw, 2.0 * TARGET_PAD, 0.001) {
+                    println(f"FAIL DW11 a `w=auto` target carrying a tooltip laid out {targetw} wide around text of {targettextw}: that is {targetw - targettextw} of padding, not {2.0 * TARGET_PAD} — the tooltip was laid out beside it")
+                    gpui::quit()
+                } else {
+                    println(f"OK DW11 a tooltip is absent until the pointer rests ({absent} wide before), then a box of its own content plus its padding ({tw} + {2.0 * PAD} = {w} by {th} + {2.0 * PAD} = {h}) at the pointer ({x}, {y} for a pointer at ({px}, {py})), with its target still exactly its own text plus padding ({targetw} around {targettextw})")
+                    gpui::quit()
+                }
+            } else {
+                // 2. gpui raises a tooltip half a second after the pointer stops, on a clock of
+                // its own. Nothing here can hurry it, so failing to show is reported as one.
+                let waited = gpui::now() - gpui::state_float("t0", 0.0)
+                if waited > PATIENCE {
+                    let px = gpui::state_float("px", 0.0)
+                    let py = gpui::state_float("py", 0.0)
+                    println(f"FAIL DW11 no tooltip appeared in {waited} seconds of the pointer resting on the target at ({px}, {py})")
+                    gpui::quit()
+                }
+            }
+        }
+
+        // ---- the tree ------------------------------------------------------
+        //
+        // The target: `w=auto`, so its own width is the evidence that the tooltip is not one of
+        // its children. It carries a `bounds` token, which is what makes a box that listens to
+        // nothing readable at all — the pointer rows' out-of-flow strip, reused.
+        let target = gpui::panel("id=target absolute left=120 top=90 w=auto p=6 bounds bg=#336699")
+        gpui::child(target, gpui::text("Target", "id=targettext fs=16 bounds color=#ffffff"))
+
+        // The tooltip: a box like any other, with `w=auto` and its own padding, and `bounds` so
+        // its own laid-out size can be read back out of the layer gpui puts it in.
+        let tip = gpui::tooltip("id=tip w=auto p=8 bounds bg=#222222")
+        gpui::child(tip, gpui::text("Tip", "id=tiptext fs=16 bounds color=#ffffff"))
+        gpui::child(target, tip)
+
+        let root = gpui::column("size=full items=start bg=#ffffff")
+        gpui::child(root, target)
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL DW11 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

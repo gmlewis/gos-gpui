@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    px, size, AnyElement, App, Application, Context, EntityId, PromptLevel, Render, Timer, Window,
+    px, size, AnyElement, App, Application, Context, EntityId, ImgResourceLoader, PromptLevel,
+    Render, Resource, Timer, Window,
 };
 
 use gossamer_binding::{NativeDispatch, PersistentCallback};
@@ -978,6 +979,25 @@ pub fn menu_accelerators(items: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The eight edges a window can be resized by, by the name a program writes.
+///
+/// The names are the variants of `gpui::ResizeEdge` spelled out — `top-left` and
+/// so on — because the ABI carries no enum: a call is a name and a list of scalars.
+/// Anything else answers `None`, and the caller says so rather than picking one.
+pub fn resize_edge(name: &str) -> Option<gpui::ResizeEdge> {
+    match name {
+        "top-left" => Some(gpui::ResizeEdge::TopLeft),
+        "top" => Some(gpui::ResizeEdge::Top),
+        "top-right" => Some(gpui::ResizeEdge::TopRight),
+        "right" => Some(gpui::ResizeEdge::Right),
+        "bottom-right" => Some(gpui::ResizeEdge::BottomRight),
+        "bottom" => Some(gpui::ResizeEdge::Bottom),
+        "bottom-left" => Some(gpui::ResizeEdge::BottomLeft),
+        "left" => Some(gpui::ResizeEdge::Left),
+        _ => None,
+    }
+}
+
 
 /// Runs every request a frame asked for. Answers `true` when the program wants
 /// another frame immediately.
@@ -1205,10 +1225,52 @@ fn process_requests(
 
             Request::ResizeWindow { w, h } => window.resize(size(px(w as f32), px(h as f32))),
 
+            Request::RequestDecorations { client } => {
+                // The window manager is asked who draws the window's decoration. This is a
+                // *request*: a Linux window manager with no compositor refuses it and keeps
+                // drawing its own titlebar, which is why the answer to a request is read back
+                // with `gpui::window_decorations` rather than assumed.
+                window.request_decorations(if client {
+                    gpui::WindowDecorations::Client
+                } else {
+                    gpui::WindowDecorations::Server
+                });
+            }
+
+            Request::SetClientInset { px: inset } => {
+                // The width of the strip a program draws its own titlebar and resize band in.
+                // A no-op on a platform that draws the window's decoration itself.
+                window.set_client_inset(gpui::px(inset as f32));
+            }
+
+            Request::StartWindowMove => window.start_window_move(),
+
+            Request::StartWindowResize { edge } => match resize_edge(&edge) {
+                Some(edge) => window.start_window_resize(edge),
+                // A program that names an edge this binding does not know is told, rather than
+                // handed a resize it did not ask for: the eight names are `gpui::ResizeEdge`'s
+                // own, and a ninth would be a typo.
+                None => view::note_error(format!(
+                    "start_window_resize: {edge:?} is not one of top-left, top, top-right, right, \
+                     bottom-right, bottom, bottom-left, left"
+                )),
+            },
+
             Request::SetRemSize { px: rem } => window.set_rem_size(gpui::px(rem as f32)),
 
             Request::SetClipboard { text } => {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))
+            }
+
+            Request::ForgetAsset { path } => {
+                // Eviction is one map lookup in `loading_assets` (`app.rs:1998`), keyed by the
+                // asset type and a hash of the source — and it is the *only* cache there is:
+                // the binding never pushes an image cache of its own, so `Img::paint`'s
+                // `window.use_asset::<ImgResourceLoader>` and this crate's `render_image` are
+                // looking at the same entry. Forgetting it makes the next frame's `use_asset`
+                // start a load from scratch, which is what upstream's cell clicks do.
+                let resource: Resource = std::path::PathBuf::from(view::asset_path(&path)).into();
+                cx.remove_asset::<ImgResourceLoader>(&resource);
             }
 
             Request::Tick { id, ms } => {

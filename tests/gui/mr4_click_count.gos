@@ -1,0 +1,312 @@
+// MR4 — the click count the platform keeps, reaching the program.
+//
+// container: the clicks are posted from outside the process by `xdotool` through XTEST, against
+// the X server the window really sits on, three frames apart with a second of real time between
+// them. The Mac has no such server — and on this Mac a run *is* a window, which
+// `scripts/window-guard.sh` forbids — so `scripts/probes.sh` and `scripts/tiers.sh` skip this one
+// by name. It runs in the container:
+//
+//   ./scripts/gosbox.sh tiers tests/gui/mr4_click_count.gos
+//
+// # What this exists for
+//
+// MR4's clause is "click variants" — a single, a double a triple — and the platform has always
+// known the difference: gpui's X11 client keeps `state.current_count` and increments it when a
+// press lands within `DOUBLE_CLICK_INTERVAL` (400ms) of the last one, on the same button and
+// within `DOUBLE_CLICK_DISTANCE` (5px) of the last position
+// (`gpui-0.2.2/src/platform/linux/x11/client.rs:1103-1125`,
+// `platform/linux/platform.rs:38-39`). The editor reads that count — `DW4`'s evidence has a
+// double click taking a word and a triple taking a line — and **a program could not**:
+// `gpui::on_mouse`'s `down`, `up` and `click` raised `"<id>|<kind>"` and nothing else, so the
+// number the platform computed was discarded at the binding's edge.
+//
+// It is not discarded now. `<id>.count` is written from `MouseDownEvent::click_count`,
+// `MouseUpEvent::click_count` and `ClickEvent::Mouse(..).up.click_count`
+// (`gpui-binding/src/view.rs:3102`, `:3114`, `:3065`), and this probe is what says so: three
+// gestures, separated by a second of real time each, and the count read back after each.
+//
+// # Why the gestures are separated by a second of real time and not by frames
+//
+// 400ms is *real* time, and `gpui::animate()` runs frames about 16ms apart — so a "few frames
+// later" would be inside the window and every gesture below would read as a continuation of the
+// one before it. `xdotool sleep 1 click ..` puts the wait in the helper, where it is real
+// seconds and not frames, and the first `sleep 1` is what makes the single click a single click
+// even if a previous probe left a click behind.
+//
+// # Why the count is read from the store and not from the events
+//
+// Because it is not in them. The payload an event carries is `"<kind>\u{1}<x>\u{1}<y>\u{1}<mods>"`
+// — a position and the modifiers — and the count is a *store* slot, `<id>.count`, the way
+// `<id>.x` is. Round 93 widened the payload to carry each event's own point; the count is not a
+// point and did not come with it. What is asserted here is therefore the store's reading after
+// each gesture, which is also what a program would read.
+
+use gpui
+use std::os::exec
+use std::process
+use std::strconv
+
+/// The title the window is opened with, and what `xdotool` is told to look for.
+const TITLE: String = "mr4count"
+
+/// Where the listening box sits inside the window, from its own style string below.
+const BOX_X: f64 = 50.0
+const BOX_Y: f64 = 40.0
+const BOX_W: f64 = 200.0
+const BOX_H: f64 = 150.0
+
+/// Where the pointer is put: the middle of the box, and the same spot for all three gestures, so
+/// that `is_within_click_distance` is satisfied and the *interval* is the only thing that
+/// decides whether a press continues the count or starts it.
+const AT_X: f64 = BOX_X + 100.0
+const AT_Y: f64 = BOX_Y + 75.0
+
+/// Run a program and answer its stdout, trimmed, with anything that went wrong printed.
+fn shell(program: String, args: Vec<String>) -> String {
+    match exec::run(program.clone(), args) {
+        Ok(out) => {
+            if out.code != 0 {
+                println(f"FAIL MR4 {program} exited {out.code}: {out.stderr.trim()}")
+            }
+            out.stdout.trim().clone()
+        }
+        Err(problem) => {
+            println(f"FAIL MR4 could not run {program}: {problem}")
+            String::new()
+        }
+    }
+}
+
+/// One `key=value` line out of `xdotool getwindowgeometry --shell`, as a number, or `-1.0`.
+fn field(text: String, key: String) -> f64 {
+    for line in text.split("\n") {
+        if let Some((name, value)) = line.split_once("=") {
+            if name.trim() == key {
+                return match strconv::parse_f64(value.trim().clone()) {
+                    Ok(number) => number,
+                    Err(_) => -1.0,
+                }
+            }
+        }
+    }
+    -1.0
+}
+
+/// The xdotool words that move the pointer, wait a real second, and then click `n` times with
+/// `--delay` between them. The whole thing is one invocation so that nothing else can slip
+/// between the wait and the click.
+///
+/// **A plain `mousemove`, and not `mousemove --sync`.** `--sync` reads as the safer thing to write
+/// — it waits until the pointer really is where it was told to go — and in this image it is the
+/// opposite: `xdotool 3.20160805.1` sits in its wait loop for its whole retry budget (~17.8s)
+/// **whenever the pointer is already at the destination**, and returns at once only when it had
+/// to move. Measured three ways: a plain `mousemove 750 573` is instant and `getmouselocation`
+/// then reads exactly `x:750 y:573`, a `mousemove --sync 750 573` straight after it takes 17.820s,
+/// and the three gestures below — which all post to the same box centre — took 19075ms, 19105ms
+/// and 19182ms. This probe is the one probe in the suite that returns to a point it has already
+/// been at, which is why it is the one that found it; `dd2_drag_states.gos` syncs only to points it
+/// has just left and stays fast.
+///
+/// What makes the plain move safe here is what follows it: a real second passes before the click,
+/// and the X server has moved the pointer long before that. The sleep is the synchronisation, and
+/// it is a better one — the wait is for the program to have the pointer, not for the server to
+/// agree that it does.
+fn clicks(x: f64, y: f64, n: i64) -> Vec<String> {
+    let sx = x.round() as i64
+    let sy = y.round() as i64
+    let count = f"{n}"
+    #["mousemove", f"{sx}", f"{sy}", "sleep", "1", "click", "--repeat", count.clone(), "--delay", "40", "1"]
+}
+
+/// A point as it will be compared: `"12.5,30.25"`, to two decimals.
+fn point(x: f64, y: f64) -> String {
+    f"{x:.2},{y:.2}"
+}
+
+/// Whether two points are the same to within a hundredth of a pixel.
+fn same(x: f64, y: f64, ex: f64, ey: f64) -> bool {
+    let dx = x - ex
+    let dy = y - ey
+    (if dx < 0.0 { -dx } else { dx }) < 0.01 && (if dy < 0.0 { -dy } else { dy }) < 0.01
+}
+
+/// Write a failure down: print it, and count it. The verdict at the end reads the count, which is
+/// what stops a check from failing and then falling through to a passing line.
+fn fail(message: String) {
+    println(f"FAIL MR4 {message}")
+    gpui::set_int("fails", gpui::state_int("fails", 0) + 1)
+}
+
+/// How many of the recorded `"<id>|<kind>"` entries are named by `want`.
+fn count(ids: Vec<String>, want: String) -> i64 {
+    let mut n = 0
+    for i in 0..ids.len() {
+        if ids[i].clone() == want.clone() {
+            n = n + 1
+        }
+    }
+    n
+}
+
+/// How many presses, releases and clicks the box has heard **so far**, as `<prefix>d`,
+/// `<prefix>u` and `<prefix>k`.
+///
+/// Taken at the end of each gesture and not once at the end of the run, because the three
+/// gestures post one, two and three clicks: a single total of six cannot tell a gesture that was
+/// heard once from one whose presses leaked into the reading after it, and the first version of
+/// this probe asked exactly that and was told `the box heard 6 presses, not 3`.
+fn tally(prefix: String) {
+    let ids = gpui::list_all("ids")
+    gpui::set_int(f"{prefix}d", count(ids.clone(), "box|down"))
+    gpui::set_int(f"{prefix}u", count(ids.clone(), "box|up"))
+    gpui::set_int(f"{prefix}k", count(ids.clone(), "box|click"))
+}
+
+/// One reading against what it should be, with the failure printed if they differ.
+fn expect(what: String, got: i64, want: i64) {
+    if got != want {
+        fail(f"{what} read {got}, not {want}")
+    }
+}
+
+fn main() {
+    let outcome = gpui::run(TITLE, 400.0, 300.0, || {
+        let f = gpui::frame()
+        gpui::animate()
+
+        // Every event, on the frame it arrives on — a gesture of three clicks is three presses
+        // and three releases, and a reading taken after the last of them cannot say anything
+        // about the first two.
+        for event in gpui::take_events() {
+            let id, kind = gpui::event_parts(event.clone())
+            gpui::list_push("ids", f"{id}|{kind}")
+        }
+
+        // ---- frame 3: find the window, and put the pointer over the box --------------------
+        if f == 3 && gpui::state_int("phase", 0) == 0 {
+            gpui::set_int("phase", 1)
+            let found = shell("xdotool", #["search", "--name", TITLE])
+            let hits = found.lines()
+            if hits.is_empty() {
+                fail(f"no window named {TITLE} on this display (xdotool said `{found}`)")
+                gpui::quit()
+            } else {
+                let geometry = shell(
+                    "xdotool",
+                    #["getwindowgeometry", "--shell", hits[0].trim().clone()],
+                )
+                let win_x = field(geometry.clone(), "X")
+                let win_y = field(geometry.clone(), "Y")
+                let ox = gpui::window_field("inner_x")
+                let oy = gpui::window_field("inner_y")
+                if !same(win_x, win_y, ox, oy) {
+                    println(f"note MR4 xdotool puts the window at {point(win_x, win_y)} and the binding at {point(ox, oy)}; posting relative to the binding's")
+                }
+                gpui::set_float("origin_x", ox)
+                gpui::set_float("origin_y", oy)
+                // Just move; the first gesture below moves again to the same spot before waiting
+                // a real second, so the pointer is certainly there when the first press lands.
+                let _ = shell("xdotool", #["mousemove", f"{(ox + AT_X).round() as i64}", f"{(oy + AT_Y).round() as i64}"])
+            }
+        }
+
+        // ---- the three gestures, each one real second away from the last ------------------
+        if f == 6 && gpui::state_int("phase", 0) == 1 {
+            gpui::set_int("phase", 2)
+            let ox = gpui::state_float("origin_x", 0.0)
+            let oy = gpui::state_float("origin_y", 0.0)
+            let _ = shell("xdotool", clicks(ox + AT_X, oy + AT_Y, 1))
+        }
+        if f == 12 && gpui::state_int("phase", 0) == 2 {
+            gpui::set_int("phase", 3)
+            let ox = gpui::state_float("origin_x", 0.0)
+            let oy = gpui::state_float("origin_y", 0.0)
+            let _ = shell("xdotool", clicks(ox + AT_X, oy + AT_Y, 2))
+        }
+        if f == 18 && gpui::state_int("phase", 0) == 3 {
+            gpui::set_int("phase", 4)
+            let ox = gpui::state_float("origin_x", 0.0)
+            let oy = gpui::state_float("origin_y", 0.0)
+            let _ = shell("xdotool", clicks(ox + AT_X, oy + AT_Y, 3))
+        }
+
+        // ---- and the reading after each -----------------------------------------------------
+        //
+        // Three frames after the gesture was posted. `gos` blocks this frame's callback inside
+        // `exec::run` for the whole second of `sleep`, so the presses are queued before it
+        // returns; what is not certain is *when* gpui hands them to the program — MP1 measured
+        // events landing one iteration after they were posted. Three frames is well past that
+        // and well inside the next gesture.
+        if f == 9 && gpui::state_int("phase", 0) == 2 {
+            gpui::set_int("c1", gpui::state_int("box.count", -1))
+            tally("g1")
+        }
+        if f == 15 && gpui::state_int("phase", 0) == 3 {
+            gpui::set_int("c2", gpui::state_int("box.count", -1))
+            tally("g2")
+        }
+        if f == 24 && gpui::state_int("phase", 0) == 4 {
+            let c3 = gpui::state_int("box.count", -1)
+            let c1 = gpui::state_int("c1", -1)
+            let c2 = gpui::state_int("c2", -1)
+
+            tally("g3")
+
+            let at = gpui::state_float("box.x", -99.0)
+            let ay = gpui::state_float("box.y", -99.0)
+
+            // The platform's own counter, read back after each gesture. A single click is 1 even
+            // though the count is "how many presses in this run" — the run starts again past
+            // 400ms — and that is the whole claim: the number is the platform's, not a count the
+            // program kept of events it was handed.
+            if c1 != 1 {
+                fail(f"after one click the count read {c1}; a press more than 400ms after the last one starts a new run and is 1")
+            }
+            if c2 != 2 {
+                fail(f"after a double click the count read {c2}, not 2 — the two presses were within `DOUBLE_CLICK_INTERVAL` and `DOUBLE_CLICK_DISTANCE` of each other (`platform/linux/platform.rs:38-39`), so the platform's counter should have been incremented")
+            }
+            if c3 != 3 {
+                fail(f"after a triple click the count read {c3}, not 3")
+            }
+
+            // Every gesture heard once, and only once. Read per gesture and not as a total,
+            // because the three gestures post one, two and three clicks: six presses in all is
+            // what a run in which every click was heard says, and also what a run in which the
+            // first gesture was heard three times says.
+            expect("after one click, presses", gpui::state_int("g1d", -1), 1)
+            expect("after one click, releases", gpui::state_int("g1u", -1), 1)
+            expect("after one click, clicks", gpui::state_int("g1k", -1), 1)
+            expect("after a double click, presses", gpui::state_int("g2d", -1), 3)
+            expect("after a double click, releases", gpui::state_int("g2u", -1), 3)
+            expect("after a double click, clicks", gpui::state_int("g2k", -1), 3)
+            expect("after a triple click, presses", gpui::state_int("g3d", -1), 6)
+            expect("after a triple click, releases", gpui::state_int("g3u", -1), 6)
+            expect("after a triple click, clicks", gpui::state_int("g3k", -1), 6)
+
+            // And all of it happened where the pointer was, in the element's own space — the
+            // count is only worth having if it belongs to a click that landed somewhere.
+            if !same(at, ay, 100.0, 75.0) {
+                fail(f"the last click was reported at {point(at, ay)} in the element's own space, not the {point(100.0, 75.0)} it was posted at")
+            }
+
+            if gpui::state_int("fails", 0) == 0 {
+                println(f"OK MR4 the platform's own click counter reached the program: one click read back as 1, a double click as 2 and a triple as 3, from `<id>.count` — written on the press, on the release and on the click gpui synthesises from them — with the pointer at the same point throughout, a real second between the gestures, and each gesture's presses, releases and synthesised clicks heard once and not by the gesture after it")
+            }
+            gpui::quit()
+        }
+
+        // The box, and nothing else in the window that could raise a click.
+        let box = gpui::on_mouse(
+            gpui::rect(f"absolute left={BOX_X} top={BOX_Y} w={BOX_W} h={BOX_H} bg=#3366ff"),
+            "down up click",
+            "box",
+        )
+        let root = gpui::child(gpui::stack("size=full bg=#ffffff"), box)
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

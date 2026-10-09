@@ -1,0 +1,63 @@
+DW12 — after: a drawn titlebar's six calls, on every tier, and checked from outside the process.
+
+The row is "client-side window decoration widget (drawn titlebar)". gpui hands a program six
+calls to make one out of — ask for decorations, read back who draws them, set the strip the
+program keeps, read that back, hand the window over to be moved, hand it over to be resized —
+and they divide into two pairs that have to be checked in two different ways. Asking and
+reading back leaves a record on the X server; handing the window over leaves none, and can
+only be seen by watching the window.
+
+    $ ./scripts/gosbox.sh tiers tests/gui/dw12_window_calls.gos
+    ok     check: check: ok (14 items typed)
+    ok     run: OK DW12 a program is handed the window calls a drawn titlebar is made of: gpui::window_decorations answered `server` — the word the window manager's own _NET_SUPPORTED forces — both before the program asked for `client` and after, and the window's _MOTIF_WM_HINTS say the same; and set_client_inset(12) both reads back as 12 and is on the window as _GTK_FRAME_EXTENTS = 12, 12, 12, 12, where before the call gpui said `server`
+    ok     run-nosjit: OK DW12 a program is handed the window calls a drawn titlebar is made of: gpui::window_decorations answered `server` — the word the window manager's own _NET_SUPPORTED forces — both before the program asked for `client` and after, and the window's _MOTIF_WM_HINTS say the same; and set_client_inset(12) both reads back as 12 and is on the window as _GTK_FRAME_EXTENTS = 12, 12, 12, 12, where before the call gpui said `server`
+    ok     build: build: 85204624B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+    ok     build-release: build: 25529032B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+Three records agree in that line, and they are three different machines' memories: the binding's
+own answer, the atoms the window manager advertises in `_NET_SUPPORTED`, and the property
+`_MOTIF_WM_HINTS` that `X11Window::request_decorations` (`src/platform/linux/x11/window.rs:1604`)
+wrote onto the window with `xcb_change_property`. **The reading with teeth is the one taken
+*before* anything was asked.** `gpui::window_decorations()` is `"server"` before the program asked
+for `"client"` and `"server"` after, because this display's window manager has no compositor and
+refuses — so a binding that echoed the request back would answer `client` in the second reading
+and be caught by the first. The word `"server"` is not written into the probe: it is what
+`expected_decorations` derives from the atoms, so an image that gained a compositor would move the
+probe onto the other arm rather than fail it.
+
+The second pair is not readable at all, which is why it has a probe of her own:
+
+    $ ./scripts/gosbox.sh tiers tests/gui/dw12_drag_and_resize.gos
+    ok     check: check: ok (23 items typed)
+    ok     run: OK DW12 the two calls a program-drawn titlebar moves its window with really hand the window over: a pointer travelled (60, 40) with the button held and took the window from (591, 480) to (651, 520) — xdotool read (591, 480) 420 by 300 before and (651, 520) 420 by 300 after — and the same gesture from the bottom-right corner took it from 420 by 300 to 490 by 330 without moving its top-left, which is now (651, 520)
+    ok     run-nosjit: OK DW12 the two calls a program-drawn titlebar moves its window with really hand the window over: a pointer travelled (60, 40) with the button held and took the window from (591, 480) to (651, 520) — xdotool read (591, 480) 420 by 300 before and (651, 520) 420 by 300 after — and the same gesture from the bottom-right corner took it from 420 by 300 to 490 by 330 without moving its top-left, which is now (651, 520)
+    ok     build: build: 85287920B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+    ok     build-release: build: 25530056B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+**A hand-over has no record, only a consequence.** `start_window_move` (`:1519`) and
+`start_window_resize` (`:1524`) both end in `send_moveresize` (`:848`): gpui ungrabs the pointer,
+reads where it is for itself, and sends `_NET_WM_MOVERESIZE` to the root window — flag 8 to move,
+and for a resize the flag `ResizeEdge::to_moveresize` gives. So the probe does what a drawn
+titlebar's press handler does — the button goes down inside the window and the call is made while
+it is held — and then asks the X server, through `xdotool`, where the window is. **The window
+being where the pointer went is the whole claim**; nothing else about that path is checkable, and
+"the binding sent a message" would be a claim about the binding's own source.
+
+**Two constants in that probe are measurements, and both were put in after a run that failed
+because they were not there.** The first version moved the window by exactly `(60, 40)` on one run
+and by `(0, 0)` on the next. gpui drains a request between frames, so the call is not delivered
+when it is made but on the frame after; and `openbox` only begins following the pointer once it
+has taken the window and established a grab. A single jump posted immediately lands on the program
+instead, and the window never moves. So the probe waits `SETTLE = 0.35` seconds between the
+hand-over and the motion, and travels in `STEPS = 4` waits-for-it jumps rather than one — a
+window manager following the pointer has several motions to follow instead of one to miss. On the
+container, one jump failed perhaps one run in three; four waited-for jumps have not failed.
+
+--- the other half, which is not in this file
+
+The macOS half of this row is unreachable and stays in `CAPABILITIES.md`, "Unreachable": all four
+platform calls are do-nothing defaults there and `MacWindow` overrides none of them. And the
+`Decorations::Client` arm is not entered on this display either — it needs
+`compositor_present && gtk_frame_extents_supported` (`src/platform/linux/x11/client.rs:358`), and
+the image has no compositor and `openbox` advertises no `_GTK_FRAME_EXTENTS`. `tests/evidence/DW12.before.txt`
+is the same two probes against 329133c, where all six names are absent.

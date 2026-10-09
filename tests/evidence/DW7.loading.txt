@@ -1,0 +1,52 @@
+DW7 — the loading subtree, made due. A load that is genuinely still loading at the 200ms mark.
+
+Why this needs its own run. `gpui::image_request`'s loading subtree is due only while the load
+is pending *and* `LOADING_DELAY` (200ms, `elements/img.rs:31`) has passed since it started
+(`:373-395`). Every file in this repo decodes well inside a frame — including the 4.4MB
+`examples/assets/black-cat-typing.gif`, which an earlier revision of the probe pointed this cell
+at while it never once saw `loading` — so the bulk pass records that state as never due. The one
+source that is a path *and* not instantaneous is a fifo: `fs::read` on it blocks until a writer
+arrives (`img.rs:601`), on a background thread (`app.rs:2018`), so the load stays pending while
+frames go on.
+
+The run. `./scripts/gosbox.sh shell` is this same environment; this is what it ran. Note the
+redirection: `( … ) > /tmp/dw7-slow.pipe` opens the fifo for writing *before* the subshell's
+`sleep`, so the open blocks until the app's first render opens the read end, and the second of
+silence is then measured from that render rather than from container start. The writer hands the
+loader a real PNG, so the load is pending across the 200ms mark and then succeeds — which is also
+what lets the process exit at its verdict instead of at a timeout.
+
+$ ./scripts/gosbox.sh stage
+$ docker run --rm -i \
+    -v ~/.cache/learn-gpui/docker-stage:/work -v ~/.cache/learn-gpui/docker-home:/root \
+    -v ~/.cache/learn-gpui/gossamer-068:/gos -v ~/.cache/learn-gpui/linux068:/tool \
+    -e DISPLAY=:99 -e GOSBOX=1 -e GOSSAMER_ROOT=/gos -e GOSSAMER_NOTED_ERRORS=1 \
+    -e CC=/work/tools/cc-gpui.sh \
+    -e GOS_LINUX_LIBS="-Wl,--no-as-needed -lxkbcommon-x11 -lxkbcommon -lX11 -lxcb -lfontconfig -lfreetype -ldl -lpthread -lm" \
+    -e PATH=/usr/local/cargo/bin:/tool/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
+    -w /work gosbox:2 bash -lc '
+      export PATH=/usr/local/cargo/bin:/tool/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      rm -f /tmp/dw7-slow.pipe; mkfifo /tmp/dw7-slow.pipe
+      ( sleep 1; cat /work/examples/assets/app-icon.png ) > /tmp/dw7-slow.pipe &
+      timeout -k 5 90 gos run --main-thread tests/gui/dw7_image_states.gos
+      echo "exit=$?"'
+
+ok     DW7 a file that is there draws the image (state image), first reading blank/blank/blank/blank
+ok     DW7 a path that is not there draws its fallback subtree (state fallback)
+ok     DW7 the same path with no fallback subtree reads blank, so nothing is invented (state blank)
+ok     DW7 the fallback subtree was laid out (62 px wide)
+ok     DW7 a fallback subtree that is present but not due was not laid out (0)
+ok     DW7 a load that outlasted LOADING_DELAY drew its loading subtree, laid out 62 px wide (states blank loading image )
+ok     DW7 and the loading subtree was given up when the load landed (states blank loading image )
+OK DW7 the image element draws the subtree its load state calls for, and says which one it drew
+exit=0
+
+The slow cell's whole life is in the states list: `blank` (pending, not yet 200ms) → `loading`
+(the subtree, laid out 62px) → `image` (the picture, once the writer answered). The last check is
+the one that would catch a decision cached at `loading`: the subtree has to be *given up* when
+the load lands, and the state says it was.
+
+What this is not: a photograph. The container cannot carry a client window's pixels into its
+framebuffer (`DW3.capture.txt`), so what is checked is which subtree the element chose and that
+it laid out, not what it looks like.

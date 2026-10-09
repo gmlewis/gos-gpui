@@ -352,6 +352,17 @@ you want both).
 | `gpui::on_keys(true)` | `"key"` / `"keyup"` | the whole stroke: `"up"`, `"space"`, `"a"`, `"shift-tab"`, `"cmd-c"`. The modifiers of the last one are also under `~key.mods` and `~key.shift` / `.control` / `.alt` / `.platform` / `.function`. |
 | `gpui::publish(topic, payload)` | each subscriber of `topic` | the payload |
 | `gpui::bind_keys(spec)` | the name in the spec | — |
+| `ui::on_mouse(el, kinds, id)` | `"id\|kind"` | the pointer kinds `down`, `up`, `move`, `click`, `right`, `scroll` and `exit`, and the four drag words `drag`, `over`, `out` and `drop`. The point is under `<id>.x` / `<id>.y`, element-relative; a `!` on a kind word — `"down!"` — reports it **and** stops it there, so the element the event landed on keeps the panel around it from hearing it too |
+| `ui::on_mouse_window(el, kinds, id)` | `"id\|kind"` | the same kinds, reported wherever the pointer is rather than only while it is over the element — which is how a drag is followed after it leaves the element it began on. `exit` means the pointer left *the window* here, where at element level it means it left *the element* |
+
+Three readings come with the mouse kinds and are not events at all. `gpui::mouse_position()` is
+the pointer's own point in the frame being built. `gpui::group_hovered(name)` answers whether the
+pointer is over **any** element whose style carries `group=<name>` — a card that reacts while the
+pointer is over anything inside it — and it is the reading half of gpui's own `group_hover`, which
+refines one element's *style* while another is hovered. A member needs an `id=` of its own: two
+members of one group are told apart by it, and `group=` makes each member readable to
+`gpui::element_bounds` under that id, so a member that is also an event source can be asked where
+it came out. `gpui::element_bounds(id, field)` answers for any box whose style says `bounds`.
 
 ### State
 
@@ -408,6 +419,40 @@ the comma, not the run of punctuation and spaces around it. And the **column is 
 `text_line_move` remembers nothing, so a caret that should return to the column it left passes the
 same number again.
 
+### How big things came out
+
+A layout is GPUI's, so the questions a program has about one — how wide a `w=auto` box ended up, or
+which character is under a pixel — are answered by reading the layout back rather than by
+predicting it. The `bounds` token is what makes an element readable: it puts an unpainted marker
+inside the box the element was laid out in, and `gpui::element_bounds` answers from that marker.
+
+```gossamer
+let card = ui::row("id=card w=auto p=8 bounds bg=#313244")
+    .text("hi", "fs=16 color=#cdd6f4")
+println("the box came out {}x{}", gpui::element_bounds("card", "w"), gpui::element_bounds("card", "h"))
+```
+
+| | |
+|---|---|
+| `gpui::element_bounds(id, field)` | `x`, `y`, `w`, `h` — the box the element `id` was last laid out in, and `0` for an element that has not been drawn |
+| `gpui::text_x_of_index(text, index, style)` | how far into the run, in pixels, byte `index` sits — the same text and the same `style` the element was given |
+| `gpui::text_index_at(text, x, style)` | the byte offset under `x` pixels, so a click on a run of text becomes a caret. The two round-trip: a pixel from `text_x_of_index`, asked back, is the index it came from |
+| `gpui::tooltip(style)` | a box GPUI draws **over** the element it is given to, while the pointer rests on it. Made like any container — `gpui::child(tooltip, …)` for its contents — and given to its target the same way: `gpui::child(card, tooltip)` |
+
+**A box with nothing to listen with is invisible to `element_bounds` unless its style says
+`bounds`** — that is what the token is for, and it is the same reading a pointer-reporting box
+already had, so the two agree about where an element is. `text_x_of_index` and `text_index_at` need
+the run's text and style because the run is measured, not remembered: GPUI lays the string out with
+that style and answers from the laid-out line, which is why the answer is a fraction of a pixel and
+not a whole one.
+
+A tooltip's style is a whole box's — `w=auto` sizes it to its own content, `p=` pads it, `bg=` paints
+it, and `bounds` reads it back — and nothing about it is special except **when it is drawn**: GPUI
+gives it a layout of its own, at the pointer, half a second after the pointer stops moving, in the
+same window and the same paint pass. Two things follow that a program can see: a `bounds` inside a
+tooltip is the *tooltip's* box and not its target's, and what the tooltip shows is its contents as
+they were when the pointer came to rest, not as they are when it appears.
+
 ### Asking the operating system
 
 | | |
@@ -447,6 +492,34 @@ the effect, not for a result.
 
 A `Vec<PathBuf>` cannot cross this binding's ABI, so the shim is **strings** — one path per entry, exactly as
 the platform reported them.
+
+### Drawing your own titlebar
+
+A window that draws its own titlebar needs four things of the platform, and all four are on
+`Window`. Two of them ask and two of them read back:
+
+| | |
+|---|---|
+| `gpui::request_window_decorations(client)` | ask for the window manager's own frame (`false`) or for the program's drawn one (`true`) |
+| `gpui::window_decorations()` | who actually draws it: `"server"` or `"client"` |
+| `gpui::set_client_inset(px)` | how wide a strip the program has kept for itself, so that anything the platform draws around the window sits outside it |
+| `gpui::client_inset()` | the strip that was set, and `0` until one is |
+| `gpui::start_window_move()` | hand the window to the window manager to be dragged, until the button that asked for it comes up |
+| `gpui::start_window_resize(edge)` | the same for a resize by `edge` — `top-left`, `top`, `top-right`, `right`, `bottom-right`, `bottom`, `bottom-left`, `left` |
+
+**The first pair is a request and an answer, and they are not the same thing.** A program asks
+for `client`; a window manager with no compositor refuses and goes on answering `server`,
+because a client cannot draw a frame the server is also drawing. So a drawn titlebar is
+written as *ask, then read back and lay out accordingly* — never as *ask and assume*. The
+second pair needs no coordinates: gpui reads the pointer where it is and hands the window over
+from there, which is what a press handler has — **the press is the point**. The program is not
+told what the window manager then does; it hears the new position or size the way it hears
+anything else about its own window, from `gpui::window_field` on the next frame.
+
+On **macOS all four are no-ops**: `PlatformWindow` declares them as do-nothing defaults
+(`gpui-0.2.2/src/platform.rs:536-548`) and `MacWindow` overrides none of them, so a titlebar
+can be drawn and its buttons clicked and it can never be dragged, resized, or given its strip.
+See the ledger's `## Unreachable`.
 
 ### Who has focus
 
@@ -669,7 +742,7 @@ One file per upstream example, numbered to match. Run the pair:
 | `05_gradient` | `gradient.rs` | including the sRGB/Oklab toggle |
 | `06_grid_layout` | `grid_layout.rs` | the "holy grail" 5×5 grid |
 | `07_hello_world` | `hello_world.rs` | |
-| `08_image_loading` | `image_loading.rs` | staged arrivals via `gpui::task`, not GPUI's asset pipeline |
+| `08_image_loading` | `image_loading.rs` | GPUI's own loader state picks the loading, image or fallback subtree; two cells stage their 5s wait with `gpui::task`, since a custom `Asset` with a `Duration` in its source is unreachable |
 | `09_input` | `input.rs` | **the editor is a binding widget, not Gossamer code** — see below |
 | `10_on_window_close_quit` | `on_window_close_quit.rs` | single window |
 | `12_ownership_post` | `ownership_post.rs` | **approximation** — upstream's entity half (`emit`/`subscribe`) is absent, shown through the event queue instead |
@@ -683,7 +756,7 @@ One file per upstream example, numbered to match. Run the pair:
 | `19_tab_stop` | `tab_stop.rs` | focus order is real; **the blue focus ring is absent** — `is_focused` cannot observe a `focusable` element |
 | `20_text_layout` | `text_layout.rs` | including per-range highlights |
 | `21_text_wrapper` | `text_wrapper.rs` | truncation, ellipsis and clamping |
-| `22_text` | `text.rs` | `default_color`; no menu bar |
+| `22_text` | `text.rs` | `init_colors` runs once at startup; its one empty menu, "GPUI Typography", is installed through `gpui::set_menus` |
 | `23_tree` | `tree.rs` | renders to depth 40; upstream's 50 trips `GX0008` |
 | `24_uniform_list` | `uniform_list.rs` | explicit row height |
 | `25_window_positioning` | `window_positioning.rs` | nine windows per display, on the primary display |

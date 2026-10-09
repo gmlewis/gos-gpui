@@ -1,0 +1,14 @@
+  FAIL a_file_that_is_there_is_not_missing: error[GX0002]: name `gpui::image_missing` is not bound in this scope
+    at a_file_that_is_there_is_not_missing (tests/dw7_image_states_test.gos:43:9)
+  FAIL a_file_that_is_not_there_is_missing: error[GX0002]: name `gpui::image_missing` is not bound in this scope
+    at a_file_that_is_not_there_is_missing (tests/dw7_image_states_test.gos:52:9)
+  FAIL a_directory_is_not_a_file: error[GX0002]: name `gpui::image_missing` is not bound in this scope
+    at a_directory_is_not_a_file (tests/dw7_image_states_test.gos:63:9)
+  FAIL the_rule_resolves_through_the_declared_root: error[GX0002]: name `gpui::image_missing` is not bound in this scope
+    at the_rule_resolves_through_the_declared_root (tests/dw7_image_states_test.gos:78:9)
+test: 8 passed, 4 failed, 34 assertion(s), 0 ignored, 0 skipped, 0 doc-test(s), across 1 file(s), 0 with no tests
+
+--- tests/gui/dw7_image_states.gos, container run at HEAD (the binding name is missing):
+$ ./scripts/gosbox.sh run tests/gui/dw7_image_states.gos
+FAIL   tests/gui/dw7_image_states.gos: exited 124 — no verdict
+       gpui: noted: the view callback failed: UnresolvedName("gpui::image_request")

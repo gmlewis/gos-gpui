@@ -16,8 +16,10 @@ use std::path::PathBuf;
 use gpui::prelude::*;
 use gpui::{
     canvas, div, fill, img, point, px, relative, svg, uniform_list, AnyElement, App, Bounds,
-    DispatchPhase, ElementId, EntityId, FocusHandle, KeyDownEvent, KeyUpEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, SharedString, Svg, Window,
+    ClickEvent, DispatchPhase, Div, ElementId, EntityId, FocusHandle, ImgResourceLoader,
+    KeyDownEvent, KeyUpEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Render, Resource, ScrollDelta, ScrollWheelEvent, SharedString, Svg,
+    Window, LOADING_DELAY,
 };
 
 use gossamer_binding::{NativeDispatch, PersistentCallback, Value};
@@ -78,9 +80,11 @@ pub fn release_retained() {
     TEXT.with(|t| t.borrow_mut().clear());
     FONTS.with(|f| *f.borrow_mut() = None);
     ARENAS.with(|a| a.borrow_mut().clear());
+    CAPTURED.with(|c| c.borrow_mut().clear());
     ROOTS.with(|r| r.borrow_mut().clear());
     FRAMES.with(|f| f.borrow_mut().clear());
     FOCUS.with(|f| f.borrow_mut().clear());
+    DECORATIONS.with(|d| d.borrow_mut().clear());
 }
 
 /// Records the program's row builder, from `gpui::run_with_rows`.
@@ -124,6 +128,7 @@ pub fn invoke(view: &PersistentCallback, args: Vec<Value>) -> Result<Value, Stri
 // the described tree
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub enum Kind {
     /// A plain box, a row/column, a scroll area — everything the style string
     /// can turn it into.
@@ -134,7 +139,13 @@ pub enum Kind {
     Input { placeholder: String },
     Slider { min: f64, max: f64 },
     Progress(f64),
-    Image(String),
+    /// A raster image loaded from a filesystem path.
+    ///
+    /// `loading` and `fallback` are handles to the subtrees the element draws while the load
+    /// is pending and after it has failed, or `0` for none — see `gpui::image_request`. They
+    /// are not this element's children: they are drawn *instead of* the picture, so keeping
+    /// them apart from `El::children` is what stops them being drawn beside it.
+    Image { path: String, loading: i64, fallback: i64 },
     Icon(String),
     Divider,
     Spacer(f64),
@@ -165,8 +176,19 @@ pub enum Kind {
     StyledText { content: String, highlights: Vec<String> },
     /// A binding-owned text editor, registered under `key`.
     Editor { key: String, placeholder: String },
+    /// A tooltip: not a child of the element it is given to, but a subtree gpui draws over it
+    /// while the pointer rests on it.
+    ///
+    /// `gpui::tooltip(style)` pushes one and `gpui::child(tooltip, …)` fills it. Whatever it is
+    /// given to never lays it out beside its other children — `render` lifts it out and hands it
+    /// to `Div::tooltip`, and gpui then lays it out as **its own root**, at the pointer, with
+    /// `AvailableSpace::min_size()` (`gpui-0.2.2/src/window.rs:2102`), in the same window and the
+    /// same paint pass. That last part is why a `bounds` token inside a tooltip reports a real
+    /// box: the tooltip's subtree is prepainted by the ordinary path, keyed to the same window.
+    Tooltip,
 }
 
+#[derive(Clone)]
 pub struct El {
     pub kind: Kind,
     pub style: String,
@@ -274,6 +296,14 @@ thread_local! {
     /// that restore size inside the `WindowBounds` variant, which is the only place a
     /// program can read it.
     static BOUNDS_STATE: RefCell<HashMap<i64, (&'static str, f64, f64)>> = RefCell::new(HashMap::new());
+    /// Who draws the window's decoration and how wide a strip the program draws it in,
+    /// as of the start of this frame. Both answers are the platform's — `Window` forwards
+    /// them to the window manager — and both are read here because a binding function has
+    /// no `Window` to ask. The inset is the width this program *set*, which is the same
+    /// number on every platform; the decorations are the platform's answer to a request,
+    /// which is not, and which a window manager with no compositor answers with `server`
+    /// however loudly it was asked for `client`.
+    static DECORATIONS: RefCell<HashMap<i64, (&'static str, f64)>> = RefCell::new(HashMap::new());
     /// The platform colours the window's root asked to override, recorded as the frame
     /// that carried them was built. They are applied to the next frame's colours, because
     /// the colours are read at the *start* of a frame — before the view callback that
@@ -742,16 +772,15 @@ fn text_metrics(
     Some((system, font, size, line_length))
 }
 
-/// The width `text` advances to, in pixels, as this window would draw it.
+/// Shape `text` the way this window would draw it, with the style's overrides applied.
 ///
-/// A newline is flattened into a space first, because gpui's shaper panics on
-/// one — the same thing the editor does to everything that reaches it. Answers
-/// `0.0` outside a frame, where there is no window's text style to measure
-/// against.
-pub fn text_width(text: &str, spec: &str) -> f64 {
-    let Some((system, font, size, _)) = text_metrics(spec) else {
-        return 0.0;
-    };
+/// The one place this crate asks gpui's text system for a laid-out line, so every measurement
+/// below answers from the same shaping and two of them cannot disagree. A newline is flattened
+/// into a space first, because gpui's shaper panics on one — the same thing the editor does to
+/// everything that reaches it. `None` outside a frame, where there is no window's text style to
+/// measure against.
+fn shape(text: &str, spec: &str) -> Option<gpui::ShapedLine> {
+    let (system, font, size, _) = text_metrics(spec)?;
     let text = text.replace('\n', " ");
     let run = gpui::TextRun {
         len: text.len(),
@@ -761,8 +790,45 @@ pub fn text_width(text: &str, spec: &str) -> f64 {
         underline: None,
         strikethrough: None,
     };
-    let line = system.shape_line(text.into(), size, &[run], None);
-    f32::from(line.width) as f64
+    Some(system.shape_line(text.into(), size, &[run], None))
+}
+
+/// The width `text` advances to, in pixels, as this window would draw it.
+pub fn text_width(text: &str, spec: &str) -> f64 {
+    match shape(text, spec) {
+        Some(line) => f32::from(line.width) as f64,
+        None => 0.0,
+    }
+}
+
+/// Where character `index` begins, in pixels from the start of the run.
+///
+/// `index` is a **byte** offset into `text` — the unit the editor's own offsets and gpui's
+/// `LineLayout::x_for_index` (`gpui-0.2.2/src/text_system/line_layout.rs:105`) both use. An index
+/// past the end answers the run's whole width, and one that lands inside a character answers the
+/// start of the glyph after it, which is the shaper's own rule and not a rounding of this
+/// function's.
+///
+/// This is the number upstream's `input.rs` paints a caret and a selection with — `bounds.left() +
+/// line.x_for_index(cursor)` (`tools/upstream/examples/input.rs:492`) — and until it existed no
+/// Gosammer program could ask where a character it drew had ended up.
+pub fn text_x_of_index(text: &str, index: i64, spec: &str) -> f64 {
+    match shape(text, spec) {
+        Some(line) => f32::from(line.x_for_index(index.max(0) as usize)) as f64,
+        None => 0.0,
+    }
+}
+
+/// Which character boundary lies nearest `x` — the inverse of [`text_x_of_index`].
+///
+/// The other half of a hit test: upstream asks it when a *click* has to become a caret position,
+/// where this asks it when a caret position has to become a pixel. Answers a byte offset, `0` for
+/// an `x` at or before the run's start and the run's whole length for one at or past its end.
+pub fn text_index_at(text: &str, x: f64, spec: &str) -> i64 {
+    match shape(text, spec) {
+        Some(line) => line.closest_index_for_x(px(x as f32)) as i64,
+        None => 0,
+    }
 }
 
 /// The em width of the measured font, in pixels.
@@ -913,6 +979,60 @@ pub fn asset_path(name: &str) -> String {
     } else {
         name.to_string()
     }
+}
+
+// ---------------------------------------------------------------------------
+// what an image element drew, and the rule behind it
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// What each image element drew the last time it was rendered: `"image"`, `"loading"`,
+    /// `"fallback"` or `"blank"`, keyed by `(window, element id)`.
+    ///
+    /// This is `gpui::image_state`'s reading, and it is the failure signal the asset row was
+    /// missing: before it, a program could not tell an image that had loaded from one that
+    /// had failed, because both were blank.
+    static IMAGE_SHOWN: RefCell<HashMap<(i64, String), &'static str>> = RefCell::new(HashMap::new());
+    /// When each image's load was first seen pending, keyed the same way.
+    ///
+    /// GPUI shows the loading subtree only once `LOADING_DELAY` has passed since the load
+    /// started (`elements/img.rs:373-395`), so the moment the load *started* has to be kept
+    /// across frames; a frame cannot tell a load that has just begun from one that has been
+    /// running all along. Cleared the moment the load answers.
+    static IMAGE_PENDING: RefCell<HashMap<(i64, String), std::time::Instant>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Whether the image named `name` would draw its fallback subtree, because there is no file
+/// there to read.
+///
+/// This is the rule `gpui::image_request`'s fallback turns on, asked without a window. An image
+/// element's source is always a filesystem path — [`asset_path`] resolves it and the loader reads
+/// it with `fs::read` (`gpui-0.2.2 src/elements/img.rs:601`) — so for a source like that "the
+/// loader will fail" and "there is no readable file at this path" are the same statement, and the
+/// second can be answered by a `stat`. A directory is not a readable image and answers `true`:
+/// the rule agrees with the loader rather than with "the path exists".
+pub fn image_missing(name: &str) -> bool {
+    let path = asset_path(name);
+    !std::fs::metadata(&path).map(|meta| meta.is_file()).unwrap_or(false)
+}
+
+/// What the image element `id` drew the last time it was rendered, in this window.
+///
+/// `"image"`, `"loading"`, `"fallback"` or `"blank"` — and `""` for an image this window has not
+/// rendered, which is also what a window that has rendered none answers. Like the other readers
+/// here it is one frame behind: the tree is built by the view callback and the decision this
+/// reports is taken when that tree is turned into elements, so a program reads the frame before.
+pub fn image_state(win: i64, id: &str) -> String {
+    IMAGE_SHOWN
+        .with(|m| m.borrow().get(&(win, id.to_string())).copied())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Forgets every image's pending-since stamp, so a program that wants a load re-timed can say so.
+pub fn forget_image_timings(win: i64) {
+    IMAGE_PENDING.with(|m| m.borrow_mut().retain(|(w, _), _| *w != win));
 }
 
 /// The platform colours `spec` overrides, as `"selected,border"`.
@@ -1078,6 +1198,18 @@ pub fn begin_frame(window: &mut Window, cx: &App) {
     BOUNDS_STATE.with(|b| {
         b.borrow_mut().insert(win, state);
     });
+    // Who draws the window's decoration, and the strip this program draws its own in.
+    // The platform's answer to a *request*, not a record of one: a window manager with
+    // no compositor keeps `server` however loudly it was asked for `client`, which is
+    // the whole reason a program reads this instead of assuming its request was taken.
+    let decorations = match window.window_decorations() {
+        gpui::Decorations::Server => "server",
+        gpui::Decorations::Client { .. } => "client",
+    };
+    let inset = window.client_inset().map_or(0.0, |px| f32::from(px) as f64);
+    DECORATIONS.with(|d| {
+        d.borrow_mut().insert(win, (decorations, inset));
+    });
     DISPLAYS.with(|d| {
         let mut list = Vec::new();
         for display in cx.displays() {
@@ -1205,6 +1337,18 @@ pub fn bounds_state() -> (&'static str, f64, f64) {
     BOUNDS_STATE.with(|b| b.borrow().get(&win).copied()).unwrap_or(("windowed", 0.0, 0.0))
 }
 
+/// Who draws the window's decoration, and the strip this program set aside for its own.
+///
+/// `"server"` means the platform draws a titlebar and a frame around the window;
+/// `"client"` means the program does, and the platform has been told how wide the
+/// strip is. Read at the start of every frame, because the answer is the platform's
+/// and a window manager can change its mind — a window that becomes maximized is
+/// no longer tiled — so it is a reading rather than a record of what was asked for.
+pub fn decorations() -> (&'static str, f64) {
+    let win = window::current();
+    DECORATIONS.with(|d| d.borrow().get(&win).copied()).unwrap_or(("server", 0.0))
+}
+
 /// One connected display's geometry.
 #[derive(Default, Clone)]
 pub struct Display {
@@ -1235,6 +1379,34 @@ pub fn displays() -> Vec<Display> {
 pub fn mouse_position() -> (f64, f64) {
     let win = window::current();
     MOUSE_AT.with(|p| p.borrow().get(&win).copied()).unwrap_or((0.0, 0.0))
+}
+
+/// Whether any element that declared `group=<name>` is under the pointer right now.
+///
+/// The members are the boxes [`record_box`] wrote a `group.<name>.<id>` key for, and the pointer
+/// is this frame's own reading of it ([`mouse_position`], taken from the window at the start of
+/// the frame). So this answers about the frame being built rather than about the last event,
+/// which is what a program asking "is the card under the pointer" wants: it is the same question
+/// gpui's `group_hover` styles answer while painting.
+///
+/// **A member with no rectangle is not a member anything can answer about.** `group=` asks for
+/// the rectangle the way `bounds` does (`style::wants_bounds`), and the element must carry an
+/// `id=` for its key to be its own — a second member without one overwrites the first.
+///
+/// The reading is a rectangle test and not gpui's own hover test. The difference is z-order: a
+/// member covered by something drawn over it still answers `true` here, where `hitbox.is_hovered`
+/// would answer `false`. Nothing upstream asks the question that way, and a group is a box on
+/// screen either way, but it is not the same function.
+pub fn group_hovered(name: &str) -> bool {
+    let win = window::current();
+    let (x, y) = mouse_position();
+    let point = gpui::point(px(x as f32), px(y as f32));
+    let prefix = format!("group.{name}.");
+    MOUSE_BOUNDS.with(|m| {
+        m.borrow()
+            .iter()
+            .any(|((w, key), bounds)| *w == win && key.starts_with(&prefix) && bounds.contains(&point))
+    })
 }
 
 /// Whether a registered focus handle is the focused one this frame.
@@ -1429,54 +1601,115 @@ fn check_style(style: &str) {
 
 /// Copies one described element out of the arena, so nothing borrows it while
 /// a nested callback re-enters.
+///
+/// While a tooltip is being drawn there is no arena to read: the element comes from the tooltip's
+/// own copy of its subtree — see `CAPTURED`.
 fn snapshot(handle: i64) -> Option<El> {
+    let index = usize::try_from(handle).ok()?;
+    let captured = CAPTURED.with(|c| c.borrow().last().cloned());
+    if let Some(els) = captured {
+        return els.get(index).cloned();
+    }
     arena(|arena| {
-        let el = usize::try_from(handle).ok().and_then(|h| arena.els.get(h))?;
+        let el = arena.els.get(index)?;
+        // `Kind` is `Clone`, so the copy is the derive's: this used to be a match with an arm
+        // per variant, which is the shape that quietly stops compiling the day a variant is
+        // added — and the tooltip variant was the day.
         Some(El {
-            kind: match &el.kind {
-                Kind::Plain => Kind::Plain,
-                Kind::Text(s) => Kind::Text(s.clone()),
-                Kind::Button(s) => Kind::Button(s.clone()),
-                Kind::Checkbox { label, checked } => {
-                    Kind::Checkbox { label: label.clone(), checked: *checked }
-                }
-                Kind::Input { placeholder } => Kind::Input { placeholder: placeholder.clone() },
-                Kind::Slider { min, max } => Kind::Slider { min: *min, max: *max },
-                Kind::Progress(v) => Kind::Progress(*v),
-                Kind::Image(s) => Kind::Image(s.clone()),
-                Kind::Icon(s) => Kind::Icon(s.clone()),
-                Kind::Divider => Kind::Divider,
-                Kind::Spacer(s) => Kind::Spacer(*s),
-                Kind::Virtual { count, row_height } => {
-                    Kind::Virtual { count: *count, row_height: *row_height }
-                }
-                Kind::Canvas { painter, phase } => {
-                    Kind::Canvas { painter: painter.clone(), phase: *phase }
-                }
-                Kind::Scrollbar { id, axis } => {
-                    Kind::Scrollbar { id: id.clone(), axis: axis.clone() }
-                }
-                Kind::Paths { paths, backgrounds } => {
-                    Kind::Paths { paths: paths.clone(), backgrounds: backgrounds.clone() }
-                }
-                Kind::Mouse { child, id, kinds, window_kinds } => Kind::Mouse {
-                    child: *child,
-                    id: id.clone(),
-                    kinds: kinds.clone(),
-                    window_kinds: window_kinds.clone(),
-                },
-                Kind::StyledText { content, highlights } => {
-                    Kind::StyledText { content: content.clone(), highlights: highlights.clone() }
-                }
-                Kind::Editor { key, placeholder } => {
-                    Kind::Editor { key: key.clone(), placeholder: placeholder.clone() }
-                }
-            },
+            kind: el.kind.clone(),
             style: el.style.clone(),
             id: el.id.clone(),
             children: el.children.clone(),
         })
     })
+}
+
+thread_local! {
+    /// The subtree a tooltip's view is drawing from, while it is drawing it.
+    ///
+    /// A tooltip is the one thing gpui draws that the frame did not hand it. Its builder runs on
+    /// gpui's own half-second clock, in a task (`elements/div.rs:2751`), and the view it answers
+    /// is laid out inside a *later* frame's `Window::draw` (`window.rs:2088`) — so by the time a
+    /// child handle inside it is read, the arena that described it has been reset and refilled,
+    /// and the handle names whatever happens to sit at that position in the newer frame. In the
+    /// frame the program quits on it names nothing at all: `release_retained` has already dropped
+    /// the arena, and the tooltip draws once as an empty box. `capture` copies the subtree out at
+    /// build time, and `snapshot` reads that copy while the tooltip is drawn.
+    static CAPTURED: RefCell<Vec<std::rc::Rc<Vec<El>>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Copies a whole subtree out of this frame's arena, so it can be drawn in a later one.
+///
+/// The copy has to stand on its own: every handle inside it is rewritten to name a position in
+/// the copy rather than in the arena it came from, whether it is a child's, an image's `loading`
+/// and `fallback` subtrees, or a `mouse` wrapper's element.
+fn capture(el: &El) -> std::rc::Rc<Vec<El>> {
+    let mut els: Vec<El> = vec![el.clone()];
+    let mut seen: HashMap<usize, usize> = HashMap::new();
+    let kids = el
+        .children
+        .clone()
+        .into_iter()
+        .filter_map(|h| copy(h, &mut els, &mut seen))
+        .collect();
+    els[0].children = kids;
+    std::rc::Rc::new(els)
+}
+
+/// Copies `handle` and everything under it into `els`, answering where it landed.
+///
+/// `seen` is what makes the copy a copy of the *thing* and not of the walk: an element given to
+/// two parents is copied once, so a subtree cannot be duplicated, and the walk cannot double back
+/// on itself.
+fn copy(handle: usize, els: &mut Vec<El>, seen: &mut HashMap<usize, usize>) -> Option<usize> {
+    if let Some(&at) = seen.get(&handle) {
+        return Some(at);
+    }
+    let el = snapshot(handle as i64)?;
+    let at = els.len();
+    seen.insert(handle, at);
+    els.push(el);
+
+    let kids: Vec<usize> = els[at]
+        .children
+        .clone()
+        .into_iter()
+        .filter_map(|h| copy(h, els, seen))
+        .collect();
+    els[at].children = kids;
+
+    // Two variants hold a handle of their own, outside `children`: an image's `loading` and
+    // `fallback` subtrees, which it draws *instead of* the picture, and a `mouse` wrapper's
+    // element, which it hands straight to gpui. A handle that names nothing becomes `0`, which
+    // both of them already read as "none".
+    let image = match &els[at].kind {
+        Kind::Image { path, loading, fallback } => Some((path.clone(), *loading, *fallback)),
+        _ => None,
+    };
+    if let Some((path, loading, fallback)) = image {
+        let loading = remap(loading, els, seen);
+        let fallback = remap(fallback, els, seen);
+        els[at].kind = Kind::Image { path, loading, fallback };
+    }
+    let mouse = match &els[at].kind {
+        Kind::Mouse { child, id, kinds, window_kinds } => {
+            Some((*child as i64, id.clone(), kinds.clone(), window_kinds.clone()))
+        }
+        _ => None,
+    };
+    if let Some((child, id, kinds, window_kinds)) = mouse {
+        let child = remap(child, els, seen).max(0) as usize;
+        els[at].kind = Kind::Mouse { child, id, kinds, window_kinds };
+    }
+    Some(at)
+}
+
+/// Where `handle` lands in the copy, or `0` when it names no element at all.
+fn remap(handle: i64, els: &mut Vec<El>, seen: &mut HashMap<usize, usize>) -> i64 {
+    if handle <= 0 {
+        return 0;
+    }
+    copy(handle as usize, els, seen).map_or(0, |at| at as i64)
 }
 
 /// Turns the frame the view callback described into GPUI elements.
@@ -1719,6 +1952,144 @@ thread_local! {
         RefCell::new(HashMap::new());
     static MOUSE_BOUNDS: RefCell<HashMap<(i64, String), Bounds<Pixels>>> =
         RefCell::new(HashMap::new());
+    /// The last point the pointer was seen at for an element, in the window's space, with the
+    /// modifiers that were held then.
+    ///
+    /// Kept for one caller: [`gpui::on_hover`]'s transition, which reports that the pointer
+    /// *left* an element and is handed no event to say from where. `elements/div.rs:2270` fires
+    /// it from a comparison of two booleans on a mouse move, so the point it should report is
+    /// the one the pointer was last at — which is what this holds. Nothing else reads it.
+    static ELEMENT_AT: RefCell<HashMap<(i64, String), (f64, f64, gpui::Modifiers)>> =
+        RefCell::new(HashMap::new());
+    /// Whether an element carrying the `over` kind had the pointer inside its rectangle at the
+    /// last move of the drag in flight.
+    ///
+    /// `over` is a **transition**, like the element-level `exit`, and gpui hands the listener only
+    /// the present: `DragMoveEvent` says where the pointer is and what this element's rectangle is
+    /// (`elements/div.rs:62-70`) and nothing about the move before it. So the previous answer has
+    /// to be kept somewhere, and it is kept per `(window, element)` for the same reason
+    /// `MOUSE_BOUNDS` is: a drag belongs to one window, and the same id in another window is a
+    /// different element.
+    ///
+    /// Cleared when the drop listener fires, so that the next drag over the same element reports
+    /// its entry again. Without that, an element a drag ended on would answer "already inside"
+    /// forever, because the moves that carried the pointer away from it happened before the flag
+    /// was ever read again.
+    static DRAG_OVER: RefCell<HashMap<(i64, String), bool>> = RefCell::new(HashMap::new());
+}
+
+/// Record one element's own rectangle, and the same rectangle a second time under the group it
+/// declared.
+///
+/// The map is keyed by `(window, key)`, and a group member's second key is
+/// `group.<name>.<id>` — so one box is reachable as itself, through [`element_bounds`], and as a
+/// member of its group, through [`group_hovered`], and the two can never disagree about where the
+/// box was. This is the only writer of `MOUSE_BOUNDS`.
+fn record_box(win: i64, key: &str, group: Option<&str>, bounds: Bounds<Pixels>) {
+    MOUSE_BOUNDS.with(|m| {
+        let mut m = m.borrow_mut();
+        m.insert((win, key.to_string()), bounds);
+        if let Some(group) = group {
+            m.insert((win, format!("group.{group}.{key}")), bounds);
+        }
+    });
+}
+
+/// The strip that stands in for a div's own box: out of flow, unpainted, the full size of its
+/// parent.
+///
+/// gpui hands a div the bounds of its children and never its own
+/// (`Div::on_children_prepainted`, `gpui-0.2.2/src/elements/div.rs:1243`), so the box is read from
+/// a child that is `absolute` — out of flow, so it moves nothing — `size_full()`, so it is
+/// exactly the parent's rectangle, and has no hitbox. Being **first** is what makes
+/// `bounds.first()` it. Round 61 built this for the pointer rows; `bounds` and `group=` reuse it
+/// verbatim, which is why the three agree about where an element is.
+fn bounds_strip() -> AnyElement {
+    div()
+        .absolute()
+        .left(px(0.0))
+        .top(px(0.0))
+        .size_full()
+        .into_any_element()
+}
+
+/// Put [`bounds_strip`] and the listener that reads it onto a **plain** `Div`.
+///
+/// `on_children_prepainted` is an inherent method of the stateless `Div` and of nothing else, so
+/// this has to run before the element is given an id — which is also the only order in which it
+/// can run. `Stateful<Div>` is a newtype over a private field with no `Deref`
+/// (`elements/div.rs:2903`), so an element that is already interactive can never be given this,
+/// and that is why an interactive box that wants its rectangle is written as "strip and listener
+/// first, id after".
+fn with_bounds_strip(box_: Div, win: i64, key: String, group: Option<String>) -> Div {
+    box_
+        .child(bounds_strip())
+        .on_children_prepainted(move |bounds, _window, _cx| {
+            if let Some(first) = bounds.first() {
+                record_box(win, &key, group.as_deref(), *first);
+            }
+        })
+}
+
+/// Give `box_` a way to answer for **its own** box, and put `children` back inside it.
+///
+/// The `tooltip` argument is the third thing a box can want at once. It is applied **here** and
+/// not at the call site because `on_children_prepainted` belongs to the stateless `Div` and
+/// `tooltip` to its *stateful* half, and there is no way back from `Stateful<Div>` to `Div`
+/// (`elements/div.rs:2903` is a newtype over a private field, with no `Deref`). So the id that
+/// `tooltip` needs is given last, after the prepaint listener is already on. A box that wants no
+/// tooltip keeps the stateless element it has always been.
+fn report_bounds(
+    box_: Div,
+    win: i64,
+    key: String,
+    children: Vec<AnyElement>,
+    tip: Option<std::rc::Rc<El>>,
+    entity: EntityId,
+    group: Option<String>,
+) -> AnyElement {
+    let id = key.clone();
+    let stripped = with_bounds_strip(box_, win, key, group).children(children);
+    with_tooltip(stripped.id(ElementId::Name(id.into())), tip, win, entity).into_any_element()
+}
+
+/// Hangs `tip` on an element that has already been given an id, if the box was given one.
+///
+/// `Div::tooltip` lives on a div's stateful half, so a box that wants one has to be id'd — which
+/// is the same thing every interactive branch already does, and which `should_insert_hitbox`
+/// (`elements/div.rs:1710`) then turns into the very hitbox whose hover raises the tooltip.
+///
+/// The subtree is copied **here**, while the frame that described it is still the frame: gpui
+/// runs the closure below 500 ms later (`TOOLTIP_SHOW_DELAY`, `elements/div.rs:48`), off the end
+/// of the frame and off the end of the arena, and the copy is the only thing that lasts that
+/// long. `capture` says what it is for.
+///
+/// `win` and `entity` are captured here for the same reason, and they are the reason this
+/// argument list is longer than it looks like it needs to be. gpui lays a tooltip out inside
+/// `Window::draw`, long after `Root::render` — the one place `window::with` points the thread at
+/// a window — has returned. So during a tooltip's own render, `window::current()` is `0`, and
+/// every per-window thing the binding reads out of it — the `bounds` registry a child reports
+/// into, the window a notification is asked of — would be another window's. `TooltipView` puts
+/// the window back (`window::with`), which is what makes a `bounds` token inside a tooltip name
+/// the same window as the box it is a tooltip *for*.
+fn with_tooltip<E>(element: E, tip: Option<std::rc::Rc<El>>, win: i64, entity: EntityId) -> E
+where
+    E: gpui::StatefulInteractiveElement,
+{
+    match tip {
+        None => element,
+        Some(tip) => {
+            let els = capture(&tip);
+            element.tooltip(move |_window, cx| {
+                cx.new(|_cx| TooltipView {
+                    els: els.clone(),
+                    entity,
+                    win,
+                })
+                .into()
+            })
+        }
+    }
 }
 
 /// The separator inside a pointer event's payload.
@@ -1767,7 +2138,9 @@ fn round3(v: f32) -> f64 {
 /// measuring a position inside itself wants; [`crate::pointer_xy`] documents the difference.
 /// Registers `id`'s **window-level** listeners on `window` for the events named in `kinds`.
 ///
-/// The same three events the element-level handlers report, through the same writer
+/// The same events the element-level handlers report, plus two the element cannot hear at all —
+/// `exit`, which no element-level listener type-matches, and `scroll`, which gpui gates on
+/// `should_handle_scroll` rather than on hover — through the same writer
 /// ([`report_pointer`]), registered on the window instead of on the element. gpui dispatches
 /// window listeners for every mouse event wherever the pointer is
 /// (`gpui-0.2.2/src/window.rs:3677-3714`), where an element's own listener is gated on the
@@ -1791,39 +2164,111 @@ fn register_window_mouse(
     id: &str,
     kinds: &str,
 ) {
+    // The kind words are read the same way the element-level half reads them, including the `!`
+    // suffix that asks for the event to stop where it landed — see [`render`]'s mouse arm for what
+    // a stop means and why it is on the kind. Here the stop lands among the window's own
+    // listeners, which gpui dispatches in the bubble pass over `Window::mouse_listeners`
+    // (`window.rs:3695-3714`), so it withholds the event from the window listeners registered
+    // **before** this one and does not touch an element's listener at all. A `!` that did not also
+    // register the plain kind would be the worst of both — the modifier would silently disable
+    // the listener — so the bang is stripped for the match and read again for the stop.
     let wants = |want: &str| {
         kinds
             .split(|c: char| c == ',' || c.is_whitespace())
-            .any(|word| word == want)
+            .any(|word| word.trim_end_matches('!') == want)
+    };
+    let consumes = |kind: &str| {
+        let wanted = format!("{kind}!");
+        kinds
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .any(|word| word == wanted)
     };
 
     if wants("down") {
         let key = id.to_string();
+        let stops = consumes("down");
         window.on_mouse_event(move |event: &MouseDownEvent, phase, _w, cx| {
             if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
                 return;
             }
-            window::with(win, || report_pointer(&key, "down", event.position, event.modifiers));
+            window::with(win, || {
+                report_pointer(&key, "down", event.position, event.modifiers, Some(event.click_count))
+            });
+            if stops {
+                cx.stop_propagation();
+            }
             cx.notify(entity);
         });
     }
     if wants("up") {
         let key = id.to_string();
+        let stops = consumes("up");
         window.on_mouse_event(move |event: &MouseUpEvent, phase, _w, cx| {
             if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
                 return;
             }
-            window::with(win, || report_pointer(&key, "up", event.position, event.modifiers));
+            window::with(win, || {
+                report_pointer(&key, "up", event.position, event.modifiers, Some(event.click_count))
+            });
+            if stops {
+                cx.stop_propagation();
+            }
             cx.notify(entity);
         });
     }
     if wants("move") {
         let key = id.to_string();
+        let stops = consumes("move");
         window.on_mouse_event(move |event: &MouseMoveEvent, phase, _w, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
             }
-            window::with(win, || report_pointer(&key, "move", event.position, event.modifiers));
+            window::with(win, || {
+                report_pointer(&key, "move", event.position, event.modifiers, None)
+            });
+            if stops {
+                cx.stop_propagation();
+            }
+            cx.notify(entity);
+        });
+    }
+    // The window's own exit: the pointer has left the window altogether.
+    //
+    // This is a different thing from the element-level `exit` and the difference is worth the two
+    // registrations. `MouseExitEvent` is generated by the platform when the pointer leaves the
+    // *window* (`x11/client.rs:1233`), it is dispatched to window listeners directly, and it
+    // carries its own position — so it arrives whether or not the pointer moves again, which the
+    // element-level one does not. It also never reaches an element listener at all: those are
+    // registered with a concrete event type and this is not one they name.
+    if wants("exit") {
+        let key = id.to_string();
+        let stops = consumes("exit");
+        window.on_mouse_event(move |event: &MouseExitEvent, phase, _w, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            window::with(win, || {
+                report_pointer(&key, "exit", event.position, event.modifiers, None)
+            });
+            if stops {
+                cx.stop_propagation();
+            }
+            cx.notify(entity);
+        });
+    }
+    // The wheel, where the pointer is rather than where this element is: `down`, `up` and `move`
+    // are gated on the element by nothing at all here, and neither is this.
+    if wants("scroll") {
+        let key = id.to_string();
+        let stops = consumes("scroll");
+        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _w, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            window::with(win, || report_scroll(&key, event));
+            if stops {
+                cx.stop_propagation();
+            }
             cx.notify(entity);
         });
     }
@@ -1834,19 +2279,54 @@ fn report_pointer(
     kind: &str,
     position: gpui::Point<Pixels>,
     modifiers: gpui::Modifiers,
+    count: Option<usize>,
+) {
+    report_pointer_at(
+        id,
+        kind,
+        round3(f32::from(position.x)),
+        round3(f32::from(position.y)),
+        modifiers,
+        count,
+    );
+}
+
+/// [`report_pointer`] with the point already in the window's own numbers.
+///
+/// Split out for the one reporter that has no event of its own to read a point from: an `exit`
+/// arrives as a boolean ([`report_exit`]) and reports from the point the pointer was last seen
+/// at, which is a pair of `f64`s already — there is no `Pixels` to convert, and putting one back
+/// together only to take it apart again would round the number twice.
+fn report_pointer_at(
+    id: &str,
+    kind: &str,
+    wx: f64,
+    wy: f64,
+    modifiers: gpui::Modifiers,
+    count: Option<usize>,
 ) {
     let win = window::current();
+    ELEMENT_AT.with(|m| {
+        m.borrow_mut()
+            .insert((win, id.to_string()), (wx, wy, modifiers))
+    });
     let bounds = MOUSE_BOUNDS.with(|m| m.borrow().get(&(win, id.to_string())).copied());
-    let (wx, wy) = (round3(f32::from(position.x)), round3(f32::from(position.y)));
     let (x, y) = match bounds {
         Some(bounds) => (
-            round3(f32::from(position.x) - f32::from(bounds.origin.x)),
-            round3(f32::from(position.y) - f32::from(bounds.origin.y)),
+            round3((wx as f32) - f32::from(bounds.origin.x)),
+            round3((wy as f32) - f32::from(bounds.origin.y)),
         ),
         None => (wx, wy),
     };
     store::set_float(&format!("{id}.x"), x);
     store::set_float(&format!("{id}.y"), y);
+    // The click count the *platform* kept, on the events that carry one. `None` leaves the slot
+    // alone rather than writing a zero: a move between two clicks of a double click must not
+    // reset the count the second click reports, and a program that reads `<id>.count` after a
+    // move wants the count of the last click, not of the move that followed it.
+    if let Some(count) = count {
+        store::set_int(&format!("{id}.count"), count as i64);
+    }
     store::set_flag(&format!("{id}.dragging"), kind == "move");
     store::set_flag(&format!("{id}.shift"), modifiers.shift);
     store::set_flag(&format!("{id}.control"), modifiers.control);
@@ -1857,6 +2337,128 @@ fn report_pointer(
         id,
         &format!("{kind}{POINTER_SEP}{wx}{POINTER_SEP}{wy}{POINTER_SEP}{mods}"),
     );
+}
+
+/// The platform's own click counter for a click event, or `None` for a click that had none.
+///
+/// `ClickEvent` is either a mouse click or a keyboard one — Enter or Space on a focused element
+/// (`elements/div.rs:2179-2210`) — and only the mouse half has a counter to report. gpui keeps
+/// that counter in the platform backend and hands it in `MouseDownEvent::click_count`, which is
+/// what makes a second press a double click; a program cannot compute it, because the interval
+/// is the platform's (`x11/client.rs:1103`, `DOUBLE_CLICK_INTERVAL`).
+fn click_count(event: &ClickEvent) -> Option<usize> {
+    match event {
+        ClickEvent::Mouse(mouse) => Some(mouse.up.click_count),
+        ClickEvent::Keyboard(_) => None,
+    }
+}
+
+/// Writes a scroll wheel event the way `report_pointer` writes the rest: the point and the
+/// modifiers through the same writer, and the *delta* — which no other pointer event has — into
+/// `<id>.dx` / `<id>.dy`.
+///
+/// The delta is **not** in the payload, and that is deliberate. `pointer_fields` reads a payload
+/// of exactly four `\u{1}`-separated fields and answers `None` for anything else, so a program's
+/// scroll handling is the same code as its click handling and only the two store slots differ.
+///
+/// gpui spells a delta two ways, and they are **not the same unit**:
+/// `ScrollDelta::Pixels` is a precise device's distance in pixels, `ScrollDelta::Lines` is a
+/// notched wheel's count of lines (`interactive.rs:387-392`). Both would land in one slot, and
+/// a program reading `8.0` could not tell eight pixels from eight lines. So the unit is written
+/// beside the number: `<id>.scroll_lines` is `true` when the two slots hold lines. A program
+/// that wants pixels and has lines multiplies by whatever its own line height is, which is a
+/// decision only the program can make.
+fn report_scroll(id: &str, event: &ScrollWheelEvent) {
+    let (dx, dy, lines) = match event.delta {
+        ScrollDelta::Pixels(delta) => (f32::from(delta.x), f32::from(delta.y), false),
+        ScrollDelta::Lines(delta) => (delta.x, delta.y, true),
+    };
+    store::set_float(&format!("{id}.dx"), round3(dx));
+    store::set_float(&format!("{id}.dy"), round3(dy));
+    store::set_flag(&format!("{id}.scroll_lines"), lines);
+    report_pointer(id, "scroll", event.position, event.modifiers, None);
+}
+
+/// Raise `"<id>|exit"`: the pointer is no longer over this element.
+///
+/// Reported against the point the pointer was last seen at, which is the point it left from.
+/// There is nothing else to report it from: gpui's element-level exit is a **boolean**, handed to
+/// the hover listener on a *mouse move* once the hit test no longer covers the element
+/// (`elements/div.rs:2270`, `if is_hovered != *was_hovered`), and it carries no event. The
+/// window-level exit is a different thing and does carry one — see `register_window_mouse`,
+/// whose `exit` kind reports `MouseExitEvent`'s own position.
+///
+/// **This is why an element-level `exit` needs a mouse move to arrive.** A pointer that simply
+/// stops moving, or one that leaves the window altogether, produces no further `MouseMoveEvent`
+/// and so no element-level exit at all; the window's own `exit` is what covers that case, and it
+/// arrives directly. A program that wants to know the pointer has gone should listen for both.
+///
+/// An element the pointer was never seen over answers no point — `pointer_xy` on this event gives
+/// `(-1.0, -1.0)`, the same "there is no position here" the reader gives anything that is not a
+/// pointer event. That can only happen for an element that listens for `exit` and for none of the
+/// events that would have recorded where the pointer was.
+fn report_exit(id: &str) {
+    let win = window::current();
+    let last = ELEMENT_AT
+        .with(|m| m.borrow().get(&(win, id.to_string())).copied());
+    let (wx, wy, modifiers) = last.unwrap_or((-1.0, -1.0, gpui::Modifiers::default()));
+    report_pointer_at(id, "exit", wx, wy, modifiers, None);
+}
+
+/// Raise one of the four drag states: `"<id>|drag"` when this element's drag is armed,
+/// `"<id>|over"` and `"<id>|out"` as a drag in flight crosses this element's rectangle, and
+/// `"<id>|drop"` when the release lands inside it.
+///
+/// Four names and not one with a phase beside it, because they answer two different questions and
+/// are heard by two different ends of the gesture. `drag` is the **source** saying it has been
+/// picked up; `over`, `out` and `drop` are a **target** saying what a drag in flight is doing to it.
+/// An element that is both hears all four, and the `kinds` string is what decides.
+///
+/// The payload — the value the program gave the drag when it started — is written to
+/// **`<id>.drag_value`** on every one of them, so a target knows *what* is over it and not only
+/// that something is. It is written with `set_text_quiet` and not `set_text`: this is a slot a
+/// drag fills and empties several times a gesture, and routing it through the undo history would
+/// put a drag in the middle of a program's edit history.
+///
+/// `over` is the only one that also writes a flag, **`<id>.over`** — `true` while the pointer is
+/// inside the element with a drag in flight and `false` once it has left. It is a flag and not a
+/// fifth event because it is the *state* the row is about: a drop target that paints itself
+/// differently while a payload is over it reads `over` once a frame, and a program that wants the
+/// two transitions instead reads the two events.
+fn report_drag(id: &str, kind: &str, position: gpui::Point<Pixels>, modifiers: gpui::Modifiers, value: &str) {
+    if kind == "over" || kind == "out" {
+        store::set_flag(&format!("{id}.over"), kind == "over");
+    }
+    if !value.is_empty() {
+        store::set_text_quiet(&format!("{id}.drag_value"), value);
+    }
+    report_pointer(id, kind, position, modifiers, None);
+}
+
+/// Raise `"<id>|drop"` and clear this element's `over` state.
+///
+/// Separate from [`report_drag`] for the two things a drop does not have. It is handed **no
+/// event** — `Interactivity::on_drop`'s listener takes the payload, a window and an app
+/// (`elements/div.rs:462`) — so its point comes from `Window::mouse_position()`, which is where the
+/// pointer is at that moment, and its modifiers from the last move this element was reported at,
+/// since a release carries none of its own. And it clears `DRAG_OVER`: a drag that ended on an
+/// element must not leave it answering "already inside" to the next one.
+///
+/// **The point is passed in and not read here**, because the caller is the one holding the
+/// captured window: `window::current()` is `0` inside a listener gpui calls after the frame that
+/// registered it, so a reporter that reaches for it there writes into no window at all. See
+/// `Root::render`.
+fn report_drop(id: &str, position: gpui::Point<Pixels>, value: &str) {
+    let win = window::current();
+    let modifiers = ELEMENT_AT
+        .with(|m| m.borrow().get(&(win, id.to_string())).map(|(_, _, m)| *m))
+        .unwrap_or_default();
+    DRAG_OVER.with(|m| m.borrow_mut().insert((win, id.to_string()), false));
+    // The `over` flag goes with it: the pointer is still inside the element after a release, but
+    // there is no longer a drag over it, and a target that paints itself for an incoming payload
+    // must stop when the payload has landed.
+    store::set_flag(&format!("{id}.over"), false);
+    report_drag(id, "drop", position, modifiers, value);
 }
 
 /// The event's own position in the window and its modifiers, or `None` when it is not a
@@ -1946,6 +2548,74 @@ pub(crate) fn register_focus(win: i64, id: &str, handle: FocusHandle) {
     });
 }
 
+/// A tooltip's subtree, as a view of its own — which is the only shape gpui accepts for one.
+///
+/// `Div::tooltip`'s builder answers an `AnyView`, and gpui lays that view out as a **root**
+/// (`gpui-0.2.2/src/window.rs:2100-2102`), so a described subtree has to arrive as one. This is
+/// that wrapper and nothing else: the tooltip's own style string is the style of the box it
+/// draws and its children are its content, so it goes through the ordinary `Kind::Plain` path —
+/// padding, background, `w=auto` and the `bounds` token included. Nothing about a tooltip's
+/// layout is special; only *when* it happens is.
+struct TooltipView {
+    /// The tooltip's whole subtree, copied out of the frame that described it and standing on
+    /// its own: the tooltip is laid out in a later frame, where the arena it was built in is a
+    /// different tree wearing the same numbering. See `capture`.
+    els: std::rc::Rc<Vec<El>>,
+    /// The entity to notify when something inside the tooltip asks for a redraw. The tooltip is
+    /// a view of its own, so it cannot notify the frame that built it directly; the frame's id is
+    /// carried here for the one class of element that notifies at all (a pointer's, an editor's).
+    entity: EntityId,
+    /// The window this tooltip belongs to, captured when it was given to its target.
+    ///
+    /// gpui lays a tooltip out inside `Window::draw`, which is after `Root::render` — the one
+    /// place that points the thread at a window — has returned. Without this the tooltip's own
+    /// subtree would be rendered as part of window `0`: a `bounds` token inside it would report
+    /// into the wrong window's registry, and anything it asked to be redrawn would be asked of
+    /// nothing.
+    win: i64,
+}
+
+impl Render for TooltipView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Everything the subtree below reads — its children, its image subtrees — comes from the
+        // copy, so it does not matter what this window's arena holds by now, or whether it holds
+        // anything at all.
+        CAPTURED.with(|c| c.borrow_mut().push(self.els.clone()));
+        let element = window::with(self.win, || render(&self.els[0], window, cx, self.entity));
+        CAPTURED.with(|c| c.borrow_mut().pop());
+        element
+    }
+}
+
+/// The ghost a drag draws while it is in flight: the element being dragged, drawn under the
+/// pointer that picked it up.
+///
+/// It is [`TooltipView`]'s situation exactly. gpui takes the view `on_drag` was handed, prepaints
+/// it as a **root of its own** at `mouse_position - cursor_offset` with `AvailableSpace::min_size()`
+/// (`gpui-0.2.2/src/window.rs:2055-2060` — and takes it in preference to a tooltip, so a drag hides
+/// one), and paints it from inside `Window::draw`, after `Root::render` has returned. So the
+/// subtree is copied out of the frame that described it by `capture`, and put back into the window
+/// that drew it by `window::with` — the same two moves, for the same two reasons.
+///
+/// **What it holds is the dragged element's own subtree and not the `mouse` wrapper around it.**
+/// The wrapper is what arms the drag in the first place, so drawing it here would register a
+/// second `on_drag` for the same id from inside the overlay's own paint — which gpui refuses
+/// (`elements/div.rs:513` asserts the listener is not already set), one frame into a drag.
+struct DragPreview {
+    els: std::rc::Rc<Vec<El>>,
+    entity: EntityId,
+    win: i64,
+}
+
+impl Render for DragPreview {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        CAPTURED.with(|c| c.borrow_mut().push(self.els.clone()));
+        let element = window::with(self.win, || render(&self.els[0], window, cx, self.entity));
+        CAPTURED.with(|c| c.borrow_mut().pop());
+        element
+    }
+}
+
 pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> AnyElement {
     // Every callback built below outlives this frame. Each one re-enters
     // through `window::with(win, ..)` so that the state, events and requests it
@@ -1953,29 +2623,40 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
     let win = window::current();
     match &el.kind {
         Kind::Plain => {
-            let children: Vec<AnyElement> = el
-                .children
-                .iter()
-                .filter_map(|h| {
-                    let child = snapshot(*h as i64);
-                    if child.is_none() {
-                        // A parent named an element that is not in this window's
-                        // arena, so it will not be drawn and nothing else will say
-                        // so: the parent still paints its own background, and an
-                        // empty box is silent. This is the exact shape of the fault
-                        // that drew 02_data_table's rows as 42 tinted bars for days
-                        // — `arena()` keys on `window::current()`, and the list
-                        // rendered its rows outside the frame's window, so every
-                        // child handle missed. Naming it here is what makes that
-                        // class of fault visible to the suites.
-                        note_error(format!(
-                            "child handle {h} names no element in this window"
-                        ));
-                    }
-                    child
-                })
-                .map(|child| render(&child, window, cx, entity))
-                .collect();
+            // A `gpui::tooltip` among the children is lifted out instead of laid out beside
+            // them, because gpui does not draw it there: it draws it *over* this element, at
+            // the pointer, while the pointer rests on it. Everything else is a child as before.
+            let mut children: Vec<AnyElement> = Vec::new();
+            let mut tip: Option<El> = None;
+            for h in &el.children {
+                let child = snapshot(*h as i64);
+                if child.is_none() {
+                    // A parent named an element that is not in this window's
+                    // arena, so it will not be drawn and nothing else will say
+                    // so: the parent still paints its own background, and an
+                    // empty box is silent. This is the exact shape of the fault
+                    // that drew 02_data_table's rows as 42 tinted bars for days
+                    // — `arena()` keys on `window::current()`, and the list
+                    // rendered its rows outside the frame's window, so every
+                    // child handle missed. Naming it here is what makes that
+                    // class of fault visible to the suites.
+                    let have = arena(|a| a.els.len());
+                    note_error(format!(
+                        "child handle {h} names no element in this window (window {win} holds {have})"
+                    ));
+                    continue;
+                }
+                let child = child.unwrap();
+                if matches!(child.kind, Kind::Tooltip) {
+                    tip = Some(child);
+                    continue;
+                }
+                children.push(render(&child, window, cx, entity));
+            }
+            // `tip` becomes an `Rc` once, here: `with_tooltip` moves it into a closure that gpui
+            // may call many times over many frames, and each call has to be able to take its own
+            // copy of the descriptor.
+            let tip = tip.map(std::rc::Rc::new);
             let base = style::apply(div(), &el.style);
             let (hover, active, focus) = style::interaction(&el.style);
             match style::scroll_axis(&el.style) {
@@ -1995,11 +2676,16 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         cx,
                     );
                     let handle = scroll::handle(win, &el.id);
-                    scrolled
-                        .overflow_x_scroll()
-                        .track_scroll(&handle)
-                        .children(children)
-                        .into_any_element()
+                    with_tooltip(
+                        scrolled
+                            .overflow_x_scroll()
+                            .track_scroll(&handle)
+                            .children(children),
+                        tip,
+                        win,
+                        entity,
+                    )
+                    .into_any_element()
                 }
                 Some("both") => {
                     let scrolled = apply_focus_order(
@@ -2013,11 +2699,13 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         cx,
                     );
                     let handle = scroll::handle(win, &el.id);
-                    scrolled
-                        .overflow_scroll()
-                        .track_scroll(&handle)
-                        .children(children)
-                        .into_any_element()
+                    with_tooltip(
+                        scrolled.overflow_scroll().track_scroll(&handle).children(children),
+                        tip,
+                        win,
+                        entity,
+                    )
+                    .into_any_element()
                 }
                 Some(_) => {
                     let scrolled = apply_focus_order(
@@ -2031,11 +2719,16 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         cx,
                     );
                     let handle = scroll::handle(win, &el.id);
-                    scrolled
-                        .overflow_y_scroll()
-                        .track_scroll(&handle)
-                        .children(children)
-                        .into_any_element()
+                    with_tooltip(
+                        scrolled
+                            .overflow_y_scroll()
+                            .track_scroll(&handle)
+                            .children(children),
+                        tip,
+                        win,
+                        entity,
+                    )
+                    .into_any_element()
                 }
                 // A plain box only becomes interactive when it asks to be, so
                 // the common case keeps a stateless element. A `ctx=` counts as
@@ -2052,6 +2745,25 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                     || style::key_context(&el.style).is_some()
                     || style::wants_focus(&el.style) =>
                 {
+                    // A box that asked for its rectangle gets it recorded even when it is
+                    // interactive. The `bounds` arm below is only reached by a box that is *not*
+                    // — it is matched after this one — so a container carrying both an
+                    // interaction token and `bounds` was answered with nothing at all, which is
+                    // the same silence a missing slot gives everywhere else. `group=` is a second
+                    // reason to need that rectangle, and the reason it was found.
+                    //
+                    // The strip goes on **before** the id, because `on_children_prepainted` is
+                    // the stateless `Div`'s own method and `Stateful<Div>` has no way back to it
+                    // — see [`with_bounds_strip`]. The id is applied in the same call here that
+                    // already applied it, so an interactive box that wants its box is the same
+                    // dispatch-tree node it was before, plus one inert child.
+                    let wants = style::wants_bounds(&el.style) && !el.id.is_empty();
+                    let group = style::group(&el.style);
+                    let base = if wants {
+                        with_bounds_strip(base, win, el.id.clone(), group)
+                    } else {
+                        base
+                    };
                     let interactive = apply_focus_order(
                         apply_interactions(
                             base.id(ElementId::Name(el.id.clone().into())),
@@ -2062,15 +2774,62 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         &el.id,
                         cx,
                     );
-                    interactive.children(children).into_any_element()
+                    let interactive = if wants {
+                        interactive.children(std::iter::once(bounds_strip()).chain(children))
+                    } else {
+                        interactive.children(children)
+                    };
+                    with_tooltip(interactive, tip, win, entity).into_any_element()
                 }
+                // `bounds` — the element asks for its own box to be readable. A box that
+                // listens to nothing is otherwise unreachable by `gpui::element_bounds`, and
+                // "a box sized to its content, read back" is exactly that shape.
+                None if style::wants_bounds(&el.style) && !el.id.is_empty() => {
+                    report_bounds(base, win, el.id.clone(), children, tip, entity, style::group(&el.style))
+                }
+                // A box that was given a tooltip has to be id'd even when it asks for nothing
+                // else, because that is where gpui hangs the tooltip. One that asks for
+                // nothing and was given nothing stays the stateless element it has always
+                // been.
+                None if tip.is_some() => with_tooltip(
+                    base.id(ElementId::Name(el.id.clone().into())).children(children),
+                    tip,
+                    win,
+                    entity,
+                )
+                .into_any_element(),
                 None => base.children(children).into_any_element(),
             }
         }
 
+        // A tooltip that no target ever took. `Kind::Plain` lifts one out of its children and
+        // hands it to `Div::tooltip`; reaching here means this one was put somewhere that
+        // lifts nothing — a root, a row — and gpui draws no tooltip without a hitbox under it,
+        // so there is no "correct" rendering to give it. It is drawn as the box it is: a stray
+        // `gpui::tooltip` shows up where the program put it instead of vanishing or panicking.
+        Kind::Tooltip => {
+            let plain = El {
+                kind: Kind::Plain,
+                style: el.style.clone(),
+                id: el.id.clone(),
+                children: el.children.clone(),
+            };
+            render(&plain, window, cx, entity)
+        }
+
         Kind::Text(text) => {
             let text = text.clone();
-            style::apply(div(), &el.style).child(text).into_any_element()
+            let box_ = style::apply(div(), &el.style);
+            // A text element can be asked for its own box too: the run's laid-out width is what
+            // "a box sized to its content" is checked against, and it is the box a marker placed
+            // at a character is measured inside of.
+            if style::wants_bounds(&el.style) && !el.id.is_empty() {
+                // A run of text is given no tooltip: gpui raises one from a hitbox, and a text
+                // element is not where a program would hang one — the box around it is.
+                report_bounds(box_, win, el.id.clone(), vec![text.into_any_element()], None, entity, style::group(&el.style))
+            } else {
+                box_.child(text).into_any_element()
+            }
         }
 
         Kind::Button(label) => {
@@ -2264,9 +3023,9 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
         // The element id matters here beyond hit-testing: GPUI keeps an
         // image's animation cursor (`ImgState`) keyed by its global element id,
         // so without `.id(..)` an animated GIF never advances a frame.
-        Kind::Image(path) => style::apply(img(PathBuf::from(asset_path(path))), &el.style)
-            .id(ElementId::Name(el.id.clone().into()))
-            .into_any_element(),
+        Kind::Image { path, loading, fallback } => {
+            render_image(el, path, *loading, *fallback, win, window, cx, entity)
+        }
 
         Kind::Icon(path) => {
             let icon: Svg = svg().path(SharedString::from(asset_path(path)));
@@ -2455,6 +3214,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let bounds_key = id.clone();
             let mut wrapper = match receiver {
                 Some(receiver) if folds => {
+                    let bounds_group = style::group(&receiver.style);
                     let mut children: Vec<AnyElement> = vec![div()
                         .absolute()
                         .left(px(0.0))
@@ -2472,9 +3232,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                     let base = style::apply(div(), &receiver.style)
                         .on_children_prepainted(move |bounds, _window, _cx| {
                             if let Some(first) = bounds.first() {
-                                MOUSE_BOUNDS.with(|m| {
-                                    m.borrow_mut().insert((win, bounds_key.clone()), *first)
-                                });
+                                record_box(win, &bounds_key, bounds_group.as_deref(), *first);
                             }
                         })
                         .id(ElementId::Name(receiver.id.clone().into()));
@@ -2483,6 +3241,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         .children(children)
                 }
                 receiver => {
+                    let bounds_group = style::group(&el.style);
                     let inner = receiver
                         .map(|mut c| {
                             c.children.extend(el.children.iter().copied());
@@ -2492,9 +3251,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                     style::apply(div(), &el.style)
                         .on_children_prepainted(move |bounds, _window, _cx| {
                             if let Some(first) = bounds.first() {
-                                MOUSE_BOUNDS.with(|m| {
-                                    m.borrow_mut().insert((win, bounds_key.clone()), *first)
-                                });
+                                record_box(win, &bounds_key, bounds_group.as_deref(), *first);
                             }
                         })
                         .id(ElementId::Name(el.id.clone().into()))
@@ -2502,60 +3259,220 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 }
             };
 
+            // `"down! up"` asks for the same report as `"down up"` **and** for the press to stop
+            // where it landed: the listener calls `cx.stop_propagation()` before it returns, so
+            // no listener registered earlier hears the event. gpui's dispatch runs the capture
+            // pass in registration order and then the bubble pass over the same list `rev()`d,
+            // breaking out of each the moment `cx.propagate_event` goes false
+            // (`window.rs:3695-3714`); elements register in paint order, parents before
+            // children, so the reverse order is child-first and what a stop actually withholds
+            // the event from is the **ancestors**. `cx.propagate_event` is reset for every event
+            // (`window.rs:3584`), so a stop is about the one event and not about the next.
+            //
+            // The `!` is on the kind rather than on the element because those are two different
+            // questions: an element may want its own press reported and the presses inside it
+            // left alone, and there is no way to write "everything except this one" in a list of
+            // kinds. `down!` is what `down` is — `kinds.contains("down")` is still true of it —
+            // with one listener option set.
+            let consumes = |kind: &str| {
+                let wanted = format!("{kind}!");
+                kinds
+                    .split(|c: char| c == ',' || c.is_whitespace())
+                    .any(|word| word == wanted)
+            };
+
             if kinds.contains("down") {
                 let key = id.clone();
+                let stops = consumes("down");
                 wrapper = wrapper.on_mouse_down(MouseButton::Left, move |event, _w, cx| {
                     window::with(win, || {
-                        report_pointer(&key, "down", event.position, event.modifiers)
+                        report_pointer(&key, "down", event.position, event.modifiers, Some(event.click_count))
                     });
+                    if stops {
+                        cx.stop_propagation();
+                    }
                     cx.notify(entity);
                 });
             }
             if kinds.contains("up") {
                 let key = id.clone();
+                let stops = consumes("up");
                 wrapper = wrapper.on_mouse_up(MouseButton::Left, move |event, _w, cx| {
                     window::with(win, || {
-                        report_pointer(&key, "up", event.position, event.modifiers)
+                        report_pointer(&key, "up", event.position, event.modifiers, Some(event.click_count))
                     });
+                    if stops {
+                        cx.stop_propagation();
+                    }
                     cx.notify(entity);
                 });
             }
             if kinds.contains("click") {
                 let key = id.clone();
+                let stops = consumes("click");
                 wrapper = wrapper.on_click(move |event, _w, cx| {
+                    let count = click_count(event);
                     window::with(win, || {
-                        report_pointer(&key, "click", event.position(), event.modifiers())
+                        report_pointer(&key, "click", event.position(), event.modifiers(), count)
                     });
+                    if stops {
+                        cx.stop_propagation();
+                    }
                     cx.notify(entity);
                 });
             }
             if kinds.contains("right") {
                 let key = id.clone();
+                let stops = consumes("right");
                 wrapper = wrapper.on_mouse_down(MouseButton::Right, move |event, _w, cx| {
                     window::with(win, || {
-                        report_pointer(&key, "right", event.position, event.modifiers)
+                        report_pointer(&key, "right", event.position, event.modifiers, Some(event.click_count))
                     });
+                    if stops {
+                        cx.stop_propagation();
+                    }
                     cx.notify(entity);
                 });
             }
             if kinds.contains("move") {
                 let key = id.clone();
+                let stops = consumes("move");
                 wrapper = wrapper.on_mouse_move(move |event, _w, cx| {
                     if event.dragging() {
                         window::with(win, || {
-                            report_pointer(&key, "move", event.position, event.modifiers)
+                            report_pointer(&key, "move", event.position, event.modifiers, None)
                         });
+                        if stops {
+                            cx.stop_propagation();
+                        }
+                        cx.notify(entity);
+                    }
+                });
+            }
+            // The wheel. The gate is not the same one the handlers above are under, and the
+            // difference is gpui's: `on_scroll_wheel` asks `hitbox.should_handle_scroll(window)`
+            // (`elements/div.rs:318`), which tests the whole hit-test list, where `on_mouse_down`
+            // and its neighbours ask `hitbox.is_hovered(window)` (`:128`), which tests only the
+            // hovered prefix (`window.rs:500-516`). So the wheel reaches an element that has
+            // something on top of it and the presses do not — which is what a scrolling
+            // container wants, and is why this is registered here rather than folded into the
+            // move handler.
+            if kinds.contains("scroll") {
+                let key = id.clone();
+                let stops = consumes("scroll");
+                wrapper = wrapper.on_scroll_wheel(move |event, _w, cx| {
+                    window::with(win, || report_scroll(&key, event));
+                    if stops {
+                        cx.stop_propagation();
+                    }
+                    cx.notify(entity);
+                });
+            }
+            // The pointer leaving. gpui gives an element no exit event — element listeners are
+            // matched on a concrete event type, and `MouseExitEvent` is not one any of them names
+            // (`elements/div.rs:2042-2059` registers them all as `on_mouse_event::<MouseDownEvent>`
+            // and its neighbours), so a window-level exit listener is the only one that ever sees
+            // it. What an element does have is the **transition** of its own hover, delivered to
+            // the hover listener as a bool, and that is what this reports. See `report_exit` for
+            // what that costs — a move, and a point borrowed from the last one.
+            if kinds.contains("exit") {
+                let key = id.clone();
+                wrapper = wrapper.on_hover(move |hovered, _w, cx| {
+                    if !*hovered {
+                        window::with(win, || report_exit(&key));
                         cx.notify(entity);
                     }
                 });
             }
 
+            // ---- the drag states ---------------------------------------------------------------
+            //
+            // gpui's own drag protocol, reached from the binding rather than rebuilt. `DD2`'s row
+            // said the binding could not: "`InteractiveElement::on_drag_move` (`elements/div.rs:282`)
+            // is a method on `Interactivity`, gpui's internal per-element state, so the binding
+            // cannot register one through the element vocabulary it builds." **It can.**
+            // `Interactivity` is a `pub` struct (`:1478`), `InteractiveElement` is a `pub` trait
+            // whose three drag methods are public (`:818`, `:976`, `:1132`), and the one thing that
+            // stood in the way — `mod elements` private (`gpui.rs:21`) — is undone by the line
+            // after it, `pub use elements::*` (`:77`). So `gpui::Interactivity` is a nameable path
+            // and these are callable from here.
+            //
+            // What was true is that the binding could not make one **fire**. `on_drag_move`'s
+            // listener opens with `phase == DispatchPhase::Capture && let Some(drag) = &cx.active_drag`
+            // and `drag.value.type_id() == TypeId::of::<T>()` (`:282-296`), and `cx.active_drag` is
+            // `pub(crate)` (`app.rs:545`) with exactly two writers in the whole crate: the
+            // platform's file-drop translation, and the pending-mouse-down listener that arms a
+            // drag — which only arms when `drag_listener.take()` is `Some` (`:2158-2174`), and only
+            // `on_drag` ever puts one there (`:499`). So the arming half is not optional and the
+            // payload comes with it.
+            //
+            // That payload is this element's own id, a `String` the program chose, and it is what
+            // travels: gpui carries it in `cx.active_drag` and hands it to whichever drop listener
+            // matches its `TypeId`. It is written back to a target as `<id>.drag_value`, and read
+            // there by `DragMoveEvent::drag` (`:70`) — the drop half gets it as an argument.
+            if kinds.contains("drag") {
+                let key = id.clone();
+                // The **dragged element's own subtree**, not the wrapper around it: the wrapper is
+                // what arms this drag, so drawing it in the overlay would register a second
+                // `on_drag` for one id, which gpui's own assertion refuses.
+                let ghost = snapshot(*child as i64)
+                    .map(|receiver| capture(&receiver))
+                    .unwrap_or_else(|| std::rc::Rc::new(Vec::new()));
+                wrapper = wrapper.on_drag::<String, DragPreview>(
+                    id.clone(),
+                    move |value, _offset, window, cx| {
+                        let point = window.mouse_position();
+                        let modifiers = ELEMENT_AT
+                            .with(|m| m.borrow().get(&(win, key.clone())).map(|(_, _, m)| *m))
+                            .unwrap_or_default();
+                        window::with(win, || report_drag(&key, "drag", point, modifiers, value));
+                        cx.notify(entity);
+                        cx.new(|_cx| DragPreview {
+                            els: ghost.clone(),
+                            entity,
+                            win,
+                        })
+                    },
+                );
+            }
+            if kinds.contains("over") {
+                let key = id.clone();
+                // `win` is the **captured** window and not `window::current()`, which is `0` here:
+                // gpui calls this listener from its own dispatch, long after the frame that
+                // registered it has returned, and only that frame ran inside `window::with`.
+                wrapper = wrapper.on_drag_move::<String>(move |event, _window, cx| {
+                    let inside = event.bounds.contains(&event.event.position);
+                    let was = DRAG_OVER
+                        .with(|m| m.borrow().get(&(win, key.clone())).copied())
+                        .unwrap_or(false);
+                    if inside != was {
+                        DRAG_OVER.with(|m| m.borrow_mut().insert((win, key.clone()), inside));
+                        let kind = if inside { "over" } else { "out" };
+                        let payload = event.drag(cx).clone();
+                        window::with(win, || {
+                            report_drag(&key, kind, event.event.position, event.event.modifiers, &payload)
+                        });
+                        cx.notify(entity);
+                    }
+                });
+            }
+            if kinds.contains("drop") {
+                let key = id.clone();
+                wrapper = wrapper.on_drop::<String>(move |value, window, cx| {
+                    let point = window.mouse_position();
+                    window::with(win, || report_drop(&key, point, value));
+                    cx.notify(entity);
+                });
+            }
+
             // The window-level half: the same events, heard wherever the pointer is.
             //
-            // Every handler above is gated by gpui on `hitbox.is_hovered(window)`
-            // (`gpui-0.2.2/src/elements/div.rs:128`, `:147`), so a drag that leaves the
-            // element is heard by nobody: the moves stop arriving and the release, which
-            // can only happen outside it, is missed altogether. `Window::on_mouse_event`
+            // Every handler above but the wheel is gated by gpui on
+            // `hitbox.is_hovered(window)` (`gpui-0.2.2/src/elements/div.rs:128`, `:147`), so a
+            // drag that leaves the element is heard by nobody: the moves stop arriving and the
+            // release, which can only happen outside it, is missed altogether — and the wheel
+            // is gated on `should_handle_scroll`, which is a different question again and
+            // still not this one. `Window::on_mouse_event`
             // (`:3421`) is the window's own listener — dispatched for every mouse event
             // wherever the pointer is (`window.rs:3677-3714`) — and is what upstream reaches
             // for to keep a drag alive: `data_table.rs` hangs its scrollbar's three listeners
@@ -2656,6 +3573,106 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 })
                 .into_any_element()
         }
+    }
+}
+
+/// One image element, drawn in whichever of its four states its load is in.
+///
+/// The rule is GPUI's own, read off the loader `Img` also reads (`gpui-0.2.2
+/// src/elements/img.rs:366-401`): `Some(Ok(..))` is the picture, `Some(Err(..))` is the fallback
+/// subtree, and `None` is a load still in flight — the loading subtree once `LOADING_DELAY` has
+/// passed since the load started, and the bare element before that.
+///
+/// Upstream reaches that arm by handing `Img` two closures, `with_loading` and `with_fallback`
+/// (`:164-173`). The binding cannot: those closures are `Fn() -> AnyElement` and take no window,
+/// and a subtree this crate described is turned into elements only with a `&mut Window` in hand.
+/// So the same decision is made here, where the window and the app *are* in hand, and the subtree
+/// the program described is drawn in the picture's place. GPUI lays a replacement out inside the
+/// image's own style, so the wrapper carries that style.
+///
+/// `image_state` is what this records: it is the failure signal a program had no way to get, and
+/// the probe's reader.
+fn render_image(
+    el: &El,
+    path: &str,
+    loading: i64,
+    fallback: i64,
+    win: i64,
+    window: &mut Window,
+    cx: &mut App,
+    entity: EntityId,
+) -> AnyElement {
+    let resolved = PathBuf::from(asset_path(path));
+    let resource: Resource = resolved.clone().into();
+    // The same call `Img` makes, and the same cache: the binding never pushes an image cache of
+    // its own, so `window.image_cache_stack` is empty and `Img::paint` falls back to
+    // `window.use_asset::<ImgResourceLoader>` (`img.rs:519-525`, `window.rs:843`).
+    let state = window.use_asset::<ImgResourceLoader>(&resource, cx);
+    let key = (win, el.id.clone());
+    let now = std::time::Instant::now();
+
+    let (shown, subtree) = match state {
+        Some(Ok(_)) => {
+            IMAGE_PENDING.with(|m| m.borrow_mut().remove(&key));
+            ("image", None)
+        }
+        Some(Err(_)) => {
+            IMAGE_PENDING.with(|m| m.borrow_mut().remove(&key));
+            // A failed load with no fallback subtree draws nothing, which is what a plain
+            // `gpui::image` does today and what upstream's cell 4 would do without its
+            // `with_fallback` — not an invented empty box.
+            if fallback > 0 {
+                ("fallback", Some(fallback))
+            } else {
+                ("blank", None)
+            }
+        }
+        None => {
+            let (first, started) = IMAGE_PENDING.with(|m| {
+                let mut m = m.borrow_mut();
+                let first = !m.contains_key(&key);
+                let started = *m.entry(key.clone()).or_insert(now);
+                (first, started)
+            });
+            if loading > 0 && now.duration_since(started) > LOADING_DELAY {
+                ("loading", Some(loading))
+            } else {
+                if first {
+                    // A load that outlasts `LOADING_DELAY` is due a repaint at that moment and
+                    // not only when the load answers: `use_asset` asks for the frame after the
+                    // *load*, which is a different frame, and a program sitting still would
+                    // otherwise never draw its loading subtree at all.
+                    window
+                        .spawn(&*cx, async move |cx| {
+                            cx.background_executor().timer(LOADING_DELAY).await;
+                            cx.update(move |_window, cx| cx.notify(entity)).ok();
+                        })
+                        .detach();
+                }
+                ("blank", None)
+            }
+        }
+    };
+
+    IMAGE_SHOWN.with(|m| m.borrow_mut().insert(key, shown));
+
+    match subtree {
+        Some(handle) => {
+            let base = style::apply(div(), &el.style).id(ElementId::Name(el.id.clone().into()));
+            match snapshot(handle as i64) {
+                Some(child) => base.child(render(&child, window, cx, entity)).into_any_element(),
+                None => {
+                    note_error(format!(
+                        "image `{}` names a subtree handle {handle} that is not in this window",
+                        el.id
+                    ));
+                    base.into_any_element()
+                }
+            }
+        }
+        None => style::apply(img(resolved), &el.style)
+            .id(ElementId::Name(el.id.clone().into()))
+            .into_any_element(),
     }
 }
 

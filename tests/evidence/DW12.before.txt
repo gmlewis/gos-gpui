@@ -1,0 +1,121 @@
+DW12 — before: the row is red, and the first attempt at saying so was wrong.
+
+The row is "client-side window decoration widget (drawn titlebar)". A drawn titlebar is six calls:
+ask the platform who draws the window's decoration, ask it to let the program draw them, read back
+the strip the program keeps, set that strip, hand the window over to be moved, and hand it over to
+be resized. At HEAD (329133c) **none of the six names exists**:
+
+    $ for n in window_decorations request_window_decorations client_inset set_client_inset \
+               start_window_move start_window_resize; do
+    >   printf '%-28s HEAD:%s working:%s\n' "$n" \
+    >     "$(git show 329133c:gpui-binding/src/lib.rs | grep -c "fn $n\b")" \
+    >     "$(grep -c "fn $n\b" gpui-binding/src/lib.rs)"
+    > done
+    window_decorations           HEAD:0 working:1
+    request_window_decorations   HEAD:0 working:1
+    client_inset                 HEAD:0 working:1
+    set_client_inset             HEAD:0 working:1
+    start_window_move            HEAD:0 working:1
+    start_window_resize          HEAD:0 working:1
+
+--- the row's own check, against a binding built from 329133c
+
+$ ./scripts/gosbox.sh tiers tests/gui/dw12_window_calls.gos
+ok     check: check: ok (14 items typed)
+FAIL   run: exited 124 — no verdict
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+FAIL   run-nosjit: exited 124 — no verdict
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::window_decorations")
+FAIL   build: exited 1
+       error: build: native backend failed: auditing LLVM IR symbols in /tmp/gos-build-41-learn-gpui/llvm/chunk0.ll: llvm backend internal lowering bug: undefined symbols before LLVM tools: @gpui::client_inset referenced from __closure_0; @gpui::request_window_decorations referenced from __closure_0; @gpui::set_client_inset referenced from __closure_0; @gpui::window_decorations referenced from __closure_0
+FAIL   build-release: exited 1
+       warning: the static-musl release link is unavailable (the musl target or matching Gossamer runtime is not installed); linking dynamically against the host libc instead. Run `rustup target add aarch64-unknown-linux-musl` and reinstall Gossamer to restore self-contained release binaries.
+       error: build: native backend failed: auditing LLVM IR symbols in /tmp/gos-build-725-learn-gpui/llvm/chunk0.ll: llvm backend internal lowering bug: undefined symbols before LLVM tools: @gpui::client_inset referenced from __closure_0; @gpui::request_window_decorations referenced from __closure_0; @gpui::set_client_inset referenced from __closure_0; @gpui::window_decorations referenced from __closure_0
+
+Read the `check` line the way `DW11`'s before-evidence reads its own: `gos check` does not resolve
+`gpui::` binding names, so fourteen items type and four names that do not exist pass a type check.
+They surface at `run` (`gpui: noted: the view callback failed: UnresolvedName(..)`) or at `build`
+(`undefined symbols before LLVM tools`), and nowhere earlier.
+
+**Two of the five tiers read differently here than they do in `DW11.before.txt`, and both
+differences are the same fault.** The red `run` tier is `exited 124`, not `exited 0`: the view
+callback fails on its *first* statement, so the probe never reaches a check and never reaches
+`gpui::quit()`, and the tier's own `timeout` is what ends it — a red interpreter tier costs the
+whole bound. And `build-release` is red too, where `DW11`'s before-run has it green: the release
+build goes through the same LLVM symbol audit as the debug one, and all four names are still
+undefined there. Only the four names the probe actually calls are listed; `start_window_move` and
+`start_window_resize` are in the second probe and appear in its own build line below.
+
+--- the second half, whose two names are the ones no reading can see
+
+$ ./scripts/gosbox.sh tiers tests/gui/dw12_drag_and_resize.gos
+ok     check: check: ok (23 items typed)
+FAIL   run: exited 124 — no verdict
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+FAIL   run-nosjit: exited 124 — no verdict
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+       gpui: noted: the view callback failed: UnresolvedName("gpui::start_window_move")
+FAIL   build: exited 1
+       error: build: native backend failed: auditing LLVM IR symbols in /tmp/gos-build-41-learn-gpui/llvm/chunk0.ll: llvm backend internal lowering bug: undefined symbols before LLVM tools: @gpui::start_window_move referenced from __closure_0; @gpui::start_window_resize referenced from __closure_0
+FAIL   build-release: exited 1
+       warning: the static-musl release link is unavailable (the musl target or matching Gossamer runtime is not installed); linking dynamically against the host libc instead. Run `rustup target add aarch64-unknown-linux-musl` and reinstall Gossamer to restore self-contained release binaries.
+       error: build: native backend failed: auditing LLVM IR symbols in /tmp/gos-build-725-learn-gpui/llvm/chunk0.ll: llvm backend internal lowering bug: undefined symbols before LLVM tools: @gpui::start_window_move referenced from __closure_0; @gpui::start_window_resize referenced from __closure_0
+
+`window_decorations` and `client_inset` answered for themselves on this binding's side of the
+question, and the X server's copies of the same thing (`_MOTIF_WM_HINTS`, `_GTK_FRAME_EXTENTS`) are
+readable from outside the process. `start_window_move` and `start_window_resize` are not like that:
+the only record a hand-over leaves is the window moving, so at HEAD there is no such reading to
+take and no cheaper one either — the probe cannot get past its own first call.
+
+--- why the first attempt at this evidence was worthless, and what it cost to notice
+
+The first attempt reported `ok` on both probes' `run` tiers, which is a green for two programs in
+which six names do not exist. The cause is the container's runner cache and it is worth writing
+down, because it is a trap that makes any before-run silently meaningless:
+
+`$DHOME/.cache/gossamer/runners/<fingerprint>/` holds a `runner/` tree and its rust target
+directory, and the fingerprint is taken from the binding's **path declaration** — `[rust-bindings]`
+in `project.toml` — and not from the binding's source. Two different `gpui-binding/` trees at the
+same declared path therefore share one cargo target directory. `scripts/gosbox.sh` stages the tree
+into `/work` with `rsync -a`, which preserves mtimes; a head-src tree staged from
+`$HOME/.cache/learn-gpui/dw12-head-src` therefore arrives with its sources **older** than the
+`librunner.rlib` the working tree's last build left in that shared target directory, cargo declares
+the crate fresh, and the runner is linked against the **working** binding — the one that has all six
+names. The probe passes, and it passes for a tree it never compiled.
+
+The fix is to `touch` the staged tree's binding sources before the tier run, which the rerun above
+does (`touch gpui-binding/Cargo.toml gpui-binding/src/*.rs`, printed as the `touched:` line at the
+head of the batch's output). The reds above are the same two probes run that way; the `FAIL run:
+exited 124` is the self-check, because a tier that never reaches `quit()` cannot have been answered
+by a build that resolves the names.
+
+**The corollary is a scheduling rule, not a one-off fix: a working-tree container run must never be
+interleaved between head-src container runs.** The shared target directory holds whichever binding
+was compiled into it last, and the tier that follows inherits it.

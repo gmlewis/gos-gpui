@@ -1,0 +1,32 @@
+MR4 — before: at 329133c the click count is not in the store, and the presses themselves are.
+
+The row's check, against a binding built from 329133c. `check` says `ok (21 items typed)` and
+means nothing by it — `gos check` compiles the binding but resolves no `gpui::` name in the
+program's source, so a probe whose claim the binding cannot answer still type-checks.
+
+    $ ./scripts/gosbox.sh tiers tests/gui/mr4_click_count.gos
+    ok     check: check: ok (21 items typed)
+    FAIL   run: exited 0 — no verdict
+           note MR4 xdotool puts the window at 601.00,480.00 and the binding at 600.00,458.00; posting relative to the binding's
+           FAIL MR4 after one click the count read -1; a press more than 400ms after the last one starts a new run and is 1
+           FAIL MR4 after a double click the count read -1, not 2 — the two presses were within `DOUBLE_CLICK_INTERVAL` and `DOUBLE_CLICK_DISTANCE` of each other (`platform/linux/platform.rs:38-39`), so the platform's counter should have been incremented
+           FAIL MR4 after a triple click the count read -1, not 3
+    FAIL   run-nosjit: exited 0 — no verdict
+           note MR4 xdotool puts the window at 601.00,480.00 and the binding at 600.00,458.00; posting relative to the binding's
+           FAIL MR4 after one click the count read -1; a press more than 400ms after the last one starts a new run and is 1
+           FAIL MR4 after a double click the count read -1, not 2 — the two presses were within `DOUBLE_CLICK_INTERVAL` and `DOUBLE_CLICK_DISTANCE` of each other (`platform/linux/platform.rs:38-39`), so the platform's counter should have been incremented
+           FAIL MR4 after a triple click the count read -1, not 3
+    ok     build: build: 85012432B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+    ok     build-release: build: 24582376B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+**Three failures, and the nine tallies that are not among them.** The probe also asserts, per
+gesture, how many presses, releases and synthesised clicks the box heard — nine readings in
+all — and every one of them passes at HEAD. That is the shape of this row: `down`, `up` and
+`click` were always delivered, and the only thing missing was the number the platform had
+already computed. A probe that asserted "a click arrived" would have been green at HEAD and
+evidence of nothing.
+
+**`-1` is a sentinel, not a count.** `<id>.count` does not exist at HEAD and the probe reads it
+through `gpui::state_int(.., -1)`, so a missing slot is distinguishable from a slot holding
+zero. Zero is a real reading — it is what a press that continues no run would be if the
+platform counted that way — and the sentinel is what keeps the two apart.

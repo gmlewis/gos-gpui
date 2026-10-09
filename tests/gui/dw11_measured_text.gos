@@ -1,0 +1,274 @@
+// DW11 — a measured-text widget: a box sized to its content and read back, and a program's
+// own hit test over a run of text.
+//
+// Tier: every tier.
+//
+// Pass means three things:
+//
+//   * a box that asks for `w=auto` **is** its content plus its padding — read back from the
+//     window, not predicted: the width it laid out at minus the width its own text laid out
+//     at is exactly twice its padding, and with no padding it is exactly its text. A box
+//     asked for a number instead (`w=100`) keeps that number, so `auto` is what did it.
+//   * `gpui::text_width` predicts the width the text element actually laid out at — the
+//     measurement and the layout agree.
+//   * `gpui::text_x_of_index` and `gpui::text_index_at` are a program's whole hit test: the
+//     offsets anchor at both ends of the run, are strictly increasing across it, round-trip
+//     through each other, and a marker placed at a character's own offset lands *inside* the
+//     text element's laid-out box and reads back as that character.
+//
+// # Why this needed a window, and a token that did not exist
+//
+// `TM1`–`TM5` test measurement: `text_width`, `text_advance`, `text_em_width`, line heights.
+// That is what a *style string* implies. This is what the *layout* did with it. The gap was
+// that a box which wanted to read its own laid-out size had no way to say so: gpui hands a
+// div the bounds of its **children** and never its own
+// (`Div::on_children_prepainted`, `gpui-0.2.2/src/elements/div.rs:1243`), and the binding put
+// an element into that map only when it carried a pointer listener or a slider. So "build a
+// box sized to its content and read back its bounds" — the brief's own check for this row —
+// was unsayable. `gpui-binding/src/style.rs`'s `bounds` token is the answer: a bare `bounds`
+// on any element makes it report its own box, through the same out-of-flow strip the pointer
+// rows have used since round 61, so a box that listens to nothing measures exactly where a
+// box that listens would.
+//
+// # What is not checked here
+//
+// Tooltip sizing. It is the row's third clause and it is *not* what this probe covers; see
+// the row in `CAPABILITIES.md` for where it stands.
+//
+//     ./scripts/gosbox.sh run tests/gui/dw11_measured_text.gos
+//     ./scripts/gosbox.sh tiers tests/gui/dw11_measured_text.gos
+
+use gpui
+use std::math
+use std::process
+
+const LABEL: String = "Hello"
+const LONG: String = "HelloHello"
+const SPEC: String = "fs=16"
+const PAD: f64 = 8.0
+
+fn field(id: String, name: String) -> f64 {
+    gpui::element_bounds(id, name)
+}
+
+fn main() {
+    let outcome = gpui::run("dw11 - measured text", 460.0, 260.0, || {
+        gpui::animate()
+        let f = gpui::frame()
+
+        if f >= 4 {
+            // Every style string this probe writes has to be one the binding knows, or a
+            // token that drifted out of `is_known` would pass here as an element that
+            // silently ignored it.
+            let specs = #[
+                "id=box w=auto p=8 bounds bg=#ff0000",
+                "id=long w=auto p=8 bounds bg=#00ff00",
+                "id=bare w=auto bounds bg=#cccccc",
+                "id=fixed w=100 p=8 bounds bg=#0000ff",
+                "id=wrap relative w=auto h=auto bounds bg=#eeeeee",
+                "id=t fs=16 bounds color=#000000",
+                "id=m absolute top=0 w=2 h=10 bounds bg=#000000",
+                "fs=16 color=#ffffff",
+            ]
+            for s in specs {
+                let unknown = gpui::unknown_style_tokens(s.clone())
+                if unknown.len() != 0 {
+                    println(f"FAIL DW11 {unknown.len()} of the tokens in \"{s}\" are not tokens the binding knows")
+                    gpui::quit()
+                    return
+                }
+            }
+
+            let tw = gpui::text_width(LABEL.clone(), SPEC)
+            let lw = gpui::text_width(LONG.clone(), SPEC)
+            let bw = field("box", "w")
+            let bh = field("box", "h")
+            let btw = field("bt", "w")
+            let bth = field("bt", "h")
+            let lbox = field("long", "w")
+            let ltxt = field("lt", "w")
+            let bare = field("bare", "w")
+            let baretxt = field("bat", "w")
+            let fixed = field("fixed", "w")
+
+            // A `bounds` element that was never painted answers 0. Everything below reads a
+            // laid-out box, so this is the guard that says the reading is real.
+            if bw <= 0.0 || bh <= 0.0 || btw <= 0.0 || lbox <= 0.0 || bare <= 0.0 || fixed <= 0.0 {
+                println(f"FAIL DW11 a `bounds`-marked box came back with no box at all: box={bw}x{bh} text={btw} long={lbox} bare={bare} fixed={fixed}")
+                gpui::quit()
+                return
+            }
+
+            // 1. The box is its content plus its padding, exactly.
+            if math::abs((bw - btw) - 2.0 * PAD) > 0.001 {
+                println(f"FAIL DW11 a `w=auto p=8` box laid out {bw} wide around text of {btw}: that is {bw - btw} of padding, not {2.0 * PAD}")
+                gpui::quit()
+                return
+            }
+            // ...and with no padding, it is the text exactly.
+            if math::abs(bare - baretxt) > 0.001 {
+                println(f"FAIL DW11 a `w=auto` box with no padding laid out {bare} wide around text of {baretxt}")
+                gpui::quit()
+                return
+            }
+            // ...and a box asked for a number is that number, so `auto` is what sized the others.
+            if math::abs(fixed - 100.0) > 0.001 {
+                println(f"FAIL DW11 a `w=100` box laid out {fixed} wide")
+                gpui::quit()
+                return
+            }
+            // ...and more content makes a wider box.
+            if lbox - ltxt != 2.0 * PAD || lbox <= bw {
+                println(f"FAIL DW11 a longer label did not widen its box: \"{LABEL}\" -> {bw}, \"{LONG}\" -> {lbox} (text {btw} -> {ltxt})")
+                gpui::quit()
+                return
+            }
+
+            // 2. The measurement and the layout agree about the run.
+            if math::abs(btw - tw) > 0.5 || math::abs(ltxt - lw) > 0.5 {
+                println(f"FAIL DW11 gpui::text_width says {tw} for \"{LABEL}\" and the text element laid out at {btw}; {lw} against {ltxt} for \"{LONG}\"")
+                gpui::quit()
+                return
+            }
+            let t = field("t", "w")
+            if math::abs(t - tw) > 0.5 {
+                println(f"FAIL DW11 a `bounds` text element laid out at {t}, not the {tw} it measures")
+                gpui::quit()
+                return
+            }
+
+            // 3. The offsets anchor at both ends, and grow across the run.
+            let start = gpui::text_x_of_index(LABEL.clone(), 0, SPEC.clone())
+            if math::abs(start) > 0.001 {
+                println(f"FAIL DW11 index 0 is at {start}, not the start of the run")
+                gpui::quit()
+                return
+            }
+            let end = gpui::text_x_of_index(LABEL.clone(), 5, SPEC.clone())
+            let past = gpui::text_x_of_index(LABEL.clone(), 99, SPEC.clone())
+            if math::abs(end - tw) > 0.001 || math::abs(past - tw) > 0.001 {
+                println(f"FAIL DW11 a run of {tw} ends at index 5 as {end} and past it as {past}")
+                gpui::quit()
+                return
+            }
+            let mut previous = 0.0
+            for i in 1..6 {
+                let x = gpui::text_x_of_index(LABEL.clone(), i, SPEC.clone())
+                if x <= previous {
+                    println(f"FAIL DW11 the offsets do not advance at index {i}: {previous} then {x}")
+                    gpui::quit()
+                    return
+                }
+                previous = x
+            }
+
+            // ...and every offset round-trips through the inverse: the pixel a caret is
+            // drawn at is the character that pixel names. This is exact at an offset, which
+            // is where a caret actually is.
+            for i in 0..6 {
+                let x = gpui::text_x_of_index(LABEL.clone(), i, SPEC.clone())
+                let back = gpui::text_index_at(LABEL.clone(), x, SPEC.clone())
+                if back != i {
+                    println(f"FAIL DW11 the offset of character {i} is {x}, and that pixel reads back as character {back}")
+                    gpui::quit()
+                    return
+                }
+            }
+            if gpui::text_index_at(LABEL.clone(), -5.0, SPEC.clone()) != 0 {
+                println("FAIL DW11 a position before the run does not read back as its start")
+                gpui::quit()
+                return
+            }
+            if gpui::text_index_at(LABEL.clone(), tw + 50.0, SPEC.clone()) != 5 {
+                println("FAIL DW11 a position past the run does not read back as its end")
+                gpui::quit()
+                return
+            }
+            // The one boundary that is not a glyph's own start is the end of the line, and
+            // `nearest` means nearest: a pixel just left of the last character's offset is
+            // that character, and one just right of it is the end of the run, because the
+            // only boundary to its right is the end. Upstream reads it exactly this way —
+            // `LineLayout::closest_index_for_x` (`gpui-0.2.2/src/text_system/line_layout.rs:75`)
+            // walks glyph starts and falls through to the line's length.
+            let last = gpui::text_x_of_index(LABEL.clone(), 4, SPEC.clone())
+            if gpui::text_index_at(LABEL.clone(), last - 0.5, SPEC.clone()) != 4 {
+                println(f"FAIL DW11 a pixel just before the last character's offset ({last - 0.5}) does not read back as that character")
+                gpui::quit()
+                return
+            }
+            if gpui::text_index_at(LABEL.clone(), last + 0.5, SPEC.clone()) != 5 {
+                println(f"FAIL DW11 a pixel just past the last character's offset ({last + 0.5}) does not read back as the end of the run")
+                gpui::quit()
+                return
+            }
+
+            // 4. A marker put where the program says character 3 is lands inside the text
+            // element's own laid-out box, and that pixel reads back as character 3. This is
+            // the whole of a program's hit test: offset and box in, character out.
+            let tx = field("t", "x")
+            let mx = field("m", "x")
+            let x3 = gpui::text_x_of_index(LABEL.clone(), 3, SPEC.clone())
+            let landed = mx - tx
+            if math::abs(landed - x3) > 1.0 {
+                println(f"FAIL DW11 character 3 is {x3} into the run, and a marker put there landed {landed} in")
+                gpui::quit()
+                return
+            }
+            if mx < tx || mx >= tx + t {
+                println(f"FAIL DW11 a marker at character 3 landed at {mx}, outside the text element's own box [{tx}, {tx + t})")
+                gpui::quit()
+                return
+            }
+            let hit = gpui::text_index_at(LABEL.clone(), landed, SPEC.clone())
+            if hit != 3 {
+                println(f"FAIL DW11 the pixel the program placed at character 3 ({landed} into the run) reads back as character {hit}")
+                gpui::quit()
+                return
+            }
+
+            println(f"OK DW11 `w=auto` boxes are their content plus their padding ({LABEL} -> {bw}, {LONG} -> {lbox}, no padding -> {bare}), gpui::text_width predicts the laid-out run ({tw} against {btw}), and offset and pixel round-trip through each other across it (character 3 at {x3}, marker read back as {hit})")
+            gpui::quit()
+            return
+        }
+
+        // box — a box sized to the label, 8px of padding, and its own text named so the two
+        // widths can be compared against each other rather than against a rounded guess.
+        let box_ = gpui::panel("id=box w=auto p=8 bounds bg=#ff0000")
+        gpui::child(box_, gpui::text(LABEL.clone(), "id=bt fs=16 bounds color=#ffffff"))
+
+        // long — the same box around a longer label. It has to come out wider.
+        let lng = gpui::panel("id=long w=auto p=8 bounds bg=#00ff00")
+        gpui::child(lng, gpui::text(LONG.clone(), "id=lt fs=16 bounds color=#ffffff"))
+
+        // bare — the same box with no padding at all: the control for "plus padding".
+        let bare = gpui::panel("id=bare w=auto bounds bg=#cccccc")
+        gpui::child(bare, gpui::text(LABEL.clone(), "id=bat fs=16 bounds color=#000000"))
+
+        // fixed — asked for a number instead of its content. The control for `auto`.
+        let fixed = gpui::panel("id=fixed w=100 p=8 bounds bg=#0000ff")
+        gpui::child(fixed, gpui::text(LABEL.clone(), "fs=16 color=#ffffff"))
+
+        // wrap — the run, and a two-pixel marker at character 3's own offset. `relative` is
+        // what makes the marker's `left` mean "from the run's own origin".
+        let wrap = gpui::panel("id=wrap relative w=auto h=auto bounds bg=#eeeeee")
+        gpui::child(wrap, gpui::text(LABEL.clone(), "id=t fs=16 bounds color=#000000"))
+        let at3 = gpui::text_x_of_index(LABEL.clone(), 3, "fs=16")
+        gpui::child(
+            wrap,
+            gpui::panel(f"id=m absolute left={at3} top=0 w=2 h=10 bounds bg=#000000"),
+        )
+
+        let root = gpui::column("size=full items=start bg=#ffffff")
+        gpui::child(root, box_)
+        gpui::child(root, lng)
+        gpui::child(root, bare)
+        gpui::child(root, fixed)
+        gpui::child(root, wrap)
+        gpui::root(root)
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"FAIL DW11 gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

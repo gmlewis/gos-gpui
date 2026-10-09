@@ -88,12 +88,36 @@ docker info >/dev/null 2>&1 || die "Docker is not running"
 # The tree is rsynced rather than mounted so that the container's writes — the runner cache under
 # it, cargo's fingerprints — cannot land in the working tree. `--delete` keeps it exactly the tree
 # as it stands, so a run can never silently use yesterday's program.
+#
+# **`--delete` is not enough, and the binding is where it showed.** `$DHOME` is a persistent
+# volume, and the runner cache inside it is keyed on the `[rust-bindings]` path declared in
+# `project.toml` — the same string in every checkout of this project. So a second tree staged here
+# does not get a second cache entry, and `rsync -a` (which preserves mtimes, and must, or every run
+# would rebuild) hands the runner the second tree's binding sources with **older** mtimes than the
+# build it already has. It keeps the build. Measured round 103, on `mr4_stop_propagation.gos`,
+# which is green in the working tree and red against `329133c`: the working tree staged straight
+# after a `329133c` run and without touching its binding ran the **`329133c`** binding, three times
+# over; touching `gpui-binding/src/*.rs` and staging again ran the working tree's, with nothing
+# else changed. The same trap produced a false red on that probe earlier in the round.
+#
+# The hash below is what makes the guarantee at the top of this comment true for the binding as
+# well. It is taken before and after the copy, and a binding that **changed** is touched so the
+# next `gos` rebuilds it; a tree staged twice in a row hashes the same and pays nothing.
+binding_hash() {
+  [ -d "$STAGE/gpui-binding/src" ] || { echo none; return; }
+  cksum "$STAGE"/gpui-binding/Cargo.toml "$STAGE"/gpui-binding/src/*.rs 2>/dev/null | cksum
+}
+
 stage() {
   mkdir -p "$STAGE" "$DHOME"
+  local before after
+  before="$(binding_hash)"
   rsync -a --delete \
     --exclude 'tools/upstream/' --exclude 'target/' --exclude '.gos-cache/' \
     --exclude 'gpui-binding/target/' --exclude '.git/' \
     . "$STAGE/"
+  after="$(binding_hash)"
+  [ "$before" = "$after" ] || touch "$STAGE"/gpui-binding/Cargo.toml "$STAGE"/gpui-binding/src/*.rs
 }
 
 # A probe whose claim this environment cannot witness says so on its own `// linux:` line — a window
@@ -301,7 +325,12 @@ case "$cmd" in
           rc=1
         fi
       elif reason="$(verdict "$log" no)"; then
-        echo "ok     $t: $(grep -m1 '^OK ' "$log" | cut -c1-100)"
+        # The verdict in full, not the first hundred characters of it. A verdict is a list of
+        # readings — the numbers a row is judged on — and a transcript that stops in the middle
+        # of that list is a transcript a reader has to go back to the container to finish. The
+        # `check` and `build` lines above keep their cut because those lines are a count and a
+        # byte size; a verdict has no such shape.
+        echo "ok     $t: $(grep -m1 '^OK ' "$log")"
       else
         echo "FAIL   $t: exited $status — $reason"
         sed 's/^/       /' "$log" | head -8
@@ -355,13 +384,22 @@ case "$cmd" in
         echo "skip   $name: $linux_line"
         skipped=$((skipped + 1)); continue
       fi
+      # Every probe gets its own container (`inbox` is `docker run --rm`), and `/root` is a
+      # persistent volume — so **any** build lock still on disk when this container starts
+      # belongs to a container that no longer exists, and is stale by construction. Reaping once
+      # per sweep is not enough and round 101 measured what that costs: a probe that timed out
+      # mid-sweep left `runners/*/.gos-build.lock` behind, and every probe after it answered an
+      # empty transcript and `failed twice` — the sweep came back **32/52** with 13 skips and
+      # every failure above `cl9_clipboard` in alphabetical order, which is a lock, not a
+      # regression. The blunt rule is safe *here* and nowhere else: nothing in this container is
+      # running `gos` at the moment this line runs, because the line is the thing that starts it.
       run_one() {
         log="$(mktemp -t gosbox.XXXXXX)"
-        incmd "timeout -k 5 $timeout_s gos run --main-thread '$p'" > "$log" 2>&1
+        incmd "rm -f /root/.cache/gossamer/runners/*/.gos-build.lock; timeout -k 5 $timeout_s gos run --main-thread '$p'" > "$log" 2>&1
         verdict "$log" "$noted" >/dev/null
       }
       if run_one; then
-        echo "ok     $name: $(grep -m1 '^OK ' "$log" | cut -c1-100)"
+        echo "ok     $name: $(grep -m1 '^OK ' "$log")"
       else
         first="$(sed -n '1p' "$log")"
         if run_one; then

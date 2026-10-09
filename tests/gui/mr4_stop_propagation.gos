@@ -1,0 +1,268 @@
+// MR4 — `stop_propagation`: a press that stops where it landed, and the parent that does not hear
+// it.
+//
+// container: the press is driven from outside the process by `xdotool` through XTEST, against the
+// X server the window really sits on, because the clause is about which of two listeners an event
+// reaches — and a listener is not a thing the program can call from inside. The Mac has no such
+// server — and on this Mac a run *is* a window, which `scripts/window-guard.sh` forbids — so
+// `scripts/probes.sh` and `scripts/tiers.sh` skip this one by name. It runs in the container:
+//
+//   ./scripts/gosbox.sh tiers tests/gui/mr4_stop_propagation.gos
+//
+// # What this exists for
+//
+// MR4's row is "interactive-element event completeness: click variants, mouse up/move/exit,
+// `stop_propagation`, group hover". `tests/gui/mr4_click_count.gos` is the first clause and
+// `tests/gui/mr4_group_hover.gos` is the last; this is the middle one.
+//
+// gpui's dispatch (`Window::dispatch_mouse_event`, `gpui-0.2.2/src/window.rs:3677-3723`) runs the
+// capture pass in registration order and then the bubble pass over the same list `rev()`d,
+// breaking out of each the moment `cx.propagate_event` goes false. Elements register in paint
+// order — a parent paints its own listeners before its children's (`elements/div.rs:1863` before
+// `:1870`) — so the reverse order is **child-first**, and what a stop withholds the event from is
+// the *ancestors*. `App::stop_propagation` (`app.rs:1712`) was always there to be called; what the
+// binding lacked was any way to say "this element, and not the box around it". `gpui::on_mouse`
+// takes a list of kinds and there is no way to write "everything except this one" in a list.
+//
+// A kind word may now carry a trailing `!`. `"down!"` is `down` — `kinds.contains("down")` is still
+// true of it — with one listener option set, and the `!` is on the kind rather than on the element
+// because an element may want its own press reported and the presses *inside* it left alone.
+//
+// # The three readings
+//
+//   * the child hears its press — which it did before this round too, and which is here so that a
+//     probe that heard nothing at all cannot pass;
+//   * the parent does not hear that press — the clause, and the one red at 329133c;
+//   * the parent hears a **second** press, on the same child, and a third one placed past the
+//     child's own rectangle — so that "the parent is silent" cannot be the answer. The third is
+//     the control: it is the same listener, the same frame, the same window, and it answers. The
+//     second is why a stop is about the one event and not the next: `cx.propagate_event` is reset
+//     for every event (`window.rs:3584`).
+
+use gpui
+use std::os::exec
+use std::process
+use std::strconv
+
+/// The title the window is opened with, and what `xdotool` is told to look for.
+const TITLE: String = "mr4stop"
+
+const WIN_W: f64 = 400.0
+const WIN_H: f64 = 300.0
+
+/// The parent that listens for a press, and the child drawn inside it that listens **and stops**.
+const OUTER_X: f64 = 100.0
+const OUTER_Y: f64 = 80.0
+const OUTER_W: f64 = 200.0
+const OUTER_H: f64 = 140.0
+const INNER_W: f64 = 120.0
+const INNER_H: f64 = 80.0
+
+/// The child is a normal-flow box at the parent's content origin, so it covers the parent's
+/// top-left corner and the parent's rectangle is the larger one of the two.
+const AT_INNER_X: f64 = OUTER_X + INNER_W / 2.0
+const AT_INNER_Y: f64 = OUTER_Y + INNER_H / 2.0
+
+/// Inside the parent and past the child's right and bottom edges, so the press is on the parent
+/// alone. The child spans `x` up to `OUTER_X + INNER_W` and `y` up to `OUTER_Y + INNER_H`.
+const AT_OUTER_ONLY_X: f64 = OUTER_X + OUTER_W - 20.0
+const AT_OUTER_ONLY_Y: f64 = OUTER_Y + OUTER_H - 20.0
+
+/// Run a program and answer its stdout, trimmed, with anything that went wrong printed.
+fn shell(program: String, args: Vec<String>) -> String {
+    match exec::run(program.clone(), args) {
+        Ok(out) => {
+            if out.code != 0 {
+                println(f"FAIL MR4 {program} exited {out.code}: {out.stderr.trim()}")
+            }
+            out.stdout.trim().clone()
+        }
+        Err(problem) => {
+            println(f"FAIL MR4 could not run {program}: {problem}")
+            String::new()
+        }
+    }
+}
+
+/// One `key=value` line out of `xdotool getwindowgeometry --shell`, as a number, or `-1.0`.
+fn field(text: String, key: String) -> f64 {
+    for line in text.split("\n") {
+        if let Some((name, value)) = line.split_once("=") {
+            if name.trim() == key {
+                return match strconv::parse_f64(value.trim().clone()) {
+                    Ok(number) => number,
+                    Err(_) => -1.0,
+                }
+            }
+        }
+    }
+    -1.0
+}
+
+/// One point, from the binding's own origin.
+fn at(ox: f64, oy: f64, x: f64, y: f64) -> (f64, f64) {
+    (ox + x, oy + y)
+}
+
+/// The xdotool words that put the pointer at `(x, y)`, wait a real second, and then press and
+/// release button 1 there.
+///
+/// The wait is inside the invocation and not a `sleep` in the probe, so nothing the probe does can
+/// slip between the move and the press. `mousemove --sync` is deliberately *not* used — `xdotool
+/// 3.20160805.1` spends its whole ~17.8s retry budget in that wait whenever the pointer is already
+/// at the destination, which is the finding `tests/gui/mr4_click_count.gos` paid for.
+fn click_at(ox: f64, oy: f64, x: f64, y: f64) -> Vec<String> {
+    let spot = at(ox, oy, x, y)
+    let sx = spot.0.round() as i64
+    let sy = spot.1.round() as i64
+    #["mousemove", f"{sx}", f"{sy}", "sleep", "1", "click", "1"]
+}
+
+/// A point as it will be compared: `"12.5,30.25"`, to two decimals.
+fn point(x: f64, y: f64) -> String {
+    f"{x:.2},{y:.2}"
+}
+
+/// Whether two points are the same to within a hundredth of a pixel.
+fn same(x: f64, y: f64, ex: f64, ey: f64) -> bool {
+    let dx = x - ex
+    let dy = y - ey
+    (if dx < 0.0 { -dx } else { dx }) < 0.01 && (if dy < 0.0 { -dy } else { dy }) < 0.01
+}
+
+/// Write a failure down: print it, and count it. The verdict at the end reads the count, which is
+/// what stops a check from failing and then falling through to a passing line.
+fn fail(message: String) {
+    println(f"FAIL MR4 {message}")
+    gpui::set_int("fails", gpui::state_int("fails", 0) + 1)
+}
+
+/// How many of the recorded `"<id>|<kind>"` entries are named by `want`.
+fn count(ids: Vec<String>, want: String) -> i64 {
+    let mut n = 0
+    for i in 0..ids.len() {
+        if ids[i].clone() == want.clone() {
+            n = n + 1
+        }
+    }
+    n
+}
+
+/// One reading against what it should be, with the failure printed if they differ.
+fn expect(what: String, got: i64, want: i64) {
+    if got != want {
+        fail(f"{what} read {got}, not {want}")
+    }
+}
+
+fn main() {
+    let outcome = gpui::run(TITLE, WIN_W, WIN_H, || {
+        let f = gpui::frame()
+        gpui::animate()
+
+        // Every event, on the frame it arrives on, into a list rather than read where it is
+        // wanted: the store holds one slot per key, and a press count taken after a second press
+        // cannot say anything about the first.
+        for event in gpui::take_events() {
+            let id, kind = gpui::event_parts(event.clone())
+            gpui::list_push("ids", f"{id}|{kind}")
+        }
+
+        // ---- frame 3: find the window, and take its origin ------------------------------------
+        //
+        // The origin is the binding's own, `gpui::window_field("inner_x")`, and not `xdotool`'s
+        // reading of the same window: the binding's is the number a pointer event is measured
+        // against, so it is the one to post relative to. They are compared rather than assumed
+        // equal, because a window manager that frames the client puts the two apart.
+        if f == 3 && gpui::state_int("phase", 0) == 0 {
+            gpui::set_int("phase", 1)
+            let found = shell("xdotool", #["search", "--name", TITLE])
+            let hits = found.lines()
+            if hits.is_empty() {
+                fail(f"no window named {TITLE} on this display (xdotool said `{found}`)")
+                gpui::quit()
+            } else {
+                let geometry = shell(
+                    "xdotool",
+                    #["getwindowgeometry", "--shell", hits[0].trim().clone()],
+                )
+                let win_x = field(geometry.clone(), "X")
+                let win_y = field(geometry.clone(), "Y")
+                let ox = gpui::window_field("inner_x")
+                let oy = gpui::window_field("inner_y")
+                if !same(win_x, win_y, ox, oy) {
+                    println(f"note MR4 xdotool puts the window at {point(win_x, win_y)} and the binding at {point(ox, oy)}; posting relative to the binding's")
+                }
+                gpui::set_float("origin_x", ox)
+                gpui::set_float("origin_y", oy)
+            }
+        }
+
+        // ---- three presses, one every three frames --------------------------------------------
+        //
+        // `gos` blocks the frame inside `exec::run` for the whole second of the helper's own
+        // `sleep`, so the press is queued before the frames after it run; each reading is three
+        // frames on, which is one more than the one MP1 measured an event needing to land.
+        let phase = gpui::state_int("phase", 0)
+        let ox = gpui::state_float("origin_x", 0.0)
+        let oy = gpui::state_float("origin_y", 0.0)
+
+        if f == 6 && phase == 1 {
+            gpui::set_int("phase", 2)
+            let _ = shell("xdotool", click_at(ox, oy, AT_INNER_X, AT_INNER_Y))
+        }
+        if f == 9 && phase == 2 {
+            gpui::set_int("phase", 3)
+            expect("the press the child heard", count(gpui::list_all("ids"), "inner|down"), 1)
+            expect("the press the parent heard under the child's stop — none", count(gpui::list_all("ids"), "outer|down"), 0)
+            let _ = shell("xdotool", click_at(ox, oy, AT_INNER_X, AT_INNER_Y))
+        }
+        if f == 12 && phase == 3 {
+            gpui::set_int("phase", 4)
+            expect("the presses the child has heard", count(gpui::list_all("ids"), "inner|down"), 2)
+            expect("the presses the parent has heard under a second stop — still none", count(gpui::list_all("ids"), "outer|down"), 0)
+            let _ = shell("xdotool", click_at(ox, oy, AT_OUTER_ONLY_X, AT_OUTER_ONLY_Y))
+        }
+
+        // ---- and the control: the same parent, a press past the child ------------------------
+        //
+        // Without this, "the parent heard nothing" would be satisfied by a parent that was never
+        // listening, or by a probe whose window had no listeners at all — the failure mode that
+        // makes a stop look like it works. The parent is the same listener in the same tree; the
+        // only difference is where the press landed.
+        if f == 15 && phase == 4 {
+            expect("the press the parent heard once the pointer was past the child", count(gpui::list_all("ids"), "outer|down"), 1)
+
+            if gpui::state_int("fails", 0) == 0 {
+                println(f"OK MR4 `down!` stopped the press where it landed: the child inside the parent heard two presses of its own and the parent heard neither, while the same parent — the same listener, in the same tree — heard a third press placed past the child's own rectangle, so the silence is the stop and not a listener that was never there")
+            }
+            gpui::quit()
+        }
+
+        // ---- the tree --------------------------------------------------------------------------
+        //
+        // The child is drawn inside the parent's rectangle, as a normal-flow box at the parent's
+        // content origin, so a press on it is a press inside both and the stop is the only thing
+        // that can separate them.
+        let inner = gpui::on_mouse(
+            gpui::rect(f"w={INNER_W} h={INNER_H} bg=#ff6633"),
+            "down!",
+            "inner",
+        )
+        let outer = gpui::child(
+            gpui::on_mouse(
+                gpui::rect(f"absolute left={OUTER_X} top={OUTER_Y} w={OUTER_W} h={OUTER_H} bg=#dddddd"),
+                "down",
+                "outer",
+            ),
+            inner,
+        )
+
+        gpui::root(gpui::child(gpui::stack("size=full bg=#ffffff"), outer))
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

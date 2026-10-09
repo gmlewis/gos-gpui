@@ -1,0 +1,37 @@
+DD2 — before: at 329133c the four kinds are not registered and nothing about a drag is heard.
+
+The row's check, against a binding built from 329133c. `check` says `ok (37 items typed)` and
+means nothing by it — `gos check` compiles the binding but resolves no `gpui::` name in the
+program's source, so a probe whose claim the binding cannot answer still type-checks. The red
+is the run, in the container.
+
+    $ ./scripts/gosbox.sh tiers tests/gui/dd2_drag_states.gos
+    ok     check: check: ok (37 items typed)
+    FAIL   run: exited 0 — no verdict
+           note DD2 xdotool puts the window at 451.00,380.00 and the binding at 450.00,358.00; posting relative to the binding's
+           FAIL DD2 the `drag` the source raised read 0, not 1
+           FAIL DD2 the target's `over` while a payload is over it read false, not true
+           FAIL DD2 the `over` the target raised read 0, not 1
+           FAIL DD2 the payload the target was handed read ``, not `src`
+           FAIL DD2 the target's `over` after the drag left it read true, not false
+           FAIL DD2 the `out` the target raised read 0, not 1
+           FAIL DD2 the target's `over` when the drag came back read false, not true
+    FAIL   run-nosjit: exited 0 — no verdict
+           note DD2 xdotool puts the window at 451.00,380.00 and the binding at 450.00,358.00; posting relative to the binding's
+           FAIL DD2 the `drag` the source raised read 0, not 1
+           FAIL DD2 the target's `over` while a payload is over it read false, not true
+           FAIL DD2 the `over` the target raised read 0, not 1
+           FAIL DD2 the payload the target was handed read ``, not `src`
+           FAIL DD2 the target's `over` after the drag left it read true, not false
+           FAIL DD2 the `out` the target raised read 0, not 1
+           FAIL DD2 the target's `over` when the drag came back read false, not true
+    ok     build: build: 85015112B native executable at target/debug/learn-gpui (target aarch64-unknown-linux-gnu)
+    ok     build-release: build: 24582760B native executable at target/release/learn-gpui (target aarch64-unknown-linux-gnu)
+
+**Only seven of the fifteen failures are printed, and that is the phase machine, not the
+binding.** The probe takes one step per frame and each step is conditional on the reading the
+step before it took; there is no drag to read, so nothing after the first reading is posted at
+all and the later assertions in the frame-52 verdict are simply never reached. The two run
+tiers exit `0 — no verdict` rather than `124 — no verdict`, which says the same thing from the
+other side: the program ran to the end of its frames and never printed a verdict, so nothing
+about it hung.
