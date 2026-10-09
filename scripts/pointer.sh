@@ -6,7 +6,8 @@
 #   ./scripts/pointer.sh move <x> <y>
 #   ./scripts/pointer.sh click <x> <y> [count]
 #   ./scripts/pointer.sh drag <x1> <y1> <x2> <y2> [steps]
-#   ./scripts/pointer.sh scroll <x> <y> <dy>
+#   ./scripts/pointer.sh scroll <x> <y> <dy> [shift]
+#   ./scripts/pointer.sh hscroll <x> <y> <dx>
 #   ./scripts/pointer.sh windows           # pid number layer x y w h, front to back
 #   ./scripts/pointer.sh frame <pid>
 #   ./scripts/pointer.sh owner <x> <y>
@@ -54,7 +55,7 @@ if [ "${DSH_ALLOW_WINDOWS:-}" != "1" ]; then
 fi
 
 if [ $# -lt 1 ]; then
-  echo "usage: scripts/pointer.sh <pos|move|click|drag|scroll|windows|owner> …" >&2
+  echo "usage: scripts/pointer.sh <pos|move|click|drag|scroll|hscroll|windows|owner> …" >&2
   exit 2
 fi
 
@@ -193,6 +194,38 @@ case "scroll":
     pause(60_000)
     guard let event = CGEvent(
         scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: dy, wheel2: 0, wheel3: 0
+    ) else { fail("could not create a scroll event", 2) }
+    event.location = point
+    // `shift` is the horizontal-scroll convention gpui documents — "Holding `Shift` and using the mouse
+    // wheel will scroll the X axis" — but that sentence belongs to `restrict_scroll_to_axis`, which
+    // defaults to false, and the swap itself is done by two backends and no more: the X11 one
+    // (`platform/linux/x11/client.rs:2208`) and the Windows one (`platform/windows/events.rs:532`).
+    // The macOS backend hands `scrollingDeltaX`/`scrollingDeltaY` on as they come
+    // (`platform/mac/events.rs:226`) and gpui's core never reads the modifier for a scroll, so on this
+    // platform the flag is a measured no-op — the gesture with it and without it are the same picture
+    // to the pixel (`tests/evidence/scroll-axis.txt`). The flag stays because a caller driving a
+    // container that scrolls x-only does not need it either way, and because deleting it would leave
+    // the next reader to re-derive what this comment now says.
+    if argv.count > 5 && argv[5] == "shift" {
+        event.flags = .maskShift
+    }
+    event.post(tap: .cghidEventTap)
+    pause(60_000)
+
+case "hscroll":
+    // The wheel's *second* axis, posted on its own. An ordinary mouse wheel does not have one and
+    // neither does `scroll` above; a trackpad's sideways swipe does, and it is the axis a container
+    // with `overflow=x` scrolls on. `tests/evidence/scroll-axis.txt` measured that: 1600px of this
+    // drove `examples/16_scrollable.gos`'s 2000px box to the end of its clip, while the same quantity
+    // of `scroll` over the same point moved it sideways too — through gpui's core, which spends a
+    // vertical-only delta on an x-only container (`elements/div.rs:2427`) — and carried Shift nowhere.
+    // There is no `shift` word here because on macOS there is nothing for it to do.
+    let point = CGPoint(x: num(2), y: num(3))
+    let dx = Int32(num(4))
+    post(.mouseMoved, point)
+    pause(60_000)
+    guard let event = CGEvent(
+        scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 0, wheel2: dx, wheel3: 0
     ) else { fail("could not create a scroll event", 2) }
     event.location = point
     event.post(tap: .cghidEventTap)

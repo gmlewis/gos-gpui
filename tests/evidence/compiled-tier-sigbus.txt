@@ -1,0 +1,96 @@
+THE COMPILED TIERS CRASH — measured 2026-10-09, on this machine, in the tree as it stands.
+
+    ./scripts/tiers.sh tests/gui/fo1_tab_order.gos build
+    === build (debug) ===
+    ./scripts/tiers.sh: line 87: 78074 Bus error: 10   timeout -k 5 30 …
+    === build -> ./target/debug/learn-gpui (exit 139) ===
+
+    ./scripts/tiers.sh tests/gui/km3_menu_accelerator.gos build
+    === build -> ./target/debug/learn-gpui (exit 138) ===
+
+    ./scripts/tiers.sh tests/gui/wh9_app_name.gos            # all five tiers
+    === check      ===                                  ok (10 items typed)
+    === run (interpreter) (exit 0) ===                 OK WH9 …
+    === run --no-jit (exit 0) ===                      OK WH9 …
+    === build (debug) (exit 138) ===                   Bus error: 10
+    === build --release (exit 138) ===                 Bus error: 10
+
+Both of the rows named above record `check, run, run --no-jit, build, build --release` in the
+register, and the last two tiers of each do not run at all. So this is not a property of the probe
+wh9 is being written for: **two registered rows are red on the compiled tiers right now.**
+
+WHAT IT IS. `EXC_BAD_ACCESS` / `SIGBUS`, subtype `EXC_ARM_DA_ALIGN` — an alignment fault on a load —
+raised on the main thread inside the render callback:
+
+    exception:  {"type":"EXC_BAD_ACCESS","signal":"SIGBUS","subtype":"EXC_ARM_DA_ALIGN at 0x…"}
+    termination:{"code":10,"namespace":"SIGNAL","indicator":"Bus error: 10"}
+
+    0  (unmapped — the faulting address)
+    1-8  the program's own compiled code, symbol-less
+    9  gos_rt_callback_invoke
+    10 gossamer_binding::native::NativeCallback::invoke_raw
+    12 gossamer_binding::conv::PersistentCallback::invoke
+    16 gpui_binding::app::Root::render
+    17 gpui::view::any_view::render
+    23 gpui::window::Window::with_rendered_view
+
+Crash reports are in `~/Library/Logs/DiagnosticReports/learn-gpui-*.ips`; eighteen of them were
+written during this measurement, all of them today.
+
+IT IS LAYOUT-SENSITIVE, AND THAT IS THE HARD PART. `tests/gui/km4_keys_focus.gos` passes the
+build tier every time it is run as it stands:
+
+    ./scripts/tiers.sh tests/gui/km4_keys_focus.gos build      # ×3, this session
+    === build -> ./target/debug/learn-gpui (exit 0) ===
+    OK KM4 the window took focus on frame 20, …
+
+Changing **one string literal in it — the window title — and nothing else** turns it into a
+three-for-three crash:
+
+    sed 's|gpui::run("km4 - keys take focus late"|gpui::run(""|' tests/gui/km4_keys_focus.gos
+    → build → run ×3
+    exit 138 / 138 / 138 — Bus error: 10, no output at all
+
+and back again. The same is true of a program built to `km4`'s shape from scratch: identical
+source passes at every quit frame from 24 to 900, and passes 4 runs in 5 with the fifth hanging
+(`exit 124`, the window stops being painted — the flakiness TH2 already records); the same source
+with the title emptied crashes 3 of 3.
+
+So the fault is latent and what decides it is where a program's own data lands, not what it does.
+A program's *behaviour* does not predict it; a program's *layout* does. Nothing about a pass here
+is evidence that the compiled tier works, and nothing about a failure is evidence about the
+program.
+
+WHAT IS NOT KNOWN.
+
+  * **Where the fault is.** The frames that matter are the gos-compiled ones, and they carry no
+    symbols; `atos` names only the Rust frames around them. Whether it is gos's compiled code, the
+    ABI between it and the binding, or the binding's own handling of a value that crosses it, is
+    not measured.
+  * **Whether it is new.** The last commit touching `gpui-binding` is today's `a9c011f "Add name
+    binding"`, and the runner's static library
+    (`~/.cache/gossamer/runners/59a6dae3191b/staticlib/target/debug/libgos_static_bindings.a`) was
+    rebuilt at 11:25 today, before this session's work. That is consistent with a regression made
+    today and it is not evidence of one: a layout-sensitive fault changes sides on any edit, so a
+    commit dated today neither causes it nor clears it. The `gos` binary itself is 0.68.0, built
+    Oct 7. No probe's compiled tier was run in the sessions before this one to compare against.
+  * **Whether the shipped claim was ever true.** The register's `build, build --release` cells for
+    KM3 and MR5 were recorded some rounds ago. They are false now. Whether they were true when
+    recorded cannot be recovered from here.
+
+WHY IT WAS NOT SEEN BEFORE. Of the forty-odd GUI probes, all but one pass a descriptive window
+title (`"km4 - keys take focus late"`, `"dw4 - editor mouse"`, …); `tests/gui/fo1_tab_order.gos` is
+the only one that passes `""`. Six probes use a `TITLE` constant, which has the same effect. So the
+titles are incidental, and the crash follows the layout, not the title. The two probes measured red
+are the ones whose layout happens to be on the wrong side of it today.
+
+WHAT WOULD CLOSE IT. A compiled binary of any affected probe built against a binding or a toolchain
+whose only difference is the suspected change, run until it either crashes or does not; or symbols
+for the compiled frames, so the faulting instruction can be read. Neither is available from here:
+`$GOSSAMER_ROOT` is read-only for this project, and the register's own rule is that the compiled
+tiers are what a row is measured on.
+
+WHAT IT MEANS FOR THE REGISTER. `tested` requires all five tiers. Until this is understood, a row
+whose probe trips the fault cannot honestly be called `tested`, and a row that passes is passing
+by luck of layout — including every row already marked `tested` on those two tiers. The
+interpreter tiers (`run`, `run --no-jit`) are unaffected and still measure what they measured.

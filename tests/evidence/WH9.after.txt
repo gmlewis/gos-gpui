@@ -1,0 +1,58 @@
+WH9 — the application's name: the bold word macOS draws at the left of the menu bar.
+
+AFTER THE WORK.
+
+    DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/wh9_app_name.gos 60
+
+    wh9 the menu bar of this process reads "Apple|wh9-app-name|"
+    OK WH9 the menu bar of this process reads "Apple|wh9-app-name|", and the name it declares, wh9-app-name, is one of its items
+
+    exit 0, 3.5 s
+
+WHAT WAS BUILT. `gpui::set_app_name(name)` (`gpui-binding/src/lib.rs:2478`), which seeds
+`CFBundleName` into `[[NSBundle mainBundle] infoDictionary]` before `gpui::run` is called;
+`gpui-binding/src/name.rs` is the implementation and carries the measured table of the mechanisms
+that do **not** move the word (see `WH9.before.txt`). `examples/17_set_menus.gos` declares
+`set_menus` on its first line, so the port's bar reads what upstream's binary reads.
+
+The same bar, photographed while the probe ran (`screencapture -x -R0,0,900,26`), reads
+**`wh9-app-name`** — the drawn word, not the binding's write and not the installed menu's name.
+That is the ground truth the System Events read below is standing in for: a screenshot cannot be
+asserted on this machine yet (AX4), so the probe asks the window server the same question through
+the accessibility tree.
+
+THREE PRECONDITIONS, ALL MEASURED, ALL OF WHICH THE PROBE HAD TO BE BUILT AROUND. Each cost a
+round of getting the probe wrong first:
+
+  * **System Events exposes a process's menu bar only while that process is frontmost.** Asked
+    against a settled frontmost run: `Apple|wh9-app-name|`. Asked with anything else in front:
+    `Can't get menu bar 1 of application process "gos-runner". Invalid index. (-1719)`. The
+    reader fronts the process first.
+  * **An application that is blocked cannot answer at all.** A read made with
+    `process::run("osascript", …)` on the drawing thread failed **eight times out of eight**,
+    with `frontmost is gos-runner` in every failure — so frontmost was not the problem. Polled
+    from outside during that same run, one read in three failed identically, and the failures
+    lined up with the windows in which the program was sitting inside `process::run`. The reader
+    is therefore **detached**: a shell is asked to fork it and return, and the answer is picked up
+    from `/tmp/wh9-<pid>.answer` a frame later, while the probe is drawing and therefore
+    answering.
+  * **`gpui::frame()` races ahead of the clock at startup** — measured at `now=8e-8 s` the counter
+    already read `120` — so a frame number cannot say "after the bar is drawn". The probe's first
+    version read at one frame and found a bar with no items; this one keeps looking until the
+    answer file appears.
+
+The probe writes and removes two files under `/tmp`, named after its own pid so two runs cannot
+read each other's answer, and removes both on every exit path. It asks once: `osascript` is not
+spawned per frame, which was itself measured to be harmful — during a run whose reader was in a
+loop, `first process whose frontmost is true` answered `ghostty` for fifteen seconds and the
+application never settled as the frontmost one.
+
+WHAT THE ROW DOES NOT CLAIM. It does not check that the name survives a *re-launch* of the bar —
+macOS reads the name before the bar is first drawn and keeps what it read, so a program that
+changed it later would be measured as failing, correctly, and that ordering is read from the
+platform rather than probed (no API moves it after the draw; the probe's own first version, which
+seeded the name twice, showed the executable's name on the second draw). It reads through System
+Events, so it needs Accessibility permission, and without it the probe prints
+`FAIL WH9 the menu bar of this process was never read: …` rather than passing quietly. And the
+container tiers cannot run it at all: there is no menu bar, and `set_app_name` is a documented
+no-op off macOS.

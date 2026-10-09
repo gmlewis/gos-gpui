@@ -74,16 +74,15 @@
 //     frame. **Invisible.**
 //   * Upstream calls `cx.activate(false)` while it builds the window. On macOS
 //     that is `NSApp.activateIgnoringOtherApps_(NO)`
-//     (`gpui-0.2.2/src/platform/mac/platform.rs:564`), which asks for the
-//     activation only if no other application is already active, so its window
-//     is not the key window and AppKit draws the three traffic lights unfocused:
-//     `rgb(70,69,68)` where a key window's are `rgb(255,75,85)`,
-//     `rgb(254,191,45)` and `rgb(43,192,89)`. That was the whole of what this
-//     pair's captures disagreed about — three 14x14 lights, with the client
-//     areas equal to the pixel. The port asks for the same state as
-//     `activate=false`, because `gpui::run` activates every window it opens and
-//     a program has no `App` to ask. **Invisible**: the same three lights in the
-//     same three colours.
+//     (`gpui-0.2.2/src/platform/mac/platform.rs:564`). **It does not stop the
+//     window becoming key here**: run on its own, upstream's three traffic lights
+//     come up in colour, `rgb(244,12,24)` / `rgb(254,191,45)`, which is a key
+//     window's. So the port activates too, which is what plain `gpui::run` does,
+//     and the pair's title bars agree. Asking for `activate=false` instead is
+//     *worse*: it makes the port's window genuinely not key — three grey lights —
+//     and put 5,701px into this pair, all of it those three 14x14 lights. See
+//     `PAIRS.md` §7.2. **Invisible**: the same three lights in the same three
+//     colours.
 
 use gpui
 use std::math
@@ -241,7 +240,7 @@ fn missing_cell(alpha: f64) -> ui::El {
 }
 
 fn main() {
-    let outcome = gpui::run_with("", 300.0, 300.0, "activate=false", || {
+    let outcome = gpui::run("", 300.0, 300.0, || {
         // Upstream asks its asset system for all four images once, as the tree
         // is built. Two of the port's cells stage a 5s arrival instead — cell 1
         // and cell 4 are real loads that answer at once — so the timers start on

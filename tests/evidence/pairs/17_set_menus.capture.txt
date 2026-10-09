@@ -1,7 +1,7 @@
 pair 17_set_menus
 upstream  tools/upstream/examples/set_menus.rs
 port      examples/17_set_menus.gos
-captured  2026-10-09T15:17:22Z
+captured  2026-10-09T16:30:01Z
 
 the two commands:
     cargo run --manifest-path tools/upstream/Cargo.toml --example set_menus

@@ -14,13 +14,27 @@
 //     action is not a value that can cross this ABI (R3), so the port binds
 //     `cmd-w` to an event id and quits on it. Same key, same effect, one step
 //     instead of two.
-//   * upstream opens two windows of the same example side by side, and its
-//     first one asks not to activate the application (`cx.activate(false)`).
-//     The binding is single-window. Forced.
+//   * upstream opens two windows of the same example side by side. The binding
+//     is single-window, so the port opens one, and it is upstream's **first** —
+//     the one built inside `cx.activate(false)` (`:55`) — at the same 500x500 and
+//     the same centred origin, with the same content. The second window is the
+//     whole of the difference, and on macOS it shows in the title bar: the window
+//     that is not the app's main window gets a bar six grey levels dimmer
+//     (measured `rgb(31,32,32)` against `rgb(37,36,36)`). That is macOS's to draw
+//     and not the example's. Forced.
 //
 // The title is not in the list: `gpui::run` takes it as its first argument and
 // this example has nothing to put in it, so it is empty — as upstream's is, it
 // leaving `WindowOptions::default()`.
+
+// `activate=false` was tried here and taken back out. gpui's `cx.activate(false)`
+// reaches macOS as `NSApp.activateIgnoringOtherApps_(NO)`
+// (`platform/mac/platform.rs:564`), which is deprecated and a no-op on this
+// system: upstream's window activates anyway and its traffic lights come up in
+// colour when the example is run on its own. The binding's `activate=false`
+// suppresses the call altogether and leaves the window genuinely not key, with
+// grey lights — a difference the flag *creates* rather than removes. Upstream
+// matching means `activate=true`, which is what plain `gpui::run` asks for.
 
 use gpui
 use std::process
@@ -39,6 +53,9 @@ fn handle(events: Vec<String>) {
 }
 
 fn main() {
+    // `gpui::run`, not `run_with(.., "activate=false", ..)`: see the note above
+    // the `use` lines. Upstream's `cx.activate(false)` does not stop the window
+    // becoming key on this system, and neither should this port's.
     let outcome = gpui::run("", 500.0, 500.0, || {
         // The window has to be able to hear the stroke: `bind_keys` puts it in
         // the keymap, and `on_keys` is what gives the window the focus a key

@@ -15,36 +15,63 @@
 // and `gpui-binding/src/name.rs` records the table. It has to happen **before `gpui::run`** —
 // macOS reads the name before the bar is first drawn and keeps what it read.
 //
-// What this probe checks is the drawn bar, not the binding's own write. System Events is asked
-// for the titles of this process's menu-bar items, by pid, and the assertion is that the name
-// is one of them. The read needs Accessibility permission, which `osascript` has from this
-// shell; where it is missing the probe says so on the FAIL line rather than passing quietly
-// without its evidence.
+// What this probe checks is the drawn bar, not the binding's own write. `gpui::installed_menu()`
+// reports what the platform was *handed*; this asks the window server's own view of it, through
+// System Events, for the titles of this process's menu-bar items, by pid — and the assertion is
+// that the declared name is one of them. The menu installed below is named **something other
+// than the application** (`wh9-menu`), so the two words cannot be confused: if the first item
+// after Apple's reads the declared name, that word came from `set_app_name`.
+//
+// Three measured preconditions, none obvious, all of which this probe has to respect:
+//
+//   * **System Events exposes a process's menu bar only while that process is frontmost.**
+//     Asked against a settled frontmost run it answers `Apple|wh9-app-name|`; asked with
+//     something else in front it answers `Can't get menu bar 1 of application process
+//     "gos-runner". Invalid index. (-1719)`. The reader fronts this process first.
+//   * **An application that is blocked cannot answer at all.** A read made with
+//     `process::run("osascript", …)` on the drawing thread succeeds rarely or never, because
+//     the program is sitting inside `process::run` and the window server cannot reach it — the
+//     same `-1719`. Polled from outside during such a run, one read in three fails the same
+//     way; from inside the blocking read it failed every time. So the reader is **detached**:
+//     a shell is asked to fork it and return, and the answer is picked up from a file two
+//     frames later, while this process is drawing and therefore answering.
+//   * **`gpui::frame()` races ahead of the clock at startup** — measured at `now=8e-8 s` the
+//     counter already read `120` — so a frame number is not a way to say "after the bar is
+//     drawn". A read pinned to one frame number reads too early and finds a bar with no items.
+//     So the probe keeps looking until the answer file appears, up to a frame bound.
 //
 // Pass means: **the menu bar of this process reads the name the program declared.**
 //
 // Run with `DSH_ALLOW_WINDOWS=1 ./scripts/run-once.sh tests/gui/wh9_app_name.gos 60`.
 
 use gpui
+use std::fs
 use std::process
 use std::strings
-use ui
 
 /// The name this probe declares. Not the runner's, not the window's title, and not anything
 /// the window itself draws — if it appears in the menu bar it got there through `set_app_name`.
 const NAME: &str = "wh9-app-name"
 
-/// Every item title in **this process's** menu bar, `Apple|wh9-app-name|` and so on, or a
-/// string beginning `~` when the question could not be asked at all. Asked by pid, so the
-/// answer is this program's bar and nobody else's.
-fn menu_bar_titles() -> String {
-    let script = f"tell application \"System Events\"\nset p to first process whose unix id is {process::id()}\nset out to \"\"\nrepeat with bi in (every menu bar item of menu bar 1 of p)\nset out to out & (title of bi) & \"|\"\nend repeat\nreturn out\nend tell"
-    let args: Vec<String> = #["-e", script]
+/// The mark the reader puts in front of an answer that is a failure rather than a bar. No menu
+/// item title begins with it, so it tells "the bar could not be read" apart from "the bar was
+/// read and held these words".
+const TROUBLE: &str = "!!"
 
-    match process::run("osascript", args) {
-        Ok(out) => strings::trim(out.stdout),
-        Err(problem) => f"~osascript: {problem}",
-    }
+/// The AppleScript the detached reader runs. `before` and `after` are AppleScript's own
+/// positional keywords and cannot be used as variable names (`syntax error: Expected
+/// expression but found "to". (-2741)`), hence `frontNow`.
+fn reader_script() -> String {
+    f"tell application \"System Events\"\nset p to first process whose unix id is {process::id()}\nif (name of first process whose frontmost is true) is not (name of p) then\nset frontmost of p to true\nend if\ndelay 0.3\nset frontNow to name of first process whose frontmost is true\nset out to \"\"\ntry\nrepeat with bi in (every menu bar item of menu bar 1 of p)\nset out to out & (title of bi) & \"|\"\nend repeat\non error problem number n\nreturn \"{TROUBLE}the bar could not be read: \" & problem & \" (\" & n & \"); frontmost was \" & frontNow\nend try\nif out is \"\" then\nreturn \"{TROUBLE}the bar was read and held no items; frontmost was \" & frontNow\nend if\nreturn out\nend tell"
+}
+
+/// Per pid, so two runs cannot read each other's answer.
+fn script_path() -> String {
+    f"/tmp/wh9-{process::id()}.applescript"
+}
+
+fn answer_path() -> String {
+    f"/tmp/wh9-{process::id()}.answer"
 }
 
 fn main() {
@@ -52,22 +79,84 @@ fn main() {
     gpui::set_app_name(NAME)
 
     let outcome = gpui::run("", 360.0, 200.0, || {
-        // The bar is drawn when the window is ordered, which is before the first frame; a few
-        // frames of slack costs nothing and the read is a subprocess.
-        if gpui::frame() == 3 {
-            let titles = menu_bar_titles()
+        // A bar with nothing in it cannot be read: an app that has never installed a menu has an
+        // empty `menu bar 1`, and System Events answers with no items at all — which is what this
+        // probe got before the menu below was added. The menu is named **something other than the
+        // application**, so the words in the bar can be told apart: if the first item reads the
+        // application's name and not this menu's, the name came from `set_app_name`.
+        if !gpui::state_bool("wh9.menus", false) {
+            gpui::set_bool("wh9.menus", true)
+            gpui::set_menus("wh9-menu", #["quits:Quit"])
+        }
 
-            if strings::contains(titles.clone(), NAME) {
-                println(f"OK WH9 the menu bar of this process reads {titles}")
-            } else {
-                println(f"FAIL WH9 the menu bar reads \"{titles}\" and not {NAME}")
+        let script_file = script_path()
+        let answer_file = answer_path()
+
+        // Ask once. The shell forks the reader and returns at once; see "an application that is
+        // blocked cannot answer at all" above for why this is not simply `process::run`.
+        if !gpui::state_bool("wh9.asked", false) && gpui::frame() >= 60 {
+            gpui::set_bool("wh9.asked", true)
+            let _ = fs::remove_file(script_file)
+            let _ = fs::remove_file(answer_file)
+            if let Err(problem) = fs::write(script_file, (*reader_script()).as_bytes()) {
+                eprintln(f"FAIL WH9 the reader script could not be written to {script_file}: {problem}")
+                process::exit(1)
+            }
+            let shell = f"(sleep 1; osascript {script_file} > {answer_file} 2>&1) >/dev/null 2>&1 &"
+            let args: Vec<String> = #["-c", shell]
+            if process::run("/bin/sh", args).is_err() {
+                eprintln("FAIL WH9 the detached reader could not be started")
+                process::exit(1)
+            }
+        }
+
+        // Pick the answer up, whenever it lands.
+        if gpui::state_bool("wh9.asked", false) && !gpui::state_bool("wh9.answered", false) {
+            if let Ok(text) = fs::read_to_string(answer_file) {
+                let seen = strings::trim(text)
+                if seen.len() > 0 {
+                    gpui::set_bool("wh9.answered", true)
+                    let _ = fs::remove_file(script_file)
+                    let _ = fs::remove_file(answer_file)
+                    println(f"wh9 the menu bar of this process reads \"{seen}\"")
+                    if strings::contains(seen, NAME) && !strings::starts_with(seen, TROUBLE) {
+                        println(f"OK WH9 the menu bar of this process reads \"{seen}\", and the name it declares, {NAME}, is one of its items")
+                        gpui::quit()
+                    } else {
+                        eprintln(f"FAIL WH9 the menu bar of this process reads \"{seen}\", and the name it declares, {NAME}, is not one of its items")
+                        process::exit(1)
+                    }
+                }
+            }
+        }
+
+        // `>=`, not `==`: a frame number is a count, and a count that is compared for equality
+        // is one skipped frame away from never firing and leaving the probe to run into its bound.
+        if gpui::frame() >= 900 {
+            if !gpui::state_bool("wh9.answered", false) {
+                // Out of frames with no answer: say so, and say it as a failure. A probe that
+                // cannot ask its question has not answered it, and Accessibility permission is
+                // the usual reason — System Events cannot read any process's bar without it.
+                let last = match fs::read_to_string(answer_file) {
+                    Ok(text) => strings::trim(text),
+                    Err(_) => "the reader wrote nothing at all",
+                }
+                let _ = fs::remove_file(script_file)
+                let _ = fs::remove_file(answer_file)
+                eprintln(f"FAIL WH9 the menu bar of this process was never read: {last}")
+                process::exit(1)
             }
             gpui::quit()
         }
 
-        ui::panel("flex size=full items=center justify=center bg=#181825 color=#cdd6f4")
-            .text("wh9 - the application's name", "")
-            |> ui::root
+        // The window's content comes from the binding's own primitives: `ui` is the examples'
+        // module, and it is found only from inside `examples/`. A probe in `tests/gui/` that
+        // wanted it would be reading the examples' own code instead of the binding's ABI.
+        gpui::animate()
+        let root = gpui::column("p=10 gap=6 size=full bg=#181825")
+        gpui::child(root, gpui::text("wh9 - the application's name", "color=#cdd6f4"))
+        gpui::child(root, gpui::text(f"the menu bar should read {NAME}", "color=#6c7086"))
+        gpui::root(root)
     })
 
     if let Err(problem) = outcome {

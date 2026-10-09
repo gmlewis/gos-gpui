@@ -1,7 +1,7 @@
 pair 10_on_window_close_quit
 upstream  tools/upstream/examples/on_window_close_quit.rs
 port      examples/10_on_window_close_quit.gos
-captured  2026-10-09T15:30:15Z
+captured  2026-10-09T16:22:30Z
 
 the two commands:
     cargo run --manifest-path tools/upstream/Cargo.toml --example on_window_close_quit
@@ -10,8 +10,8 @@ the two commands:
 upstream capture  500x532
 port capture      500x532
 
-compare -metric AE  318.648 (0.00119793)
-    the normalised figure:      0.00119793   (0 identical, 1 wrong in every pixel)
+compare -metric AE  209.554 (0.000787798)
+    the normalised figure:      0.000787798   (0 identical, 1 wrong in every pixel)
     pixels not bit-for-bit equal: 15400
         of which, in the 32px title bar macOS draws: 15400
         of which, in the client area the example draws: 0

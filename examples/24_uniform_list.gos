@@ -32,7 +32,8 @@
 //     pair's captures disagreed about — three 14x14 lights at (12,12), with the
 //     client areas equal to the pixel. `gpui::run` activates every window it
 //     opens, so the port asks for upstream's state instead, as
-//     `activate=false` in the options string `run_with_rows` already takes.
+//     `activate=false` in the options string `run_with_rows` already takes — and
+//     the two windows come out identical, 0 differing pixels, measured.
 //     **Invisible**: the same three lights, the same colours.
 //
 // Upstream prints to stdout on click; so does this port. Watch the terminal.

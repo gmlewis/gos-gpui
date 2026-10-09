@@ -1,7 +1,7 @@
 pair 08_image_loading
 upstream  tools/upstream/examples/image_loading.rs
 port      examples/08_image_loading.gos
-captured  2026-10-09T15:29:44Z
+captured  2026-10-09T16:29:23Z
 
 the two commands:
     cargo run --manifest-path tools/upstream/Cargo.toml --example image_loading
@@ -10,13 +10,13 @@ the two commands:
 upstream capture  300x332
 port capture      300x332
 
-compare -metric AE  74.4765 (0.000747756)
-    the normalised figure:      0.000747756   (0 identical, 1 wrong in every pixel)
-    pixels not bit-for-bit equal: 213
+compare -metric AE  124.985 (0.00125487)
+    the normalised figure:      0.00125487   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 3695
         of which, in the 32px title bar macOS draws: 0
-        of which, in the client area the example draws: 213
+        of which, in the client area the example draws: 3695
 
-213 pixels are not bit-for-bit equal. tests/evidence/pairs/08_image_loading.diff.png
+3695 pixels are not bit-for-bit equal. tests/evidence/pairs/08_image_loading.diff.png
 shows where. The metric above says how far apart they are in total: compare it
 against the count before reading a small number as a good one -- one pixel
 black-on-white outscores a hundred pixels a grey level apart.

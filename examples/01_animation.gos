@@ -21,14 +21,16 @@
 //     took. Forced: the driver is not reachable from this ABI.
 //   * upstream calls `cx.activate(false)` while it builds the window, which
 //     reaches macOS as `NSApp.activateIgnoringOtherApps_(NO)`
-//     (`gpui-0.2.2/src/platform/mac/platform.rs:564`) — an activation asked for
-//     only if no other application is already active — so its window is not the
-//     key window and AppKit draws all three traffic lights unfocused:
-//     `rgb(70,69,68)` where a key window's are `rgb(255,75,85)`,
-//     `rgb(254,191,45)` and `rgb(43,192,89)`. The port asks for the same thing
-//     as the state `activate=false`, because `gpui::run` activates every window
-//     it opens and a program has no `App` to ask instead. Invisible: the same
-//     three lights in the same three colours.
+//     (`gpui-0.2.2/src/platform/mac/platform.rs:564`). **That call does not stop
+//     the window becoming key here**: run on its own, upstream's three traffic
+//     lights come up in colour, `rgb(244,12,24)` / `rgb(254,191,45)`, exactly as a
+//     key window's do. So the port activates too, which is what plain
+//     `gpui::run` does, and the two title bars agree to the pixel — a measured
+//     three runs at 0 differing pixels in the 32px bar. Asking for
+//     `activate=false` instead is *worse*: it makes the port's window genuinely
+//     not key, three grey lights, and put 1,281–1,640px into this pair. See
+//     `PAIRS.md` §7.2. Invisible: the same three lights in the same three
+//     colours.
 
 use gpui
 use std::process
@@ -58,7 +60,7 @@ fn bounce_ease_in_out(delta: f64) -> f64 {
 }
 
 fn main() {
-    let outcome = gpui::run_with("", 300.0, 300.0, "activate=false", || {
+    let outcome = gpui::run("", 300.0, 300.0, || {
         gpui::animate()
 
         let delta = (gpui::now() % PERIOD) / PERIOD

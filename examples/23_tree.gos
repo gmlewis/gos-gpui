@@ -16,7 +16,10 @@
 //     pair's captures disagreed about — three 14x14 lights at (12,12), with the
 //     client areas equal to the pixel. `gpui::run` activates every window it
 //     opens, so the port asks for upstream's state instead, as
-//     `activate=false`. **Invisible**: the same three lights, the same colours.
+//     `activate=false` — and the two windows come out identical, 0 differing
+//     pixels, measured. **Invisible**: the same three lights, the same colours.
+//     (The examples whose upstream *does* call `cx.activate(false)` are the ones
+//     that need the opposite: see `PAIRS.md` §7.2.)
 
 use gpui
 use std::env

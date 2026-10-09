@@ -19,8 +19,16 @@
 //     bytes are decoded by the same loader.
 //   * the two captures are of a running animation, so they are of different
 //     frames of it. Both sides animate; a still photograph cannot tell which
-//     frame it caught. Invisible, and the same class as 08_image_loading's
-//     pulse.
+//     frame it caught. Measured, and the numbers are worth having here: **this
+//     GIF's frames differ from one another in nearly every pixel** — frame 0
+//     against anything else is ~249,000 of its 250,000 — so two stills of it
+//     differ over the whole window, which is why this pair reports ~1.32M. But
+//     **upstream against itself reports 1,311,890** and upstream against the
+//     port reports 1,317,480: the pair is at the animation's own noise floor,
+//     and the port is as close to upstream as upstream is to itself. There is no
+//     pair of stills that could agree, on either side, so this is not a
+//     difference the port could remove. Invisible, and the same class as
+//     `08_image_loading`'s pulse.
 
 use gpui
 use std::process

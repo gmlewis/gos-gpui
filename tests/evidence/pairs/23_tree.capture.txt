@@ -1,7 +1,7 @@
 pair 23_tree
 upstream  tools/upstream/examples/tree.rs
 port      examples/23_tree.gos
-captured  2026-10-09T13:49:00Z
+captured  2026-10-09T16:27:51Z
 
 the two commands:
     cargo run --manifest-path tools/upstream/Cargo.toml --example tree
@@ -10,11 +10,10 @@ the two commands:
 upstream capture  300x332
 port capture      300x332
 
-compare -metric AE  113.278 (0.00113733)
-    the normalised figure:      0.00113733   (0 identical, 1 wrong in every pixel)
-    pixels not bit-for-bit equal: 516
+compare -metric AE  0 (0)
+    the normalised figure:      0   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 0
+        of which, in the 32px title bar macOS draws: 0
+        of which, in the client area the example draws: 0
 
-516 pixels are not bit-for-bit equal. tests/evidence/pairs/23_tree.diff.png
-shows where. The metric above says how far apart they are in total: compare it
-against the count before reading a small number as a good one -- one pixel
-black-on-white outscores a hundred pixels a grey level apart.
+The two windows are pixel-identical.

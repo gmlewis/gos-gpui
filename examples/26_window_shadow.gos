@@ -82,9 +82,10 @@
 //     lights are 516 of this pair's differing pixels and the largest step by far
 //     — 187 levels on the red light. `gpui::run` activates every window it
 //     opens, so the port asks for upstream's state instead, as
-//     `activate=false`. **Invisible**: the same three lights, the same colours.
-//     The rest of this pair's difference is the title bar's material, which is
-//     one to two levels across the bar and is written up in `PAIRS.md`.
+//     `activate=false`. **Invisible**: the same three lights, the same colours —
+//     and with it this pair is now 0 differing pixels over the whole window, the
+//     title bar's material included. That last part was 18,478px before the flag
+//     was added; `PAIRS.md` §7.1 records the older figure.
 
 use gpui
 use std::process

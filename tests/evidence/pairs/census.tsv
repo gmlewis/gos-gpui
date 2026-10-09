@@ -23,7 +23,7 @@
 # pair	line	class	note
 01_animation.gos	10	invisible	the icon loads by path instead of through AssetSource; the same bytes, the same loader
 01_animation.gos	13	forced	GPUI's animation driver is not reachable from this ABI; the port repaints every frame, and a still catches whichever rotation each side was asked for
-01_animation.gos	22	invisible	upstream calls cx.activate(false), which does not activate when another app is in front, so its window is not key and its three traffic lights are grey; the port asks for the same state, so the same three lights are grey
+01_animation.gos	22	invisible	upstream calls cx.activate(false), but on this macOS that does not stop the window becoming key -- its three traffic lights come up in colour -- so the port activates too, as plain gpui::run; measured 0 differing pixels in the 32px title bar over three runs
 02_data_table.gos	20	invisible	the row builder is reached through run_with_rows instead of cx.processor
 02_data_table.gos	29	forced	upstream's quotes come from rand::rng(), so two runs of upstream differ from each other: the values can never be matched, only the layout
 02_data_table.gos	35	invisible	the visible row range is obtained differently; the same rows are drawn
@@ -35,10 +35,10 @@
 03_drag_drop.gos	50	invisible	animate() keeps the ghost following; the same pixels
 03_drag_drop.gos	54	invisible	handlers are plain functions over the store; cx.listener has no equivalent
 04_gif_viewer.gos	16	invisible	the image loads by path instead of through AssetSource; the same pixels
-04_gif_viewer.gos	20	invisible	two captures of a running animation are two frames of it; both sides advance the same cursor from the same GIF
+04_gif_viewer.gos	20	invisible	two captures of a running animation are two frames of it, and every frame of this GIF differs from every other in nearly every pixel; measured, upstream against itself is 1,311,890px and upstream against the port is 1,317,480px, so the pair sits at the animation's own noise floor
 08_image_loading.gos	54	invisible	a custom Asset with a Duration is unreachable (AX2); cells 2 and 3's 5s comes from the port's own gpui::task timer, and the subtrees are the same elements at the same times
 08_image_loading.gos	68	invisible	both pulse from phase 0 on a 3s cycle; the sampled alpha can differ by a frame
-08_image_loading.gos	75	invisible	upstream calls cx.activate(false), which does not activate when another app is in front, so its window is not key and its three traffic lights are grey; the port asks for the same state, so the same three lights are grey
+08_image_loading.gos	75	invisible	upstream calls cx.activate(false), but on this macOS that does not stop the window becoming key -- its three traffic lights come up in colour -- so the port activates too, as plain gpui::run; the two title bars agree, and what is left of this pair is the loading pulse's phase
 09_input.gos	17	invisible	the editor is Rust-side code; the shell it draws is the same
 09_input.gos	18	invisible	the thirteen keys are matched on the element instead of through the keymap; the same text results
 09_input.gos	23	forced	the editor is a document editor -- it holds breaks and handles the keys that move by them, where upstream binds neither; DW1 plus ui::editor(key, placeholder, style) handing out the widget whole are the proof

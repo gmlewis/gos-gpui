@@ -1,7 +1,7 @@
 pair 24_uniform_list
 upstream  tools/upstream/examples/uniform_list.rs
 port      examples/24_uniform_list.gos
-captured  2026-10-09T13:49:15Z
+captured  2026-10-09T16:28:07Z
 
 the two commands:
     cargo run --manifest-path tools/upstream/Cargo.toml --example uniform_list
@@ -10,11 +10,10 @@ the two commands:
 upstream capture  300x332
 port capture      300x332
 
-compare -metric AE  3462.57 (0.0347647)
-    the normalised figure:      0.0347647   (0 identical, 1 wrong in every pixel)
-    pixels not bit-for-bit equal: 7874
+compare -metric AE  0 (0)
+    the normalised figure:      0   (0 identical, 1 wrong in every pixel)
+    pixels not bit-for-bit equal: 0
+        of which, in the 32px title bar macOS draws: 0
+        of which, in the client area the example draws: 0
 
-7874 pixels are not bit-for-bit equal. tests/evidence/pairs/24_uniform_list.diff.png
-shows where. The metric above says how far apart they are in total: compare it
-against the count before reading a small number as a good one -- one pixel
-black-on-white outscores a hundred pixels a grey level apart.
+The two windows are pixel-identical.
