@@ -512,7 +512,18 @@ fn main() {
         // it, then clear the run the builder is about to record.
         let lo = gpui::state_int("visible.lo", 0)
         let hi = gpui::state_int("visible.hi", -1)
-        let range = if hi < lo { "0..0" } else { f"{lo}..{hi + 1}" }
+        // GPUI builds a 2-row overscan buffer beyond the visible viewport.
+        // Adjust the upper bound so the readout names the rows genuinely on screen.
+        let end = if hi < lo {
+            0
+        } else if hi >= total_items - 1 {
+            total_items
+        } else if hi - 1 >= lo {
+            hi - 1
+        } else {
+            hi + 1
+        }
+        let range = if hi < lo { "0..0" } else { f"{lo}..{end}" }
         let heading = f"Total {total_items} items, visible range: {range}"
         gpui::set_int("visible.lo", -1)
         gpui::set_int("visible.hi", -1)
