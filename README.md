@@ -1,4 +1,4 @@
-# gpui, from Gossamer
+# gos-gpui - gpui for Gossamer
 
 Write native desktop windows in [Gossamer](https://gossamer-lang.org/).
 [GPUI](https://gpui.rs) — Zed's GPU-accelerated UI framework — is published to
