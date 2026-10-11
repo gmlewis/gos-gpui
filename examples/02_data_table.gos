@@ -60,6 +60,7 @@
 // Nothing else in the binding is missing for this example.
 
 use gpui
+use std::env
 use std::math::rand
 use std::process
 use ui
@@ -449,6 +450,14 @@ fn scrollbar() -> ui::El {
 // ---- the frame --------------------------------------------------------
 
 fn main() {
+    let mut total_items = TOTAL_ITEMS
+    let args = env::args()
+    if args.len() > 0 {
+        if let Some(parsed) = args[0].to_i64() {
+            total_items = parsed
+        }
+    }
+
     let outcome = gpui::run_with_rows("", 1280.0, 1000.0, "", table_row, || {
         // The scrollbar drag, upstream's rule term for term (`data_table.rs:322-366`).
         //
@@ -504,7 +513,7 @@ fn main() {
         let lo = gpui::state_int("visible.lo", 0)
         let hi = gpui::state_int("visible.hi", -1)
         let range = if hi < lo { "0..0" } else { f"{lo}..{hi + 1}" }
-        let heading = f"Total {TOTAL_ITEMS} items, visible range: {range}"
+        let heading = f"Total {total_items} items, visible range: {range}"
         gpui::set_int("visible.lo", -1)
         gpui::set_int("visible.hi", -1)
         gpui::set_int("visible.previous", -2)
@@ -520,7 +529,7 @@ fn main() {
                 .child(ui::row("w_full overflow=hidden borderb=1 bordercolor=#e0e0e0 color=#555555 bg=#f0f0f0 py=4 px=8 font=xs")
                     .children(header))
                 .child(ui::stack("size=full")
-                    .list("items", TOTAL_ITEMS, 28.0, "size=full")
+                    .list("items", total_items, 28.0, "size=full")
                     .child(scrollbar())))
             |> ui::root
     })

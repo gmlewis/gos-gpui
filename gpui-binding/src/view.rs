@@ -3324,6 +3324,36 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                                     Ok(Value::Int(handle)) if handle > 0 => {
                                         window::with(win, || snapshot(handle))
                                     }
+                                    Ok(Value::Struct(s)) => {
+                                        let handle = s
+                                            .fields
+                                            .iter()
+                                            .find_map(|(name, val)| {
+                                                if *name == "handle" {
+                                                    if let Value::Int(h) = val {
+                                                        return Some(*h);
+                                                    }
+                                                }
+                                                None
+                                            })
+                                            .or_else(|| {
+                                                s.fields.get(0).and_then(|(_, val)| match val {
+                                                    Value::Int(h) if *h > 0 => Some(*h),
+                                                    _ => None,
+                                                })
+                                            });
+                                        match handle {
+                                            Some(h) if h > 0 => window::with(win, || snapshot(h)),
+                                            _ => {
+                                                window::with(win, || {
+                                                    note_error(format!(
+                                                        "the row builder for row {index} answered a struct without a valid element handle"
+                                                    ))
+                                                });
+                                                None
+                                            }
+                                        }
+                                    }
                                     Ok(_) => {
                                         window::with(win, || {
                                             note_error(format!(
