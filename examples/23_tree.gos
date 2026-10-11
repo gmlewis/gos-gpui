@@ -43,9 +43,13 @@ fn nest(depth: i64) -> ui::El {
 }
 
 fn main() {
-    let depth = env::var("GPUI_TREE_DEPTH")
-        .map(|raw| raw.to_i64().unwrap_or(DEFAULT_DEPTH))
-        .unwrap_or(DEFAULT_DEPTH)
+    let mut depth = DEFAULT_DEPTH
+    let args = env::args()
+    if args.len() > 0 {
+        if let Some(parsed) = args[0].to_i64() {
+            depth = parsed
+        }
+    }
 
     let outcome = gpui::run_with("", 300.0, 300.0, "activate=false", || {
         nest(depth) |> ui::root

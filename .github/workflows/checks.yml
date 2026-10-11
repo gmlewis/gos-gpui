@@ -3,8 +3,8 @@
 # The headless subset of this repository's gates, on every push and pull
 # request. Nothing here opens a window: the container (`scripts/gosbox.sh`) is
 # how a GUI program is exercised, and a runner that opens a window is exactly
-# what this job must not do. Anything that needs `DSH_ALLOW_WINDOWS` is excluded
-# by construction.
+# what this job must not do.
+#
 #
 # Gossamer publishes no prebuilt binaries, so the job builds `gos` from the tag
 # in `GOSSAMER_VERSION`; keep that tag in step with the `gossamer-version` pin

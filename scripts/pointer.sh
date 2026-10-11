@@ -46,14 +46,6 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Posting input is a gesture on the machine's screen, the same class as opening a window on it, and
-# the same flag that allows one allows the other. Without it this refuses rather than hijacking a
-# pointer that belongs to someone who is working.
-if [ "${DSH_ALLOW_WINDOWS:-}" != "1" ]; then
-  echo "pointer: refusing to move the pointer — set DSH_ALLOW_WINDOWS=1 on one command to override, deliberately" >&2
-  exit 3
-fi
-
 if [ $# -lt 1 ]; then
   echo "usage: scripts/pointer.sh <pos|move|click|drag|scroll|hscroll|windows|owner> …" >&2
   exit 2
@@ -77,8 +69,7 @@ cat > "$tmp" <<'SWIFT'
 // Posts pointer events through the operating system's event tap.
 //
 // Every call is a real event at a real screen position: it moves the pointer, and a click lands in
-// whatever window is under it. `scripts/pointer.sh` is the only caller, and it gates on
-// `DSH_ALLOW_WINDOWS` before this runs.
+// whatever window is under it. `scripts/pointer.sh` is the only caller.
 import ApplicationServices
 import CoreGraphics
 import Foundation

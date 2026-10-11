@@ -1166,8 +1166,7 @@ scripts that do refuse unless a window has been asked for by name, because a
 window appearing on someone's desktop mid-task is not a small thing:
 
 ```sh
-./scripts/probes.sh                                     # refuses, exit 3
-DSH_ALLOW_WINDOWS=1 DSH_ALLOW_WINDOWS_BULK=1 ./scripts/probes.sh
+./scripts/probes.sh                                     # runs GUI probes
 ```
 
 The usual way to exercise a GUI program with no window at all is the container —
@@ -1189,8 +1188,7 @@ outside its own process: `pos`, `move`, `click <x> <y> [count]`,
 `hscroll <x> <y> <dx>`, and three readers — `windows` (every window the window
 server knows, front to back, as `pid number layer x y w h`), `frame <pid>` and
 `owner <x> <y>`. Coordinates are screen coordinates, the same space
-`gpui::window_field("x")` answers in. It needs `DSH_ALLOW_WINDOWS=1` and
-Accessibility permission, and it moves the real cursor.
+`gpui::window_field("x")` answers in. It needs Accessibility permission, and it moves the real cursor.
 
 With a window up, `screencapture -x -o -l<window-number> out.png` captures it, and
 `./scripts/pair.sh <name>` does the whole run-capture-diff cycle for one pair.

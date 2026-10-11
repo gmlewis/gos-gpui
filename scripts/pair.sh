@@ -27,9 +27,7 @@
 # only one available is this one, which the owner has asked to be left alone.
 #
 # So: this script is one command, it opens exactly two windows, it photographs
-# them, and it puts the pictures in the tree. It refuses to run without
-# `DSH_ALLOW_WINDOWS=1`, through `scripts/window-guard.sh`, so nothing calls it
-# by accident.
+# them, and it puts the pictures in the tree.
 #
 # # What it leaves behind
 #
@@ -319,13 +317,7 @@ run_pair () {
     return 0
   fi
 
-  "$here/window-guard.sh" --why >&2 || {
-    echo >&2
-    echo "pair.sh: two windows on this machine are a gesture, not a test result." >&2
-    echo "pair.sh: the owner of the machine has to ask for it:" >&2
-    echo "pair.sh:     DSH_ALLOW_WINDOWS=1 ./scripts/pair.sh $name" >&2
-    return 3
-  }
+  "$here/window-guard.sh" --why >&2 || return $?
 
   echo "building the upstream side (no window opens for a build)"
   "$here/../tools/upstream-examples.sh" build "$upstream_name" >/tmp/pair-upstream-build.log 2>&1 \

@@ -76,6 +76,7 @@ if ! file=$(resolve "$1"); then
   echo "run.sh: no example matches '$1'" >&2
   exit 1
 fi
+shift
 
 if [ "$print_only" = 1 ]; then
   printf '%s\n' "$file"
@@ -84,4 +85,4 @@ fi
 
 # The first run against this project builds a runner with Cargo, which
 # compiles GPUI and takes a while. Later runs reuse it.
-exec gos run --main-thread "$file"
+exec gos run --main-thread "$file" "$@"

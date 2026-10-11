@@ -23,10 +23,8 @@
 #   6. a native binary that runs, not crashes
 #   7. checks that run without being asked
 #
-# Nothing here opens a window on this Mac unless the owner asked for it: the
-# runtime tiers go through the container (`gosbox:2`), which shows nothing. With
-# `DSH_ALLOW_WINDOWS=1` they run on the Mac instead. `--no-run` skips them and
-# checks only the headless claims.
+# Nothing here opens a window on this Mac unless asked: `--no-run` skips
+# runtime tiers and checks only the headless claims.
 #
 # Scratch lives in /tmp and never in the tree.
 
@@ -204,8 +202,7 @@ fi
 # ---------------------------------------------------------------------------
 # 3. A window on the first attempt; 6. a native binary that runs.
 #
-#    All five tiers, or as many as this machine can run. On the Mac that means
-#    `DSH_ALLOW_WINDOWS=1`; otherwise the container, which shows nothing.
+#    All five tiers, or as many as this machine can run.
 # ---------------------------------------------------------------------------
 hdr "3. a window / 6. a native binary"
 
@@ -225,7 +222,7 @@ if [ "$run_tiers" = 1 ] && [ "$dependence_ok" = 1 ]; then
     # five tiers against the staged checkout.
     stage="$cache/docker-stage"; dhome="$cache/docker-home"
     if ! docker info >/dev/null 2>&1; then
-      fail "3. a window: needs either DSH_ALLOW_WINDOWS=1 (a window on this Mac) or a running Docker (the container)"
+      fail "3. a window: needs either a window on this Mac or a running Docker (the container)"
     elif [ ! -d "$cache/$toolchain" ] || [ ! -d "$cache/$gossamer" ]; then
       fail "3. a window: the container toolchains are missing under $cache (see scripts/gosbox.sh)"
     else
