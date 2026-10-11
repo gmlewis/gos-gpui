@@ -1,0 +1,169 @@
+#!/usr/bin/env -S gos run
+// transpile-view - translate Rust GPUI element tree builder code into Gossamer `ui` syntax.
+//
+//   ./scripts/transpile-view PATH.rs       transpile a Rust file
+//   ./scripts/transpile-view --demo        show sample conversion
+//   ./scripts/transpile-view --input="CODE" transpile inline code
+//
+// Accelerates porting upstream examples and GPUI widgets to Gossamer.
+
+use std::env
+use std::fs
+use std::process
+use std::strings
+
+fn demo_input() -> String {
+    let mut s = ""
+    s = s + "div()\n"
+    s = s + "    .flex()\n"
+    s = s + "    .flex_col()\n"
+    s = s + "    .gap_4()\n"
+    s = s + "    .p_6()\n"
+    s = s + "    .bg(rgb(0x181825))\n"
+    s = s + "    .size_full()\n"
+    s = s + "    .child(text(\"Hello World\").text_2xl().text_color(rgb(0xcdd6f4)))\n"
+    s = s + "    .child(\n"
+    s = s + "        div()\n"
+    s = s + "            .flex()\n"
+    s = s + "            .flex_row()\n"
+    s = s + "            .gap_2()\n"
+    s = s + "            .child(button(\"btn_inc\").child(\"+1\").bg(rgb(0x89b4fa)))\n"
+    s = s + "            .child(button(\"btn_reset\").child(\"Reset\").bg(rgb(0x313244)))\n"
+    s = s + "    )\n"
+    s = s + "    .into_any_element()"
+    s
+}
+
+/// Translates a single line of Rust GPUI code to Gossamer tokens and structure.
+fn transpile_line(line: String) -> String {
+    let mut l = line
+
+    // Layout containers
+    if strings::contains(l, "div().flex().flex_col()") || strings::contains(l, "div().flex_col()") {
+        l = strings::replace(l, "div().flex().flex_col()", "ui::column(\"\")")
+        l = strings::replace(l, "div().flex_col()", "ui::column(\"\")")
+    } else if strings::contains(l, "div().flex().flex_row()") || strings::contains(l, "div().flex_row()") || strings::contains(l, "div().flex()") {
+        l = strings::replace(l, "div().flex().flex_row()", "ui::row(\"\")")
+        l = strings::replace(l, "div().flex_row()", "ui::row(\"\")")
+        l = strings::replace(l, "div().flex()", "ui::row(\"\")")
+    } else if strings::contains(l, "div()") {
+        l = strings::replace(l, "div()", "ui::panel(\"\")")
+    }
+
+    // Finishing
+    if strings::contains(l, ".into_any_element()") {
+        l = strings::replace(l, ".into_any_element()", "|> ui::root")
+    }
+
+    // Common style tokens
+    l = strings::replace(l, ".size_full()", "/* token: size=full */")
+    l = strings::replace(l, ".w_full()", "/* token: w=full */")
+    l = strings::replace(l, ".h_full()", "/* token: h=full */")
+    l = strings::replace(l, ".gap_1()", "/* token: gap=4 */")
+    l = strings::replace(l, ".gap_2()", "/* token: gap=8 */")
+    l = strings::replace(l, ".gap_4()", "/* token: gap=16 */")
+    l = strings::replace(l, ".gap_6()", "/* token: gap=24 */")
+    l = strings::replace(l, ".gap_8()", "/* token: gap=32 */")
+    l = strings::replace(l, ".p_2()", "/* token: p=8 */")
+    l = strings::replace(l, ".p_4()", "/* token: p=16 */")
+    l = strings::replace(l, ".p_6()", "/* token: p=24 */")
+    l = strings::replace(l, ".items_center()", "/* token: items=center */")
+    l = strings::replace(l, ".justify_center()", "/* token: justify=center */")
+    l = strings::replace(l, ".justify_between()", "/* token: justify=between */")
+    l = strings::replace(l, ".cursor_pointer()", "/* token: cursor=pointer */")
+
+    l
+}
+
+/// Consolidates individual style comments into Gossamer style strings.
+fn fold_styles(src: String) -> String {
+    let mut lines = strings::split(src, "\n")
+    let mut out: Vec<String> = Vec::from([])
+    let mut active_tokens: Vec<String> = Vec::from([])
+
+    for raw in lines {
+        let trimmed = strings::trim(raw)
+        if strings::starts_with(trimmed, "/* token: ") && strings::ends_with(trimmed, " */") {
+            let token = strings::replace(strings::replace(trimmed, "/* token: ", ""), " */", "")
+            active_tokens.push(token)
+            continue
+        }
+
+        if active_tokens.len() > 0 && (strings::contains(raw, "ui::column(\"\")") || strings::contains(raw, "ui::row(\"\")") || strings::contains(raw, "ui::panel(\"\")")) {
+            let combined = strings::join(active_tokens, " ")
+            let fixed = strings::replace(raw, "(\"\")", "(\"" + combined + "\")")
+            out.push(fixed)
+            active_tokens = Vec::from([])
+            continue
+        }
+
+        out.push(raw)
+    }
+
+    strings::join(out, "\n")
+}
+
+fn transpile(source: String) -> String {
+    let mut processed: Vec<String> = Vec::from([])
+    for line in strings::split(source, "\n") {
+        processed.push(transpile_line(line))
+    }
+    let combined = strings::join(processed, "\n")
+    fold_styles(combined)
+}
+
+fn main() {
+    let args = env::args()
+    let mut show_demo = false
+    let mut input_code = ""
+    let mut file_path = ""
+
+    for arg in args {
+        if arg == "--demo" {
+            show_demo = true
+        } else if strings::starts_with(arg, "--input=") {
+            input_code = strings::replace(arg, "--input=", "")
+        } else if !strings::starts_with(arg, "-") {
+            file_path = arg
+        }
+    }
+
+    if show_demo {
+        println("// ============================================================")
+        println("// 1. Upstream GPUI Rust Source (Input)")
+        println("// ============================================================")
+        println(demo_input())
+        println("")
+        println("// ============================================================")
+        println("// 2. Transpiled Gossamer `ui` Source (Output)")
+        println("// ============================================================")
+        let res = transpile(demo_input())
+        println(res)
+        return
+    }
+
+    if input_code != "" {
+        println(transpile(input_code))
+        return
+    }
+
+    if file_path != "" {
+        let content = match fs::read_to_string(file_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln(f"transpile-view: could not read {file_path}")
+                process::exit(1)
+            }
+        }
+        println(f"// Transpiled from {file_path}")
+        println(transpile(content))
+        return
+    }
+
+    println("transpile-view - GPUI to Gossamer View Transpiler")
+    println("------------------------------------------------------------")
+    println("Usage:")
+    println("  ./scripts/transpile-view PATH.rs       transpile a Rust GPUI file")
+    println("  ./scripts/transpile-view --demo        display example conversion")
+    println("  ./scripts/transpile-view --input=\"...\" transpile code string")
+}

@@ -1164,10 +1164,14 @@ With a window up, `screencapture -x -o -l<window-number> out.png` captures it, a
 ### The other checks
 
 ```sh
-./scripts/docs.sh          # the docs still describe the code
-./scripts/pair-census.sh   # every documented deviation has a verdict, and every verdict a deviation
-./scripts/update-api       # is the binding still in step with the pinned gpui?
-./scripts/toolkit.sh       # can a stranger build on this? — see "Before you build on this"
+./scripts/docs.sh              # the docs still describe the code
+./scripts/pair-census.sh       # every documented deviation has a verdict, and every verdict a deviation
+./scripts/update-api           # is the binding still in step with the pinned gpui?
+./scripts/audit-capabilities   # audit capability coverage against GPUI
+./scripts/gen-accessors        # scaffold scalar accessors and tests
+./scripts/gen-style-tokens     # expand and verify Tailwind style tokens
+./scripts/transpile-view       # transpile Rust GPUI view code to Gossamer ui
+./scripts/toolkit.sh           # can a stranger build on this? — see "Before you build on this"
 ```
 
 `toolkit.sh --no-run` is the headless half — licence, dependency declaration,

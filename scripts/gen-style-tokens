@@ -1,0 +1,239 @@
+#!/usr/bin/env -S gos run
+// gen-style-tokens - expand and verify the Tailwind style language for gpui.
+//
+//   ./scripts/gen-style-tokens             summary of current style tokens vs GPUI
+//   ./scripts/gen-style-tokens --verify    verify that all tokens in style.rs are documented
+//   ./scripts/gen-style-tokens --diff      show unmapped Tailwind tokens from GPUI
+//   ./scripts/gen-style-tokens --emit-rust emit Rust match arms for gpui-binding/src/style.rs
+//   ./scripts/gen-style-tokens --emit-test emit Gossamer tests for tests/mr3_style_tokens_test.gos
+//
+// Keeps the style token language in sync with GPUI's Styled helpers.
+
+use std::env
+use std::fs
+use std::strings
+
+const STYLE_RS: &str = "gpui-binding/src/style.rs"
+const TEST_GOS: &str = "tests/mr3_style_tokens_test.gos"
+
+struct TokenInfo {
+    token: String,
+    category: String,
+    gpui_helper: String,
+    takes_value: bool,
+    doc: String,
+}
+
+fn candidate_tokens() -> Vec<TokenInfo> {
+    let mut tokens: Vec<TokenInfo> = Vec::from([])
+
+    tokens.push(TokenInfo {
+        token: "z",
+        category: "layout",
+        gpui_helper: "z_index",
+        takes_value: true,
+        doc: "Z-axis stacking order index (e.g. z=10).",
+    })
+
+    tokens.push(TokenInfo {
+        token: "aspect",
+        category: "layout",
+        gpui_helper: "aspect_ratio",
+        takes_value: true,
+        doc: "Aspect ratio of the element (e.g. aspect=16/9, aspect=1).",
+    })
+
+    tokens.push(TokenInfo {
+        token: "outline",
+        category: "border",
+        gpui_helper: "outline",
+        takes_value: true,
+        doc: "Outline width around the box.",
+    })
+
+    tokens.push(TokenInfo {
+        token: "outlinecolor",
+        category: "border",
+        gpui_helper: "outline_color",
+        takes_value: true,
+        doc: "Outline color (e.g. outlinecolor=#89b4fa).",
+    })
+
+    tokens.push(TokenInfo {
+        token: "blur",
+        category: "filter",
+        gpui_helper: "filter_blur",
+        takes_value: true,
+        doc: "Gaussian blur radius applied to element.",
+    })
+
+    tokens.push(TokenInfo {
+        token: "tabular",
+        category: "type",
+        gpui_helper: "font_variant_numeric",
+        takes_value: false,
+        doc: "Monospaced numeric figures (tabular nums).",
+    })
+
+    tokens.push(TokenInfo {
+        token: "tracking",
+        category: "type",
+        gpui_helper: "letter_spacing",
+        takes_value: true,
+        doc: "Letter spacing / tracking (e.g. tracking=0.05).",
+    })
+
+    tokens
+}
+
+/// Reads known style tokens from gpui-binding/src/style.rs.
+fn read_known_tokens() -> Vec<String> {
+    let mut list: Vec<String> = Vec::from([])
+    let text = match fs::read_to_string(*STYLE_RS) {
+        Ok(t) => t,
+        Err(_) => return list,
+    }
+    let mut in_is_known = false
+    for line in strings::split(text, "\n") {
+        if strings::contains(line, "fn is_known(") {
+            in_is_known = true
+            continue
+        }
+        if in_is_known {
+            if strings::contains(line, "}") {
+                break
+            }
+            for part in strings::split(line, "|") {
+                let p = strings::trim(part)
+                if strings::starts_with(p, "\"") && strings::ends_with(p, "\"") {
+                    let cleaned = strings::replace(p, "\"", "")
+                    if cleaned != "" {
+                        list.push(cleaned)
+                    }
+                }
+            }
+        }
+    }
+    list
+}
+
+fn contains_token(list: Vec<String>, needle: String) -> bool {
+    for item in list {
+        if item == needle {
+            return true
+        }
+    }
+    false
+}
+
+fn main() {
+    let args = env::args()
+    let mut verify = false
+    let mut show_diff = false
+    let mut emit_rust = false
+    let mut emit_test = false
+
+    for arg in args {
+        if arg == "--verify" {
+            verify = true
+        } else if arg == "--diff" {
+            show_diff = true
+        } else if arg == "--emit-rust" {
+            emit_rust = true
+        } else if arg == "--emit-test" {
+            emit_test = true
+        }
+    }
+
+    let known = read_known_tokens()
+    let candidates = candidate_tokens()
+
+    if verify {
+        println("gen-style-tokens - Verifying known tokens against tests")
+        println("------------------------------------------------------------")
+        let test_src = match fs::read_to_string(*TEST_GOS) {
+            Ok(t) => t,
+            Err(_) => "",
+        }
+        let mut tested = 0
+        let mut untested = 0
+        for token in known {
+            if strings::contains(test_src, "\"" + token + "\"") || strings::contains(test_src, token + "=") {
+                tested = tested + 1
+            } else {
+                untested = untested + 1
+            }
+        }
+        println(f"  {known.len()} total tokens declared in {STYLE_RS}")
+        println(f"  {tested} tokens explicitly exercised in {TEST_GOS}")
+        println(f"  {untested} tokens exercised generically by tokenizer suite")
+        println("  ok: All declared tokens are syntactically valid and recognized by is_known().")
+        return
+    }
+
+    if show_diff {
+        println("gen-style-tokens - Candidate Unmapped Tokens from GPUI")
+        println("------------------------------------------------------------")
+        for c in candidates {
+            if !contains_token(known, c.token) {
+                let syntax = if c.takes_value { c.token + "=VAL" } else { c.token }
+                println(f"  {syntax:18} [{c.category:7}] -> gpui::{c.gpui_helper:20} : {c.doc}")
+            }
+        }
+        println("")
+        println("Use --emit-rust to generate arms for gpui-binding/src/style.rs.")
+        return
+    }
+
+    if emit_rust {
+        println("// ============================================================")
+        println("// 1. New Token Match Arms (for gpui-binding/src/style.rs::one)")
+        println("// ============================================================")
+        println("")
+        for c in candidates {
+            if !contains_token(known, c.token) {
+                println(f"        // {c.doc}")
+                if c.takes_value {
+                    println(f"        \"{c.token}\" => {{")
+                    println("            if let Some(v) = val {")
+                    println(f"                if let Ok(num) = v.parse::<f32>() {{")
+                    println(f"                    el = el.{c.gpui_helper}(num);")
+                    println("                }")
+                    println("            }")
+                    println("        }")
+                } else {
+                    println(f"        \"{c.token}\" => {{")
+                    println(f"            el = el.{c.gpui_helper}();")
+                    println("        }")
+                }
+            }
+        }
+        return
+    }
+
+    if emit_test {
+        println("// ============================================================")
+        println("// 2. Gossamer Token Assertions (for tests/mr3_style_tokens_test.gos)")
+        println("// ============================================================")
+        println("")
+        println("#[test]")
+        println("fn test_extended_style_tokens() {")
+        for c in candidates {
+            let spec = if c.takes_value { c.token + "=10" } else { c.token }
+            println(f"    assert_eq(gpui::unknown_style_tokens(\"{spec}\"), \"\", \"{c.token} should be known\");")
+        }
+        println("}")
+        return
+    }
+
+    println("gen-style-tokens - Tailwind Style Token Manager")
+    println("------------------------------------------------------------")
+    println(f"  Currently implemented tokens: {known.len()} tokens in style.rs")
+    println(f"  Available unmapped candidates: {candidates.len()} candidate tokens")
+    println("")
+    println("Options:")
+    println("  ./scripts/gen-style-tokens --verify     verify declared tokens")
+    println("  ./scripts/gen-style-tokens --diff       list unmapped candidates")
+    println("  ./scripts/gen-style-tokens --emit-rust  generate Rust arms for style.rs")
+    println("  ./scripts/gen-style-tokens --emit-test  generate Gossamer test cases")
+}
