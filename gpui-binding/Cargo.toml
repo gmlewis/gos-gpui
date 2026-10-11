@@ -15,7 +15,7 @@ crate-type = ["rlib"]
 # *path* patch — a path patch only applies when it satisfies the requirement
 # stated here. So this line and the `gossamer-version` pin in `project.toml`
 # are one setting in two places, and they move together.
-gossamer-binding = "0.70.0"
+gossamer-binding = "0.71.1"
 
 # The editor moves the caret by grapheme cluster, as upstream's does.
 unicode-segmentation = "1"

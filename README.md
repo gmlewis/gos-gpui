@@ -98,7 +98,7 @@ it, and the ported examples are the crate's own, copied in unmodified.
 - **macOS:** Xcode command-line tools (`xcode-select --install`).
 - **Linux:** the build and runtime packages listed under
   [On Linux](#on-linux).
-- **Gossamer 0.70.0** — `gos --version` (the version `project.toml` pins).
+- **Gossamer 0.71.1** — `gos --version` (the version `project.toml` pins).
 - **A Rust toolchain.** GPUI needs a recent stable `rustc` and a Cargo that
   understands edition 2024, so 1.85 is the floor for the binding crate.
   Building `gos` itself from source wants 1.95 — see its
@@ -218,7 +218,7 @@ and the two scripts, and it is already wired up:
 
 `gos run` needs no LLVM: the [install page](https://gossamer-lang.org/docs/install/)
 is explicit that only `gos build` wants LLVM 18–22. So the minimum is `gos`
-0.70.0, a Rust toolchain, and GPUI's Linux build dependencies.
+0.71.1, a Rust toolchain, and GPUI's Linux build dependencies.
 
 Of GPUI's dependency tree, only `x11`, `freetype-sys` and
 `yeslogic-fontconfig-sys` shell out to `pkg-config`, and the last of those is

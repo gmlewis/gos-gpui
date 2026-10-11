@@ -91,7 +91,7 @@ write_manifest() {
 [project]
 id      = "example.com/toolkit-scratch"
 version = "0.1.0"
-gossamer-version = "^v0.70.0"
+gossamer-version = "^v0.71.1"
 
 # gpui: the binding crate, reached as an ordinary path dependency.
 [rust-bindings]
