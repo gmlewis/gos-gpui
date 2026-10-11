@@ -1,0 +1,45 @@
+// TDD Phase 2: Complete Layout & Taffy Coverage
+//
+// Verifies:
+// 1. Taffy layout tokens and helpers: col-reverse, row-reverse, wrap-reverse, aspect_ratio, align_items, justify_content, gap, grow, shrink, basis.
+// 2. Grid layout: grid_cols, grid_rows, col_span, row_span.
+
+use gpui
+use ui
+
+#[test]
+fn taffy_reverse_and_alignment_tokens() {
+    let el = ui::div()
+        .flex_col_reverse()
+        .items_center()
+        .justify_center()
+        .grow()
+        .shrink()
+        .basis(150.0)
+        .aspect(1.33)
+
+    let style = ui::style_of(el)
+    assert(style != "", "style should not be empty")
+    let unknown = gpui::unknown_style_tokens(style)
+    assert(unknown.len() == 0, f"all taffy tokens should be recognized: {unknown}")
+}
+
+#[test]
+fn grid_definitions_and_spans() {
+    let grid_el = ui::div()
+        .grid()
+        .grid_cols(12)
+        .grid_rows(6)
+        .gap(12.0)
+        .child(
+            ui::div()
+                .col_span(4)
+                .row_span(2)
+                .bg("#282828")
+        )
+
+    let style = ui::style_of(grid_el)
+    assert(style != "", "grid style should not be empty")
+    let unknown = gpui::unknown_style_tokens(style)
+    assert(unknown.len() == 0, f"all grid tokens should be recognized: {unknown}")
+}

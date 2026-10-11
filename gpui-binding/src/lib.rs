@@ -50,6 +50,7 @@ use gossamer_binding::PersistentCallback;
 
 mod app;
 mod editor;
+mod event_queue;
 mod gpu;
 mod history;
 mod list;
@@ -2827,5 +2828,232 @@ gossamer_binding::register_module!(
     /// answers that.
     fn theme() -> String {
         view::theme_choice(crate::window::current())
+    }
+
+    // -----------------------------------------------------------------
+    // event queue & inversion
+    // -----------------------------------------------------------------
+
+    /// Push an event into the thread-safe event queue.
+    fn push_event(target_id: i64, kind: i64, p_i64: i64, p_f64: f64, p_str: String) {
+        event_queue::push_event(target_id, kind, p_i64, p_f64, p_str);
+    }
+
+    /// Poll and drain all events from the event queue.
+    fn poll_events() -> Vec<String> {
+        event_queue::poll_events()
+    }
+
+    /// Number of pending events in the event queue.
+    fn event_queue_len() -> i64 {
+        event_queue::event_queue_len()
+    }
+
+    /// Notify that a target/model has updated.
+    fn notify(target_id: i64) {
+        event_queue::notify(target_id);
+    }
+
+    /// Notify/invalidate a window to request a repaint.
+    fn notify_window(window_id: i64) {
+        event_queue::notify_window(window_id);
+    }
+
+    /// Whether a window has a pending invalidation request.
+    fn is_window_invalidated(window_id: i64) -> bool {
+        event_queue::is_window_invalidated(window_id)
+    }
+
+    /// Clear a window's pending invalidation, returning whether one was pending.
+    fn clear_window_invalidation(window_id: i64) -> bool {
+        event_queue::clear_window_invalidation(window_id)
+    }
+
+    /// Append a style token to an element handle in the arena.
+    fn append_style(handle: i64, token: String) -> i64 {
+        view::append_style(handle, &token)
+    }
+
+    /// Read the accumulated style string of an element handle.
+    fn get_style(handle: i64) -> String {
+        view::get_style(handle)
+    }
+
+    /// Whether the current window is maximized.
+    fn window_is_maximized() -> bool {
+        view::window_is_maximized()
+    }
+
+    /// Sets whether the current window is maximized.
+    fn window_set_maximized(max: bool) {
+        view::window_set_maximized(max);
+    }
+
+    /// Whether the current window is minimized.
+    fn window_is_minimized() -> bool {
+        view::window_is_minimized()
+    }
+
+    /// Sets whether the current window is minimized.
+    fn window_set_minimized(min: bool) {
+        view::window_set_minimized(min);
+    }
+
+    /// Whether the current window is fullscreen.
+    fn window_is_fullscreen() -> bool {
+        view::window_is_fullscreen()
+    }
+
+    /// Sets whether the current window is fullscreen.
+    fn window_set_fullscreen(fs: bool) {
+        view::window_set_fullscreen(fs);
+    }
+
+    /// The scale factor of the current window.
+    fn window_scale_factor() -> f64 {
+        view::window_scale_factor()
+    }
+
+    /// The bounds of the current window as [x, y, w, h].
+    fn window_bounds() -> Vec<f64> {
+        let (x, y, w, h) = view::window_bounds();
+        vec![x, y, w, h]
+    }
+
+    /// Sets the bounds of the current window.
+    fn window_set_bounds(x: f64, y: f64, w: f64, h: f64) {
+        view::window_set_bounds(x, y, w, h);
+    }
+
+    /// The title of the current window.
+    fn window_title() -> String {
+        view::window_title()
+    }
+
+    /// Sets the title of the current window.
+    fn window_set_title(title: String) {
+        view::window_set_title(title);
+    }
+
+    /// Whether the current window is active.
+    fn window_is_active() -> bool {
+        view::window_is_active()
+    }
+
+    /// Whether the current window is hovered.
+    fn window_is_hovered() -> bool {
+        view::window_is_hovered()
+    }
+
+    /// Sets the pointer position in window coordinates.
+    fn window_set_mouse_position(x: f64, y: f64) {
+        view::window_set_mouse_position(x, y);
+    }
+
+    /// Gets the pointer position in window coordinates.
+    fn window_mouse_position() -> (f64, f64) {
+        view::mouse_position()
+    }
+
+    /// The primary display's id.
+    fn primary_display_id() -> i64 {
+        view::all_displays().first().map(|d| d.id).unwrap_or(1)
+    }
+
+    /// The bounds of a display as [x, y, w, h].
+    fn display_bounds(display_id: i64) -> Vec<f64> {
+        let (x, y, w, h) = view::display_bounds(display_id);
+        vec![x, y, w, h]
+    }
+
+    /// The color space name of a display.
+    fn display_color_space(display_id: i64) -> String {
+        view::display_color_space(display_id)
+    }
+
+    /// Whether a rectangular bound contains a given point.
+    fn bounds_contains(bx: f64, by: f64, bw: f64, bh: f64, px: f64, py: f64) -> bool {
+        view::bounds_contains(bx, by, bw, bh, px, py)
+    }
+
+    /// Calculates the center of rectangular bounds.
+    fn bounds_center(x: f64, y: f64, w: f64, h: f64) -> (f64, f64) {
+        view::bounds_center(x, y, w, h)
+    }
+
+    /// Reads clipboard text.
+    fn read_clipboard() -> String {
+        view::clipboard_text()
+    }
+
+    /// Writes clipboard text.
+    fn write_clipboard(text: String) {
+        view::set_clipboard_fallback(&text);
+        store::request(store::Request::SetClipboard { text });
+    }
+
+    /// Queues a path prompt.
+    fn prompt_for_paths(files: bool, directories: bool, multiple: bool, prompt: String) -> i64 {
+        let win = window::current();
+        prompts::ask_path_in(win, files, directories, multiple, &prompt)
+    }
+
+    /// Information about the current path prompt at the head of the queue.
+    fn prompt_for_paths_current() -> String {
+        let win = window::current();
+        prompts::head_path_in(win)
+            .map(|p| format!("{}|{}|{}|{}|{}", p.id, p.files, p.directories, p.multiple, p.prompt))
+            .unwrap_or_default()
+    }
+
+    /// Answers the head path prompt with a list of paths.
+    fn prompt_for_paths_answer(id: i64, paths: Vec<String>) -> bool {
+        let win = window::current();
+        prompts::answer_path_in(win, id, paths)
+    }
+
+    /// Queues a new path save prompt.
+    fn prompt_for_new_path(directory: String, suggested_name: String) -> i64 {
+        let win = window::current();
+        prompts::ask_new_path_in(win, &directory, &suggested_name)
+    }
+
+    /// Information about the current new path prompt at the head of the queue.
+    fn prompt_for_new_path_current() -> String {
+        let win = window::current();
+        prompts::head_new_path_in(win)
+            .map(|p| format!("{}|{}|{}", p.id, p.directory, p.suggested_name))
+            .unwrap_or_default()
+    }
+
+    /// Answers the head new path prompt with the chosen path.
+    fn prompt_for_new_path_answer(id: i64, path: String) -> bool {
+        let win = window::current();
+        prompts::answer_new_path_in(win, id, &path)
+    }
+
+    /// Registers a keystroke binding for an action identifier.
+    fn register_action(name: String, stroke: String) {
+        view::register_action(name, stroke);
+    }
+
+    /// Resolves an action identifier from a keystroke string.
+    fn resolve_action(stroke: String) -> String {
+        view::resolve_action(&stroke)
+    }
+
+    /// Dispatches an action event.
+    fn dispatch_action(action: String) -> bool {
+        view::dispatch_action(&action)
+    }
+
+    /// Creates an anchored container element.
+    fn anchored(corner: i64, x: f64, y: f64, offset_x: f64, offset_y: f64, style: String) -> i64 {
+        view::anchored(corner, x, y, offset_x, offset_y, &style)
+    }
+
+    /// Creates a deferred container element with priority.
+    fn deferred(priority: i64, style: String) -> i64 {
+        view::deferred(priority, &style)
     }
 );

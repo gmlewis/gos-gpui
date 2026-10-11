@@ -141,6 +141,7 @@ fn is_known(key: &str) -> bool {
         | "ellipsis" | "clamp" | "ws" | "textoverflow"
         | "roundedtl" | "roundedtr" | "roundedbl" | "roundedbr"
         | "focusable" | "tabstop" | "tabindex"
+        | "z_index" | "z-index" | "z" | "aspect_ratio" | "aspect-ratio" | "aspect" | "box_sizing" | "box-sizing"
         | "id"
         | "w_full" | "wfull" | "h_full" | "hfull" | "size_full" | "sizefull"
         // interaction refinements (handled by `view`, listed here so they are
@@ -568,7 +569,7 @@ fn decode_quoted(raw: &str) -> String {
     out
 }
 
-fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
+fn one<T: Styled>(mut el: T, key: &str, value: Option<&str>) -> T {
     let v = value.unwrap_or("");
     match key {
         // ---- display and container direction -------------------------
@@ -638,6 +639,12 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         "minh" => el.min_h(sized(v)),
         "maxh" => el.max_h(sized(v)),
         "basis" => el.flex_basis(sized(v)),
+        "aspect" | "aspect_ratio" | "aspect-ratio" => {
+            el.style().aspect_ratio = Some(num(v) as f32);
+            el
+        }
+        "box_sizing" | "box-sizing" => el,
+        "z" | "z_index" | "z-index" => el,
 
         // ---- positioning -------------------------------------------------
         "inset" => el.inset(sized(v)),

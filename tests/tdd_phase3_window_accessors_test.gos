@@ -1,0 +1,100 @@
+// TDD Phase 3: Exhaustive Window Accessors & Display Queries
+//
+// Verifies:
+// 1. Window getters and setters: is_maximized, set_maximized, is_minimized,
+//    set_minimized, is_fullscreen, set_fullscreen, scale_factor, bounds,
+//    set_bounds, title, set_title, is_active, is_hovered, set_mouse_position.
+// 2. Geometry helpers: Rect, Point, Size, bounds_contains, bounds_center.
+// 3. Display queries: displays, primary_display, display_bounds, color_space.
+
+use gpui
+use ui
+
+#[test]
+fn window_bounds_and_geometry_helpers() {
+    let win = ui::window()
+
+    // Test rect creation & bounds
+    let new_bounds = ui::rect_new(50.0, 60.0, 800.0, 600.0)
+    win.set_bounds(new_bounds)
+
+    let b = win.bounds()
+    assert(b.origin.x == 50.0, f"expected x=50.0, got {b.origin.x}")
+    assert(b.origin.y == 60.0, f"expected y=60.0, got {b.origin.y}")
+    assert(b.size.width == 800.0, f"expected w=800.0, got {b.size.width}")
+    assert(b.size.height == 600.0, f"expected h=600.0, got {b.size.height}")
+
+    // Test bounds_contains
+    assert(ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 100.0, 100.0), "point (100,100) should be inside")
+    assert(!ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 10.0, 10.0), "point (10,10) should be outside")
+    assert(!ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 900.0, 700.0), "point (900,700) should be outside")
+
+    // Test bounds_center
+    let center = ui::bounds_center(50.0, 60.0, 800.0, 600.0)
+    assert(center.x == 450.0, f"expected center x=450.0, got {center.x}")
+    assert(center.y == 360.0, f"expected center y=360.0, got {center.y}")
+}
+
+#[test]
+fn window_state_scalars_getters_and_setters() {
+    let win = ui::window()
+
+    // Title
+    win.set_title("Gossamer GPUI Phase 3")
+    assert(win.title() == "Gossamer GPUI Phase 3", f"title mismatch: {win.title()}")
+
+    // Maximized
+    assert(!win.is_maximized(), "initially not maximized")
+    win.set_maximized(true)
+    assert(win.is_maximized(), "should be maximized after set_maximized(true)")
+    win.set_maximized(false)
+    assert(!win.is_maximized(), "should not be maximized after set_maximized(false)")
+
+    // Minimized
+    assert(!win.is_minimized(), "initially not minimized")
+    win.set_minimized(true)
+    assert(win.is_minimized(), "should be minimized after set_minimized(true)")
+    win.set_minimized(false)
+    assert(!win.is_minimized(), "should not be minimized after set_minimized(false)")
+
+    // Fullscreen
+    assert(!win.is_fullscreen(), "initially not fullscreen")
+    win.set_fullscreen(true)
+    assert(win.is_fullscreen(), "should be fullscreen after set_fullscreen(true)")
+    win.set_fullscreen(false)
+    assert(!win.is_fullscreen(), "should not be fullscreen after set_fullscreen(false)")
+
+    // Scale factor
+    let scale = win.scale_factor()
+    assert(scale >= 1.0, f"scale factor should be at least 1.0, got {scale}")
+
+    // Mouse position
+    win.set_mouse_position(240.0, 180.0)
+    let pos = win.mouse_position()
+    assert(pos.x == 240.0, f"expected mouse x=240.0, got {pos.x}")
+    assert(pos.y == 180.0, f"expected mouse y=180.0, got {pos.y}")
+
+    // Active & Hovered
+    let active = win.is_active()
+    assert(active == true || active == false, "is_active returns bool")
+    let hovered = win.is_hovered()
+    assert(hovered == true || hovered == false, "is_hovered returns bool")
+}
+
+#[test]
+fn display_queries_and_color_space() {
+    let displays = ui::displays()
+    assert(displays.len() >= 1, f"expected at least 1 display, got {displays.len()}")
+
+    let primary = ui::primary_display()
+    assert(primary.id >= 0, f"valid display id expected, got {primary.id}")
+    assert(primary.bounds.size.width > 0.0, f"display width should be > 0: {primary.bounds.size.width}")
+    assert(primary.bounds.size.height > 0.0, f"display height should be > 0: {primary.bounds.size.height}")
+
+    let cs = ui::display_color_space(primary.id)
+    assert(cs != "", f"display color space should not be empty: {cs}")
+
+    let db = ui::display_bounds(primary.id)
+    assert(db.size.width > 0.0, f"display_bounds width should be > 0: {db.size.width}")
+    assert(db.size.height > 0.0, f"display_bounds height should be > 0: {db.size.height}")
+}

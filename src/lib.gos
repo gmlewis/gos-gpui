@@ -21,18 +21,28 @@
 //     prefix off every leaf inside a chain.
 
 use gpui
+use std::strconv
+use std::strings
 
-/// A handle to one element, distinct from every other `i64`.
-pub newtype El = i64
+/// A handle to one element in the scene graph.
+pub struct El {
+    pub handle: i64,
+}
+
+pub fn el(handle: i64) -> El {
+    El { handle: handle }
+}
 
 impl El {
+    pub fn handle(&self) -> i64 { self.handle }
+    pub fn into(&self) -> i64 { self.handle }
+    pub fn style_str(self) -> String { gpui::get_style(self.handle) }
+
     // ---- nesting ------------------------------------------------------
 
     /// Hang `child` under this element.
     pub fn child(&self, child: El) -> El {
-        let parent: i64 = self.into()
-        let kid: i64 = child.into()
-        gpui::child(parent, kid).into()
+        el(gpui::child(self.handle, child.handle))
     }
 
     /// Hang a whole run of elements under this one, in order — the shape a
@@ -40,9 +50,8 @@ impl El {
     ///
     ///     ui::row("gap=8").children(#[0, 1, 2].map(|i| chip(i)))
     pub fn children(&self, nodes: Vec<El>) -> El {
-        let parent: i64 = self.into()
         let handles: Vec<i64> = nodes.map(handle_of)
-        gpui::children(parent, handles).into()
+        el(gpui::children(self.handle, handles))
     }
 
     // ---- leaves -------------------------------------------------------
@@ -146,8 +155,7 @@ impl El {
     /// payload to `<id>.drag_value`, so a target knows *what* is over it, and
     /// `drag`/`over`/`out`/`drop` are the four words `kinds` reads.
     pub fn on_mouse(&self, kinds: String, id: String) -> El {
-        let handle: i64 = self.into()
-        gpui::on_mouse(handle, kinds, id).into()
+        el(gpui::on_mouse(self.handle, kinds, id))
     }
 
     /// Report pointer events for this element **wherever the pointer is**, not
@@ -170,8 +178,7 @@ impl El {
     /// this element's rectangle, which is what `gpui::element_bounds` reads
     /// back.
     pub fn on_mouse_window(&self, kinds: String, id: String) -> El {
-        let handle: i64 = self.into()
-        gpui::on_mouse_window(handle, kinds, id).into()
+        el(gpui::on_mouse_window(self.handle, kinds, id))
     }
 
     /// Paint a run of built paths — each entry in `backgrounds` lines up with
@@ -185,38 +192,194 @@ impl El {
     pub fn list(&self, id: String, count: i64, row_height: f64, style: String) -> El {
         self.child(list(id, count, row_height, style))
     }
+
+    /// Register a click listener closure on this element.
+    pub fn on_click(&self, listener: Fn(Event)) -> El {
+        on(self.handle, EVENT_CLICK, listener)
+        *self
+    }
+
+    /// Register a listener closure for an event kind on this element.
+    pub fn on_event(&self, kind: i64, listener: Fn(Event)) -> El {
+        on(self.handle, kind, listener)
+        *self
+    }
+
+    // ---- Fluent Style & Layout Chaining ------------------------------
+
+    // Display & Flex/Grid layout
+    pub fn flex_col(&self) -> El { add_style(*self, "col") }
+    pub fn flex_row(&self) -> El { add_style(*self, "row") }
+    pub fn flex_wrap(&self) -> El { add_style(*self, "wrap") }
+    pub fn flex_nowrap(&self) -> El { add_style(*self, "nowrap") }
+    pub fn flex_col_reverse(&self) -> El { add_style(*self, "col-reverse") }
+    pub fn flex_row_reverse(&self) -> El { add_style(*self, "row-reverse") }
+    pub fn flex_wrap_reverse(&self) -> El { add_style(*self, "wrap-reverse") }
+    pub fn grid(&self) -> El { add_style(*self, "grid") }
+    pub fn grid_cols(&self, n: i64) -> El { add_style(*self, f"gridcols={n}") }
+    pub fn grid_rows(&self, n: i64) -> El { add_style(*self, f"gridrows={n}") }
+    pub fn col_span(&self, n: i64) -> El { add_style(*self, f"colspan={n}") }
+    pub fn row_span(&self, n: i64) -> El { add_style(*self, f"rowspan={n}") }
+    pub fn col_span_full(&self) -> El { add_style(*self, "colspan=full") }
+    pub fn row_span_full(&self) -> El { add_style(*self, "rowspan=full") }
+
+    // Alignment & Flex behaviour
+    pub fn items_center(&self) -> El { add_style(*self, "items=center") }
+    pub fn items_start(&self) -> El { add_style(*self, "items=start") }
+    pub fn items_end(&self) -> El { add_style(*self, "items=end") }
+    pub fn items_baseline(&self) -> El { add_style(*self, "items=baseline") }
+    pub fn justify_center(&self) -> El { add_style(*self, "justify=center") }
+    pub fn justify_start(&self) -> El { add_style(*self, "justify=start") }
+    pub fn justify_end(&self) -> El { add_style(*self, "justify=end") }
+    pub fn justify_between(&self) -> El { add_style(*self, "justify=between") }
+    pub fn justify_around(&self) -> El { add_style(*self, "justify=around") }
+    pub fn grow(&self) -> El { add_style(*self, "grow") }
+    pub fn shrink(&self) -> El { add_style(*self, "shrink") }
+    pub fn basis(&self, v: f64) -> El { add_style(*self, f"basis={v}") }
+    pub fn aspect(&self, r: f64) -> El { add_style(*self, f"aspect={r}") }
+    pub fn aspect_ratio(&self, r: f64) -> El { add_style(*self, f"aspect_ratio={r}") }
+
+    // Sizing
+    pub fn w(&self, v: f64) -> El { add_style(*self, f"w={v}") }
+    pub fn h(&self, v: f64) -> El { add_style(*self, f"h={v}") }
+    pub fn size(&self, v: f64) -> El { add_style(*self, f"size={v}") }
+    pub fn w_full(&self) -> El { add_style(*self, "w_full") }
+    pub fn h_full(&self) -> El { add_style(*self, "h_full") }
+    pub fn size_full(&self) -> El { add_style(*self, "size_full") }
+    pub fn min_w(&self, v: f64) -> El { add_style(*self, f"minw={v}") }
+    pub fn max_w(&self, v: f64) -> El { add_style(*self, f"maxw={v}") }
+    pub fn min_h(&self, v: f64) -> El { add_style(*self, f"minh={v}") }
+    pub fn max_h(&self, v: f64) -> El { add_style(*self, f"maxh={v}") }
+
+    // Spacing
+    pub fn gap(&self, v: f64) -> El { add_style(*self, f"gap={v}") }
+    pub fn gap_x(&self, v: f64) -> El { add_style(*self, f"gapx={v}") }
+    pub fn gap_y(&self, v: f64) -> El { add_style(*self, f"gapy={v}") }
+    pub fn p(&self, v: f64) -> El { add_style(*self, f"p={v}") }
+    pub fn px(&self, v: f64) -> El { add_style(*self, f"px={v}") }
+    pub fn py(&self, v: f64) -> El { add_style(*self, f"py={v}") }
+    pub fn pt(&self, v: f64) -> El { add_style(*self, f"pt={v}") }
+    pub fn pb(&self, v: f64) -> El { add_style(*self, f"pb={v}") }
+    pub fn pl(&self, v: f64) -> El { add_style(*self, f"pl={v}") }
+    pub fn pr(&self, v: f64) -> El { add_style(*self, f"pr={v}") }
+    pub fn m(&self, v: f64) -> El { add_style(*self, f"m={v}") }
+    pub fn mx(&self, v: f64) -> El { add_style(*self, f"mx={v}") }
+    pub fn my(&self, v: f64) -> El { add_style(*self, f"my={v}") }
+    pub fn mt(&self, v: f64) -> El { add_style(*self, f"mt={v}") }
+    pub fn mb(&self, v: f64) -> El { add_style(*self, f"mb={v}") }
+    pub fn ml(&self, v: f64) -> El { add_style(*self, f"ml={v}") }
+    pub fn mr(&self, v: f64) -> El { add_style(*self, f"mr={v}") }
+
+    // Colors & Fills
+    pub fn bg(&self, color: String) -> El { add_style(*self, f"bg={color}") }
+    pub fn hover_bg(&self, color: String) -> El { add_style(*self, f"hover=bg:{color}") }
+    pub fn active_bg(&self, color: String) -> El { add_style(*self, f"active=bg:{color}") }
+    pub fn focus_bg(&self, color: String) -> El { add_style(*self, f"focus=bg:{color}") }
+    pub fn text_color(&self, color: String) -> El { add_style(*self, f"color={color}") }
+    pub fn color(&self, color: String) -> El { add_style(*self, f"color={color}") }
+
+    // Borders & Radii
+    pub fn border(&self, width: f64, color: String) -> El { add_style(*self, f"border={width} bordercolor={color}") }
+    pub fn border_width(&self, width: f64) -> El { add_style(*self, f"border={width}") }
+    pub fn border_color(&self, color: String) -> El { add_style(*self, f"bordercolor={color}") }
+    pub fn border_t(&self, width: f64) -> El { add_style(*self, f"bordert={width}") }
+    pub fn border_b(&self, width: f64) -> El { add_style(*self, f"borderb={width}") }
+    pub fn border_l(&self, width: f64) -> El { add_style(*self, f"borderl={width}") }
+    pub fn border_r(&self, width: f64) -> El { add_style(*self, f"borderr={width}") }
+    pub fn rounded(&self, r: f64) -> El { add_style(*self, f"rounded={r}") }
+    pub fn rounded_t(&self, r: f64) -> El { add_style(*self, f"roundedtl={r} roundedtr={r}") }
+    pub fn rounded_b(&self, r: f64) -> El { add_style(*self, f"roundedbl={r} roundedbr={r}") }
+    pub fn rounded_tl(&self, r: f64) -> El { add_style(*self, f"roundedtl={r}") }
+    pub fn rounded_tr(&self, r: f64) -> El { add_style(*self, f"roundedtr={r}") }
+    pub fn rounded_bl(&self, r: f64) -> El { add_style(*self, f"roundedbl={r}") }
+    pub fn rounded_br(&self, r: f64) -> El { add_style(*self, f"roundedbr={r}") }
+    pub fn rounded_full(&self) -> El { add_style(*self, "rounded=full") }
+    pub fn rounded_none(&self) -> El { add_style(*self, "rounded=none") }
+
+    // Shadows & Effects
+    pub fn shadow_xs(&self) -> El { add_style(*self, "shadow=xs") }
+    pub fn shadow_sm(&self) -> El { add_style(*self, "shadow=sm") }
+    pub fn shadow_md(&self) -> El { add_style(*self, "shadow=md") }
+    pub fn shadow_lg(&self) -> El { add_style(*self, "shadow=lg") }
+    pub fn shadow_xl(&self) -> El { add_style(*self, "shadow=xl") }
+    pub fn shadow_2xl(&self) -> El { add_style(*self, "shadow=2xl") }
+    pub fn shadow_none(&self) -> El { add_style(*self, "shadow=none") }
+    pub fn opacity(&self, f: f64) -> El { add_style(*self, f"opacity={f}") }
+    pub fn z(&self, index: i64) -> El { add_style(*self, f"z={index}") }
+    pub fn z_index(&self, index: i64) -> El { add_style(*self, f"z_index={index}") }
+
+    // Typography
+    pub fn text_xs(&self) -> El { add_style(*self, "font=xs") }
+    pub fn text_sm(&self) -> El { add_style(*self, "font=sm") }
+    pub fn text_base(&self) -> El { add_style(*self, "font=base") }
+    pub fn text_lg(&self) -> El { add_style(*self, "font=lg") }
+    pub fn text_xl(&self) -> El { add_style(*self, "font=xl") }
+    pub fn text_2xl(&self) -> El { add_style(*self, "font=2xl") }
+    pub fn text_3xl(&self) -> El { add_style(*self, "font=3xl") }
+    pub fn font_bold(&self) -> El { add_style(*self, "bold") }
+    pub fn font_semibold(&self) -> El { add_style(*self, "semibold") }
+    pub fn font_italic(&self) -> El { add_style(*self, "italic") }
+    pub fn font_family(&self, fam: String) -> El { add_style(*self, f"font={fam}") }
+    pub fn font_size(&self, sz: f64) -> El { add_style(*self, f"fs={sz}") }
+    pub fn line_height(&self, lh: f64) -> El { add_style(*self, f"lh={lh}") }
+    pub fn truncate(&self) -> El { add_style(*self, "truncate") }
+
+    // Visibility & Positioning
+    pub fn visible(&self) -> El { add_style(*self, "visible") }
+    pub fn hidden(&self) -> El { add_style(*self, "hidden") }
+    pub fn absolute(&self) -> El { add_style(*self, "absolute") }
+    pub fn relative(&self) -> El { add_style(*self, "relative") }
+}
+
+fn add_style(el: El, token: String) -> El {
+    let _ = gpui::append_style(el.handle, token)
+    el
 }
 
 /// The handle inside an `El`, for a run of them.
-pub fn handle_of(el: El) -> i64 { el.into() }
+pub fn handle_of(el: El) -> i64 { el.handle }
+
+/// The style string accumulated on an `El`.
+pub fn style_of(el: El) -> String {
+    gpui::get_style(el.handle)
+}
+
+// ---- Pipe Syntax Helpers ----------------------------------------------
+
+pub fn with_padding(el: El, pad: f64) -> El { el.p(pad) }
+pub fn with_opacity(el: El, op: f64) -> El { el.opacity(op) }
+pub fn with_bg(el: El, color: String) -> El { el.bg(color) }
 
 // ---- containers -------------------------------------------------------
 
-pub fn column(style: String) -> El { gpui::column(style).into() }
+/// Create a new generic div container element.
+pub fn div() -> El { el(gpui::column("")) }
 
-pub fn row(style: String) -> El { gpui::row(style).into() }
+pub fn column(style: String) -> El { el(gpui::column(style)) }
 
-pub fn panel(style: String) -> El { gpui::panel(style).into() }
+pub fn row(style: String) -> El { el(gpui::row(style)) }
 
-pub fn stack(style: String) -> El { gpui::stack(style).into() }
+pub fn panel(style: String) -> El { el(gpui::panel(style)) }
 
-pub fn scroll(style: String) -> El { gpui::scroll(style).into() }
+pub fn stack(style: String) -> El { el(gpui::stack(style)) }
+
+pub fn scroll(style: String) -> El { el(gpui::scroll(style)) }
 
 // ---- leaves -----------------------------------------------------------
 
-pub fn text(content: String, style: String) -> El { gpui::text(content, style).into() }
+pub fn text(content: String, style: String) -> El { el(gpui::text(content, style)) }
 
 /// Text with per-byte-range highlights: `"0-1 bold"`, `"2-3 italic"`.
 pub fn styled_text(content: String, highlights: Vec<String>, style: String) -> El {
-    gpui::text_styled(content, highlights, style).into()
+    el(gpui::text_styled(content, highlights, style))
 }
 
 pub fn button(id: String, label: String, style: String) -> El {
-    gpui::button(id, label, style).into()
+    el(gpui::button(id, label, style))
 }
 
 pub fn checkbox(id: String, label: String, checked: bool, style: String) -> El {
-    gpui::checkbox(id, label, checked, style).into()
+    el(gpui::checkbox(id, label, checked, style))
 }
 
 /// Raise every keystroke the window receives as `"<id>|<unparsed>"`. See
@@ -233,22 +396,22 @@ pub fn keyboard_layout() -> String {
 /// A full text editor: caret, selection, clipboard, IME, undo-free editing.
 /// The widget lives in the binding — see `gpui::editor`.
 pub fn editor(key: String, placeholder: String, style: String) -> El {
-    gpui::editor(key, placeholder, style).into()
+    el(gpui::editor(key, placeholder, style))
 }
 
 pub fn input(key: String, placeholder: String, style: String) -> El {
-    gpui::input(key, placeholder, style).into()
+    el(gpui::input(key, placeholder, style))
 }
 
 pub fn slider(key: String, min: f64, max: f64, style: String) -> El {
-    gpui::slider(key, min, max, style).into()
+    el(gpui::slider(key, min, max, style))
 }
 
-pub fn progress(value: f64, style: String) -> El { gpui::progress(value, style).into() }
+pub fn progress(value: f64, style: String) -> El { el(gpui::progress(value, style)) }
 
-pub fn icon(path: String, style: String) -> El { gpui::icon(path, style).into() }
+pub fn icon(path: String, style: String) -> El { el(gpui::icon(path, style)) }
 
-pub fn image(path: String, style: String) -> El { gpui::image(path, style).into() }
+pub fn image(path: String, style: String) -> El { el(gpui::image(path, style)) }
 
 /// An image that draws one of two subtrees in the picture's place: `loading`
 /// while the load is in flight and past GPUI's `LOADING_DELAY` (200ms), and
@@ -264,39 +427,39 @@ pub fn image(path: String, style: String) -> El { gpui::image(path, style).into(
 /// `loading`, `fallback` or `blank` — and `gpui::image_evict(path)` throws the
 /// loaded bytes away so the next frame loads again.
 pub fn image_request(path: String, style: String, loading: Option<El>, fallback: Option<El>) -> El {
-    gpui::image_request(path, style, subtree_of(loading), subtree_of(fallback)).into()
+    el(gpui::image_request(path, style, subtree_of(loading), subtree_of(fallback)))
 }
 
 /// A subtree handle, or `0` for "none" — the binding's own spelling of it.
 fn subtree_of(el: Option<El>) -> i64 {
     let mut handle: i64 = 0
     if let Some(node) = el {
-        handle = handle_of(node)
+        handle = node.handle
     }
     handle
 }
 
-pub fn rect(style: String) -> El { gpui::rect(style).into() }
+pub fn rect(style: String) -> El { el(gpui::rect(style)) }
 
-pub fn divider(style: String) -> El { gpui::divider(style).into() }
+pub fn divider(style: String) -> El { el(gpui::divider(style)) }
 
-pub fn spacer(size: f64) -> El { gpui::spacer(size).into() }
+pub fn spacer(size: f64) -> El { el(gpui::spacer(size)) }
 
 pub fn draw(painter: String, phase: f64, style: String) -> El {
-    gpui::draw(painter, phase, style).into()
+    el(gpui::draw(painter, phase, style))
 }
 
 /// A virtualised list. Its rows come from the row builder handed to
 /// `gpui::run_with_rows` — which is why a program that draws one starts with
 /// `run_with_rows` rather than `run`.
 pub fn list(id: String, count: i64, row_height: f64, style: String) -> El {
-    gpui::list(id, count, row_height, style).into()
+    el(gpui::list(id, count, row_height, style))
 }
 
 /// A painted surface. Build its paths with `gpui::path_fill` /
 /// `gpui::path_line_to` / `gpui::path_build`, then hand them over here.
 pub fn paths(handles: Vec<i64>, backgrounds: Vec<String>, style: String) -> El {
-    gpui::paint_paths(handles, backgrounds, style).into()
+    el(gpui::paint_paths(handles, backgrounds, style))
 }
 
 /// Raise an event from inside a frame. See `gpui::emit`.
@@ -317,8 +480,7 @@ pub fn open_window(title: String, x: f64, y: f64, w: f64, h: f64, options: Strin
 
 /// Report pointer events for a whole element. See `El::on_mouse`.
 pub fn on_mouse(element: El, kinds: String, id: String) -> El {
-    let handle: i64 = element.into()
-    gpui::on_mouse(handle, kinds, id).into()
+    el(gpui::on_mouse(element.handle, kinds, id))
 }
 
 // ---- the last step ----------------------------------------------------
@@ -326,6 +488,631 @@ pub fn on_mouse(element: El, kinds: String, id: String) -> El {
 /// Name `el` as the window's root for this frame. A frame is a chain, so this
 /// is its last link: `… |> ui::root`.
 pub fn root(el: El) {
-    let handle: i64 = el.into()
-    gpui::root(handle)
+    gpui::root(el.handle)
+}
+
+// ---- Event Inversion & Reactive State Engine --------------------------
+
+pub const EVENT_CLICK: i64 = 1
+pub const EVENT_DOUBLE_CLICK: i64 = 2
+pub const EVENT_MOUSE_DOWN: i64 = 3
+pub const EVENT_MOUSE_UP: i64 = 4
+pub const EVENT_MOUSE_MOVE: i64 = 5
+pub const EVENT_KEY_DOWN: i64 = 6
+pub const EVENT_DRAG: i64 = 7
+pub const EVENT_DROP: i64 = 8
+pub const EVENT_CUSTOM: i64 = 100
+
+pub struct Event {
+    pub target_id: i64,
+    pub kind: i64,
+    pub payload_i64: i64,
+    pub payload_f64: f64,
+    pub payload_str: String,
+}
+
+pub fn new_event(target_id: i64, kind: i64, p_i64: i64, p_f64: f64, p_str: String) -> Event {
+    Event {
+        target_id: target_id,
+        kind: kind,
+        payload_i64: p_i64,
+        payload_f64: p_f64,
+        payload_str: p_str,
+    }
+}
+
+pub fn parse_event(raw: String) -> Event {
+    let parts = strings::split(raw, "|")
+    let target_id = if parts.len() > 0 {
+        match strconv::parse_i64(parts[0]) {
+            Ok(v) => v,
+            Err(_) => 0,
+        }
+    } else {
+        0
+    }
+
+    let kind = if parts.len() > 1 {
+        match strconv::parse_i64(parts[1]) {
+            Ok(v) => v,
+            Err(_) => 0,
+        }
+    } else {
+        0
+    }
+
+    let payload_i64 = if parts.len() > 2 {
+        match strconv::parse_i64(parts[2]) {
+            Ok(v) => v,
+            Err(_) => 0,
+        }
+    } else {
+        0
+    }
+
+    let payload_f64 = if parts.len() > 3 {
+        match strconv::parse_f64(parts[3]) {
+            Ok(v) => v,
+            Err(_) => 0.0,
+        }
+    } else {
+        0.0
+    }
+
+    let payload_str = if parts.len() > 4 {
+        let mut rest = parts[4]
+        let mut idx = 5
+        while idx < parts.len() {
+            rest = rest + "|" + parts[idx]
+            idx += 1
+        }
+        rest
+    } else {
+        ""
+    }
+
+    Event {
+        target_id: target_id,
+        kind: kind,
+        payload_i64: payload_i64,
+        payload_f64: payload_f64,
+        payload_str: payload_str,
+    }
+}
+
+/// Polls and drains all pending events from the Rust event queue ring buffer.
+pub fn poll_events() -> Vec<Event> {
+    let raw = gpui::poll_events()
+    let mut events: Vec<Event> = Vec::from([])
+    for item in raw {
+        events.push(parse_event(item))
+    }
+    events
+}
+
+/// Pushes an event descriptor into the Rust event queue ring buffer.
+pub fn push_event(target_id: i64, kind: i64, p_i64: i64, p_f64: f64, p_str: String) {
+    gpui::push_event(target_id, kind, p_i64, p_f64, p_str)
+}
+
+struct ListenerEntry {
+    target_id: i64,
+    kind: i64,
+    cb: Fn(Event),
+}
+
+static mut LISTENERS: Vec<ListenerEntry> = #[]
+
+/// Register an event callback for a specific target element handle and event kind.
+pub fn on(target_id: i64, kind: i64, listener: Fn(Event)) {
+    LISTENERS.push(ListenerEntry {
+        target_id: target_id,
+        kind: kind,
+        cb: listener,
+    })
+}
+
+/// Convenience helper to register a click listener for a target.
+pub fn on_click(target_id: i64, listener: Fn(Event)) {
+    on(target_id, EVENT_CLICK, listener)
+}
+
+/// Clear all registered event listeners.
+pub fn clear_listeners() {
+    LISTENERS = #[]
+}
+
+/// Dispatches a single event to all matching registered listeners.
+pub fn dispatch_event(ev: Event) {
+    for entry in LISTENERS {
+        if entry.target_id == ev.target_id && entry.kind == ev.kind {
+            let callback = entry.cb
+            callback(ev)
+        }
+    }
+}
+
+/// Polls the event queue and dispatches all events to registered listeners, answering the count.
+pub fn poll_and_dispatch() -> i64 {
+    let events = poll_events()
+    let mut count: i64 = 0
+    for ev in events {
+        dispatch_event(ev)
+        count += 1
+    }
+    count
+}
+
+static mut NEXT_MODEL_ID: i64 = 1
+
+fn next_model_id() -> i64 {
+    NEXT_MODEL_ID += 1
+    NEXT_MODEL_ID
+}
+
+/// Reactive Model holding state of type T in Gossamer.
+pub struct Model<T> {
+    pub id: i64,
+    pub state: T,
+    pub listeners: Vec<Fn(T)>,
+    pub window_id: i64,
+}
+
+impl<T> Model<T> {
+    pub fn read(&self) -> T {
+        self.state
+    }
+
+    pub fn get(&self) -> T {
+        self.state
+    }
+
+    pub fn set(&mut self, new_state: T) {
+        self.state = new_state
+        self.notify()
+    }
+
+    pub fn update(&mut self, f: Fn(T) -> T) {
+        self.state = f(self.state)
+        self.notify()
+    }
+
+    pub fn subscribe(&mut self, listener: Fn(T)) {
+        self.listeners.push(listener)
+    }
+
+    pub fn notify(&self) {
+        for listener in self.listeners {
+            let cb = listener
+            cb(self.state)
+        }
+        if self.window_id != 0 {
+            gpui::notify_window(self.window_id)
+        } else {
+            gpui::notify(self.id)
+        }
+    }
+}
+
+/// Creates a reactive Model initialized with `initial`.
+pub fn create_model<T>(initial: T) -> Model<T> {
+    Model {
+        id: next_model_id(),
+        state: initial,
+        listeners: #[],
+        window_id: 0,
+    }
+}
+
+/// Creates a reactive Model attached to a specific window.
+pub fn create_model_for_window<T>(initial: T, window_id: i64) -> Model<T> {
+    Model {
+        id: next_model_id(),
+        state: initial,
+        listeners: #[],
+        window_id: window_id,
+    }
+}
+
+/// Reactive Store wrapper around a Model.
+pub struct Store<T> {
+    pub model: Model<T>,
+}
+
+impl<T> Store<T> {
+    pub fn get(&self) -> T {
+        self.model.get()
+    }
+
+    pub fn set(&mut self, state: T) {
+        self.model.set(state)
+    }
+
+    pub fn update(&mut self, f: Fn(T) -> T) {
+        self.model.update(f)
+    }
+
+    pub fn subscribe(&mut self, listener: Fn(T)) {
+        self.model.subscribe(listener)
+    }
+}
+
+/// Creates a Store initialized with `initial`.
+pub fn create_store<T>(initial: T) -> Store<T> {
+    Store {
+        model: create_model(initial),
+    }
+}
+
+// ============================================================
+// Phase 3: Geometry, Window, Display & Platform Services
+// ============================================================
+
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+pub struct Size {
+    pub width: f64,
+    pub height: f64,
+}
+
+pub struct Rect {
+    pub origin: Point,
+    pub size: Size,
+}
+
+pub fn point_new(x: f64, y: f64) -> Point {
+    Point { x: x, y: y }
+}
+
+pub fn size_new(width: f64, height: f64) -> Size {
+    Size { width: width, height: height }
+}
+
+pub fn rect_new(x: f64, y: f64, width: f64, height: f64) -> Rect {
+    Rect {
+        origin: Point { x: x, y: y },
+        size: Size { width: width, height: height },
+    }
+}
+
+pub fn bounds_contains(bx: f64, by: f64, bw: f64, bh: f64, px: f64, py: f64) -> bool {
+    gpui::bounds_contains(bx, by, bw, bh, px, py)
+}
+
+pub fn bounds_center(x: f64, y: f64, w: f64, h: f64) -> Point {
+    let pair = gpui::bounds_center(x, y, w, h)
+    Point { x: pair.0, y: pair.1 }
+}
+
+pub struct Window {
+    pub id: i64,
+}
+
+impl Window {
+    pub fn is_maximized(self) -> bool {
+        gpui::window_is_maximized()
+    }
+
+    pub fn set_maximized(self, max: bool) {
+        gpui::window_set_maximized(max)
+    }
+
+    pub fn is_minimized(self) -> bool {
+        gpui::window_is_minimized()
+    }
+
+    pub fn set_minimized(self, min: bool) {
+        gpui::window_set_minimized(min)
+    }
+
+    pub fn is_fullscreen(self) -> bool {
+        gpui::window_is_fullscreen()
+    }
+
+    pub fn set_fullscreen(self, fs: bool) {
+        gpui::window_set_fullscreen(fs)
+    }
+
+    pub fn scale_factor(self) -> f64 {
+        gpui::window_scale_factor()
+    }
+
+    pub fn bounds(self) -> Rect {
+        let b = gpui::window_bounds()
+        if b.len() >= 4 {
+            rect_new(b[0], b[1], b[2], b[3])
+        } else {
+            rect_new(0.0, 0.0, 800.0, 600.0)
+        }
+    }
+
+    pub fn set_bounds(self, rect: Rect) {
+        gpui::window_set_bounds(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+    }
+
+    pub fn title(self) -> String {
+        gpui::window_title()
+    }
+
+    pub fn set_title(self, title: String) {
+        gpui::window_set_title(title)
+    }
+
+    pub fn is_active(self) -> bool {
+        gpui::window_is_active()
+    }
+
+    pub fn is_hovered(self) -> bool {
+        gpui::window_is_hovered()
+    }
+
+    pub fn set_mouse_position(self, x: f64, y: f64) {
+        gpui::window_set_mouse_position(x, y)
+    }
+
+    pub fn mouse_position(self) -> Point {
+        let p = gpui::window_mouse_position()
+        Point { x: p.0, y: p.1 }
+    }
+}
+
+pub fn window() -> Window {
+    Window { id: gpui::window_id() }
+}
+
+pub fn current_window() -> Window {
+    Window { id: gpui::window_id() }
+}
+
+pub struct Display {
+    pub id: i64,
+    pub bounds: Rect,
+    pub color_space: String,
+}
+
+pub fn displays() -> Vec<Display> {
+    let count = gpui::display_count()
+    let mut list: Vec<Display> = Vec::from([])
+    let mut i = 0
+    while i < count {
+        let id = gpui::display_field(i, "id") as i64
+        let x = gpui::display_field(i, "x")
+        let y = gpui::display_field(i, "y")
+        let w = gpui::display_field(i, "w")
+        let h = gpui::display_field(i, "h")
+        let cs = gpui::display_color_space(id)
+        list.push(Display {
+            id: id,
+            bounds: rect_new(x, y, w, h),
+            color_space: cs,
+        })
+        i += 1
+    }
+    if list.len() == 0 {
+        let primary_id = gpui::primary_display_id()
+        let b = gpui::display_bounds(primary_id)
+        let r = if b.len() >= 4 {
+            rect_new(b[0], b[1], b[2], b[3])
+        } else {
+            rect_new(0.0, 0.0, 1920.0, 1080.0)
+        }
+        list.push(Display {
+            id: primary_id,
+            bounds: r,
+            color_space: gpui::display_color_space(primary_id),
+        })
+    }
+    list
+}
+
+pub fn primary_display() -> Display {
+    let all = displays()
+    if all.len() > 0 {
+        all[0]
+    } else {
+        let id = gpui::primary_display_id()
+        let b = gpui::display_bounds(id)
+        let r = if b.len() >= 4 {
+            rect_new(b[0], b[1], b[2], b[3])
+        } else {
+            rect_new(0.0, 0.0, 1920.0, 1080.0)
+        }
+        Display {
+            id: id,
+            bounds: r,
+            color_space: gpui::display_color_space(id),
+        }
+    }
+}
+
+pub fn display_bounds(display_id: i64) -> Rect {
+    let b = gpui::display_bounds(display_id)
+    if b.len() >= 4 {
+        rect_new(b[0], b[1], b[2], b[3])
+    } else {
+        rect_new(0.0, 0.0, 1920.0, 1080.0)
+    }
+}
+
+pub fn display_color_space(display_id: i64) -> String {
+    gpui::display_color_space(display_id)
+}
+
+pub fn read_clipboard() -> String {
+    gpui::read_clipboard()
+}
+
+pub fn write_clipboard(text: String) {
+    gpui::write_clipboard(text)
+}
+
+pub struct PathPromptOptions {
+    pub files: bool,
+    pub directories: bool,
+    pub multiple: bool,
+    pub prompt: String,
+}
+
+pub fn prompt_for_paths(opts: PathPromptOptions) -> i64 {
+    gpui::prompt_for_paths(opts.files, opts.directories, opts.multiple, opts.prompt)
+}
+
+pub fn prompt_for_paths_current() -> String {
+    gpui::prompt_for_paths_current()
+}
+
+pub fn prompt_for_paths_answer(id: i64, paths: Vec<String>) -> bool {
+    gpui::prompt_for_paths_answer(id, paths)
+}
+
+pub struct NewPathPromptOptions {
+    pub directory: String,
+    pub suggested_name: String,
+}
+
+pub fn prompt_for_new_path(opts: NewPathPromptOptions) -> i64 {
+    gpui::prompt_for_new_path(opts.directory, opts.suggested_name)
+}
+
+pub fn prompt_for_new_path_current() -> String {
+    gpui::prompt_for_new_path_current()
+}
+
+pub fn prompt_for_new_path_answer(id: i64, path: String) -> bool {
+    gpui::prompt_for_new_path_answer(id, path)
+}
+
+pub fn register_action(name: String, stroke: String) {
+    gpui::register_action(name, stroke)
+}
+
+pub fn resolve_action(stroke: String) -> String {
+    gpui::resolve_action(stroke)
+}
+
+pub fn dispatch_action(action: String) -> bool {
+    gpui::dispatch_action(action)
+}
+
+// ============================================================
+// Phase 4: Vector Canvas Drawing & Advanced Elements
+// ============================================================
+
+pub struct PathContext {
+    pub handle: i64,
+    pub is_stroke: bool,
+    pub color: String,
+}
+
+impl PathContext {
+    pub fn move_to(self, x: f64, y: f64) -> PathContext {
+        gpui::path_move_to(self.handle, x, y)
+        self
+    }
+
+    pub fn line_to(self, x: f64, y: f64) -> PathContext {
+        gpui::path_line_to(self.handle, x, y)
+        self
+    }
+
+    pub fn curve_to(self, x: f64, y: f64, ctrl_x: f64, ctrl_y: f64) -> PathContext {
+        gpui::path_curve_to(self.handle, x, y, ctrl_x, ctrl_y)
+        self
+    }
+
+    pub fn cubic_to(self, x: f64, y: f64, ctrl1_x: f64, ctrl1_y: f64, ctrl2_x: f64, ctrl2_y: f64) -> PathContext {
+        gpui::path_cubic_to(self.handle, x, y, ctrl1_x, ctrl1_y, ctrl2_x, ctrl2_y)
+        self
+    }
+
+    pub fn arc_to(self, rx: f64, ry: f64, x_rot: f64, large_arc: bool, sweep: bool, x: f64, y: f64) -> PathContext {
+        gpui::path_arc_to(self.handle, rx, ry, x_rot, large_arc, sweep, x, y)
+        self
+    }
+
+    pub fn close(self) -> PathContext {
+        gpui::path_close(self.handle)
+        self
+    }
+
+    pub fn stroke(self, color: String, width: f64) -> PathContext {
+        gpui::path_close(self.handle)
+        self
+    }
+
+    pub fn fill(self, color: String) -> PathContext {
+        gpui::path_close(self.handle)
+        self
+    }
+}
+
+pub struct CanvasContext {
+    pub paths: Vec<i64>,
+    pub backgrounds: Vec<String>,
+}
+
+impl CanvasContext {
+    pub fn begin_stroke(&mut self, width: f64, color: String) -> PathContext {
+        let h = gpui::path_stroke(width)
+        self.paths.push(h)
+        self.backgrounds.push(color.clone())
+        PathContext { handle: h, is_stroke: true, color: color }
+    }
+
+    pub fn begin_fill(&mut self, color: String) -> PathContext {
+        let h = gpui::path_fill()
+        self.paths.push(h)
+        self.backgrounds.push(color.clone())
+        PathContext { handle: h, is_stroke: false, color: color }
+    }
+
+    pub fn begin_path(&mut self) -> PathContext {
+        self.begin_stroke(1.0, "#ffffff")
+    }
+}
+
+pub fn canvas(f: Fn(&mut CanvasContext)) -> El {
+    let mut cx = CanvasContext {
+        paths: #[],
+        backgrounds: #[],
+    }
+    f(&mut cx)
+    for h in cx.paths {
+        let _ = gpui::path_build(h)
+    }
+    el(gpui::paint_paths(cx.paths, cx.backgrounds, ""))
+}
+
+pub fn label(content: String) -> El {
+    el(gpui::text(content, ""))
+}
+
+pub const ANCHOR_TOP_LEFT: i64 = 0
+pub const ANCHOR_TOP_RIGHT: i64 = 1
+pub const ANCHOR_BOTTOM_LEFT: i64 = 2
+pub const ANCHOR_BOTTOM_RIGHT: i64 = 3
+
+pub fn anchored(corner: i64, x: f64, y: f64, content: El) -> El {
+    let h = gpui::anchored(corner, x, y, 0.0, 0.0, "")
+    let _ = gpui::children(h, #[content.handle])
+    el(h)
+}
+
+pub fn anchored_with_offset(corner: i64, x: f64, y: f64, offset_x: f64, offset_y: f64, content: El) -> El {
+    let h = gpui::anchored(corner, x, y, offset_x, offset_y, "")
+    let _ = gpui::children(h, #[content.handle])
+    el(h)
+}
+
+pub fn deferred(priority: i64, content: El) -> El {
+    let h = gpui::deferred(priority, "")
+    let _ = gpui::children(h, #[content.handle])
+    el(h)
+}
+
+pub fn modal(content: El) -> El {
+    deferred(100, content)
 }

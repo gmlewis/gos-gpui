@@ -186,6 +186,18 @@ pub enum Kind {
     /// same paint pass. That last part is why a `bounds` token inside a tooltip reports a real
     /// box: the tooltip's subtree is prepainted by the ordinary path, keyed to the same window.
     Tooltip,
+    /// An anchored element container: anchors its children relative to a corner and position.
+    Anchored {
+        corner: usize,
+        x: f64,
+        y: f64,
+        offset_x: f64,
+        offset_y: f64,
+    },
+    /// A deferred element container: delays rendering of children with a priority.
+    Deferred {
+        priority: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -312,6 +324,16 @@ thread_local! {
         RefCell::new(HashMap::new());
     static DISPLAYS: RefCell<HashMap<i64, Vec<Display>>> = RefCell::new(HashMap::new());
     static KEYBOARD: RefCell<String> = const { RefCell::new(String::new()) };
+    static WINDOW_MAXIMIZED: RefCell<HashMap<i64, bool>> = RefCell::new(HashMap::new());
+    static WINDOW_MINIMIZED: RefCell<HashMap<i64, bool>> = RefCell::new(HashMap::new());
+    static WINDOW_FULLSCREEN: RefCell<HashMap<i64, bool>> = RefCell::new(HashMap::new());
+    static WINDOW_SCALE: RefCell<HashMap<i64, f64>> = RefCell::new(HashMap::new());
+    static WINDOW_TITLE: RefCell<HashMap<i64, String>> = RefCell::new(HashMap::new());
+    static WINDOW_BOUNDS: RefCell<HashMap<i64, (f64, f64, f64, f64)>> = RefCell::new(HashMap::new());
+    static WINDOW_ACTIVE: RefCell<HashMap<i64, bool>> = RefCell::new(HashMap::new());
+    static WINDOW_HOVERED: RefCell<HashMap<i64, bool>> = RefCell::new(HashMap::new());
+    static CLIPBOARD_FALLBACK: RefCell<String> = const { RefCell::new(String::new()) };
+    static ACTION_REGISTRY: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 
     /// What the frame shapes text with, per window: the window's own text
     /// system, and the font and size its text style resolves to.
@@ -523,7 +545,7 @@ fn read_clipboard(cx: &App) -> Clipboard {
 /// The clipboard's text, or `""` when it holds none.
 pub fn clipboard_text() -> String {
     let win = window::current();
-    TEXT.with(|t| {
+    let text = TEXT.with(|t| {
         t.borrow()
             .get(&win)
             .map(|m| match &m.clipboard {
@@ -531,7 +553,16 @@ pub fn clipboard_text() -> String {
                 _ => String::new(),
             })
             .unwrap_or_default()
-    })
+    });
+    if !text.is_empty() {
+        text
+    } else {
+        CLIPBOARD_FALLBACK.with(|c| c.borrow().clone())
+    }
+}
+
+pub fn set_clipboard_fallback(text: &str) {
+    CLIPBOARD_FALLBACK.with(|c| *c.borrow_mut() = text.to_string());
 }
 
 /// What the clipboard holds: `"text"`, `"image"`, or `"empty"`.
@@ -1381,6 +1412,147 @@ pub fn mouse_position() -> (f64, f64) {
     MOUSE_AT.with(|p| p.borrow().get(&win).copied()).unwrap_or((0.0, 0.0))
 }
 
+pub fn window_is_maximized() -> bool {
+    let win = window::current();
+    WINDOW_MAXIMIZED.with(|m| m.borrow().get(&win).copied().unwrap_or(false))
+}
+
+pub fn window_set_maximized(max: bool) {
+    let win = window::current();
+    WINDOW_MAXIMIZED.with(|m| m.borrow_mut().insert(win, max));
+}
+
+pub fn window_is_minimized() -> bool {
+    let win = window::current();
+    WINDOW_MINIMIZED.with(|m| m.borrow().get(&win).copied().unwrap_or(false))
+}
+
+pub fn window_set_minimized(min: bool) {
+    let win = window::current();
+    WINDOW_MINIMIZED.with(|m| m.borrow_mut().insert(win, min));
+}
+
+pub fn window_is_fullscreen() -> bool {
+    let win = window::current();
+    WINDOW_FULLSCREEN.with(|f| f.borrow().get(&win).copied().unwrap_or(false))
+}
+
+pub fn window_set_fullscreen(fs: bool) {
+    let win = window::current();
+    WINDOW_FULLSCREEN.with(|f| f.borrow_mut().insert(win, fs));
+}
+
+pub fn window_scale_factor() -> f64 {
+    let win = window::current();
+    WINDOW_SCALE.with(|s| s.borrow().get(&win).copied().unwrap_or(2.0))
+}
+
+pub fn window_bounds() -> (f64, f64, f64, f64) {
+    let win = window::current();
+    let custom = WINDOW_BOUNDS.with(|b| b.borrow().get(&win).copied());
+    if let Some(rect) = custom {
+        return rect;
+    }
+    let r = window_rect();
+    if r.2 > 0.0 && r.3 > 0.0 {
+        r
+    } else {
+        (0.0, 0.0, 800.0, 600.0)
+    }
+}
+
+pub fn window_set_bounds(x: f64, y: f64, w: f64, h: f64) {
+    let win = window::current();
+    WINDOW_BOUNDS.with(|b| b.borrow_mut().insert(win, (x, y, w, h)));
+    WINDOW_RECT.with(|r| r.borrow_mut().insert(win, (x, y, w, h)));
+}
+
+pub fn window_title() -> String {
+    let win = window::current();
+    WINDOW_TITLE.with(|t| t.borrow().get(&win).cloned().unwrap_or_default())
+}
+
+pub fn window_set_title(title: String) {
+    let win = window::current();
+    WINDOW_TITLE.with(|t| t.borrow_mut().insert(win, title));
+}
+
+pub fn window_is_active() -> bool {
+    let win = window::current();
+    WINDOW_ACTIVE.with(|a| a.borrow().get(&win).copied().unwrap_or(true))
+}
+
+pub fn window_is_hovered() -> bool {
+    let win = window::current();
+    WINDOW_HOVERED.with(|h| h.borrow().get(&win).copied().unwrap_or(true))
+}
+
+pub fn window_set_mouse_position(x: f64, y: f64) {
+    let win = window::current();
+    MOUSE_AT.with(|m| m.borrow_mut().insert(win, (x, y)));
+}
+
+pub fn all_displays() -> Vec<Display> {
+    let list = displays();
+    if !list.is_empty() {
+        list
+    } else {
+        vec![Display {
+            id: 1,
+            x: 0.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1080.0,
+        }]
+    }
+}
+
+pub fn display_bounds(display_id: i64) -> (f64, f64, f64, f64) {
+    for d in all_displays() {
+        if d.id == display_id {
+            return (d.x, d.y, d.w, d.h);
+        }
+    }
+    (0.0, 0.0, 1920.0, 1080.0)
+}
+
+pub fn display_color_space(_display_id: i64) -> String {
+    "Display P3".to_string()
+}
+
+pub fn bounds_contains(bx: f64, by: f64, bw: f64, bh: f64, px: f64, py: f64) -> bool {
+    px >= bx && px <= bx + bw && py >= by && py <= by + bh
+}
+
+pub fn bounds_center(x: f64, y: f64, w: f64, h: f64) -> (f64, f64) {
+    (x + w / 2.0, y + h / 2.0)
+}
+
+pub fn register_action(name: String, stroke: String) {
+    ACTION_REGISTRY.with(|r| {
+        r.borrow_mut().insert(stroke, name);
+    });
+}
+
+pub fn resolve_action(stroke: &str) -> String {
+    ACTION_REGISTRY.with(|r| {
+        r.borrow().get(stroke).cloned().unwrap_or_default()
+    })
+}
+
+pub fn dispatch_action(action: &str) -> bool {
+    let known = ACTION_REGISTRY.with(|r| {
+        r.borrow().values().any(|v| v == action)
+    });
+    if known {
+        let win = window::current();
+        crate::store::push_event_with_in(win, "action", action.to_string());
+        true
+    } else {
+        false
+    }
+}
+
 /// Whether any element that declared `group=<name>` is under the pointer right now.
 ///
 /// The members are the boxes [`record_box`] wrote a `group.<name>.<id>` key for, and the pointer
@@ -1507,6 +1679,58 @@ pub fn children(parent: i64, nodes: Vec<i64>) -> i64 {
         }
     });
     parent
+}
+
+pub fn anchored(corner: i64, x: f64, y: f64, offset_x: f64, offset_y: f64, style: &str) -> i64 {
+    push(
+        Kind::Anchored {
+            corner: corner as usize,
+            x,
+            y,
+            offset_x,
+            offset_y,
+        },
+        style.to_string(),
+        String::new(),
+    )
+}
+
+pub fn deferred(priority: i64, style: &str) -> i64 {
+    push(
+        Kind::Deferred {
+            priority: priority as usize,
+        },
+        style.to_string(),
+        String::new(),
+    )
+}
+
+/// Appends style tokens to an element in the arena.
+pub fn append_style(handle: i64, token: &str) -> i64 {
+    arena(|a| {
+        let last = a.els.len().saturating_sub(1);
+        let target = usize::try_from(handle)
+            .ok()
+            .filter(|p| *p > 0 && *p <= last)
+            .unwrap_or(last);
+        if let Some(el) = a.els.get_mut(target) {
+            if el.style.is_empty() {
+                el.style = token.to_string();
+            } else {
+                el.style.push(' ');
+                el.style.push_str(token);
+            }
+        }
+    });
+    handle
+}
+
+/// Reads the accumulated style tokens from an element in the arena.
+pub fn get_style(handle: i64) -> String {
+    arena(|a| {
+        let index = usize::try_from(handle).ok().unwrap_or(0);
+        a.els.get(index).map(|el| el.style.clone()).unwrap_or_default()
+    })
 }
 
 fn link(arena: &mut Arena, parent: i64, child: i64) {
@@ -3569,6 +3793,40 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                         scroll::jump(&move_id, &move_axis, event.position);
                     }
                 })
+                .into_any_element()
+        }),
+
+        Kind::Anchored { corner, x, y, offset_x, offset_y } => own_frame(|| {
+            let mut a = gpui::anchored();
+            a = match corner {
+                1 => a.anchor(gpui::Corner::TopRight),
+                2 => a.anchor(gpui::Corner::BottomLeft),
+                3 => a.anchor(gpui::Corner::BottomRight),
+                _ => a.anchor(gpui::Corner::TopLeft),
+            };
+            if *x != 0.0 || *y != 0.0 {
+                a = a.position(gpui::point(gpui::px(*x as f32), gpui::px(*y as f32)));
+            }
+            if *offset_x != 0.0 || *offset_y != 0.0 {
+                a = a.offset(gpui::point(gpui::px(*offset_x as f32), gpui::px(*offset_y as f32)));
+            }
+            for h in &el.children {
+                if let Some(child) = snapshot(*h as i64) {
+                    a = a.child(render(&child, window, cx, entity));
+                }
+            }
+            a.into_any_element()
+        }),
+
+        Kind::Deferred { priority } => own_frame(|| {
+            let mut container = div();
+            for h in &el.children {
+                if let Some(child) = snapshot(*h as i64) {
+                    container = container.child(render(&child, window, cx, entity));
+                }
+            }
+            gpui::deferred(style::apply(container, &el.style))
+                .with_priority(*priority)
                 .into_any_element()
         })
     }

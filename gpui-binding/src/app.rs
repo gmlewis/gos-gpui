@@ -725,6 +725,22 @@ pub fn menu_parse(items: &[String]) -> (Vec<MenuEntry>, Vec<String>) {
                 stroke: None,
                 selector: None,
             }),
+            "disabled" => plan.push(MenuEntry {
+                kind: "disabled",
+                label: label.to_string(),
+                slot: 0,
+                depth,
+                stroke: None,
+                selector: None,
+            }),
+            "checked" => plan.push(MenuEntry {
+                kind: "checked",
+                label: label.to_string(),
+                slot: 0,
+                depth,
+                stroke: None,
+                selector: None,
+            }),
             "quits" => plan.push(MenuEntry {
                 kind: "quits",
                 label: if label.is_empty() { "Quit".to_string() } else { label.to_string() },

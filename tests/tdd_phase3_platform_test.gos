@@ -1,0 +1,101 @@
+// TDD Phase 3: Platform Services, System Menus, Dialogs & Action Dispatch
+//
+// Verifies:
+// 1. Clipboard API: write_clipboard, read_clipboard across rounds.
+// 2. File prompts: prompt_for_paths, prompt_for_new_path with queue & options.
+// 3. System menus: checked items, disabled items, submenus, accelerators.
+// 4. Action registry: register action binding, trigger keystroke, verify action resolved.
+
+use gpui
+use ui
+
+#[test]
+fn platform_clipboard_read_write() {
+    ui::write_clipboard("Hello GPUI Clipboard 2026")
+    let text = ui::read_clipboard()
+    assert(text == "Hello GPUI Clipboard 2026", f"clipboard text mismatch: {text}")
+
+    ui::write_clipboard("Second Value")
+    let text2 = ui::read_clipboard()
+    assert(text2 == "Second Value", f"second clipboard text mismatch: {text2}")
+}
+
+#[test]
+fn platform_file_prompts_queue() {
+    let opts = ui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: true,
+        prompt: "Select files to open",
+    }
+    let id = ui::prompt_for_paths(opts)
+    assert(id > 0, f"expected positive prompt id, got {id}")
+
+    let head_info = ui::prompt_for_paths_current()
+    assert(head_info != "", f"expected prompt info at head of queue: {head_info}")
+
+    let answered = ui::prompt_for_paths_answer(id, #["/path/to/file1.txt", "/path/to/file2.txt"])
+    assert(answered, "prompt_for_paths_answer should succeed for head prompt")
+
+    // New path prompt
+    let save_opts = ui::NewPathPromptOptions {
+        directory: "/Users/test/docs",
+        suggested_name: "untitled.txt",
+    }
+    let save_id = ui::prompt_for_new_path(save_opts)
+    assert(save_id > 0, f"expected positive save prompt id, got {save_id}")
+
+    let answered_save = ui::prompt_for_new_path_answer(save_id, "/Users/test/docs/untitled.txt")
+    assert(answered_save, "prompt_for_new_path_answer should succeed")
+}
+
+#[test]
+fn system_menu_features_and_accelerators() {
+    // Menu tree declaration with submenus, disabled items, checked items, accelerators
+    let entries = #[
+        "submenu:File",
+        ">events:New:cmd-n",
+        ">events:Open:cmd-o",
+        ">disabled:Recent",
+        ">separator",
+        ">checked:Auto-Save",
+        ">events:Quit:cmd-q",
+    ]
+    let tree = gpui::menu_tree(entries)
+    assert(tree.len() == 7, f"expected 7 menu tree items, got {tree.len()}")
+    assert(tree[0] == "0:submenu:File", f"item 0 should be submenu:File, got {tree[0]}")
+    assert(tree[1] == "1:events:New", f"item 1 should be New, got {tree[1]}")
+    assert(tree[2] == "1:events:Open", f"item 2 should be Open, got {tree[2]}")
+    assert(tree[3] == "1:disabled:Recent", f"item 3 should be disabled:Recent, got {tree[3]}")
+    assert(tree[4] == "1:separator:", f"item 4 should be separator, got {tree[4]}")
+    assert(tree[5] == "1:checked:Auto-Save", f"item 5 should be checked:Auto-Save, got {tree[5]}")
+    assert(tree[6] == "1:events:Quit", f"item 6 should be Quit, got {tree[6]}")
+
+    let accels = gpui::menu_accelerators(entries)
+    assert(accels.len() == 3, f"expected 3 accelerators, got {accels.len()}")
+}
+
+#[test]
+fn keymap_and_action_dispatch() {
+    // Clear and register action mappings
+    ui::register_action("editor::save", "cmd-s")
+    ui::register_action("editor::undo", "cmd-z")
+    ui::register_action("app::quit", "cmd-q")
+
+    // Verify key resolution
+    let act1 = ui::resolve_action("cmd-s")
+    assert(act1 == "editor::save", f"expected editor::save, got {act1}")
+
+    let act2 = ui::resolve_action("cmd-z")
+    assert(act2 == "editor::undo", f"expected editor::undo, got {act2}")
+
+    let act3 = ui::resolve_action("cmd-q")
+    assert(act3 == "app::quit", f"expected app::quit, got {act3}")
+
+    let act_unknown = ui::resolve_action("ctrl-shift-alt-x")
+    assert(act_unknown == "", f"expected empty string for unknown stroke, got {act_unknown}")
+
+    // Trigger action directly
+    let dispatched = ui::dispatch_action("editor::save")
+    assert(dispatched, "dispatch_action should succeed for registered action")
+}

@@ -877,6 +877,40 @@ theme
 theme_override
 unknown_style_tokens
 unknown_window_tokens
+
+# Event queue, reactive state, and style pipeline
+poll_events
+push_event
+event_queue_len
+notify
+notify_window
+is_window_invalidated
+clear_window_invalidation
+append_style
+get_style
+
+# Window scalars and accessors
+window_*
+
+# Displays and geometry
+primary_display_id
+display_bounds
+display_color_space
+bounds_contains
+bounds_center
+
+# Platform services: clipboard, file prompts, and action routing
+read_clipboard
+write_clipboard
+prompt_for_paths*
+prompt_for_new_path*
+register_action
+resolve_action
+dispatch_action
+
+# Advanced containers
+anchored
+deferred
 ```
 
 ## The style language

@@ -154,3 +154,109 @@ pub fn describe(prompt: &Prompt) -> String {
 pub fn listed(prompt: &Prompt) -> String {
     format!("{}|{}", prompt.id, prompt.title)
 }
+
+/// One path selection prompt waiting for an answer.
+#[derive(Clone)]
+pub struct PathPrompt {
+    pub id: i64,
+    pub files: bool,
+    pub directories: bool,
+    pub multiple: bool,
+    pub prompt: String,
+}
+
+/// One new path prompt waiting for an answer.
+#[derive(Clone)]
+pub struct NewPathPrompt {
+    pub id: i64,
+    pub directory: String,
+    pub suggested_name: String,
+}
+
+thread_local! {
+    static PATH_QUEUES: RefCell<HashMap<i64, Vec<PathPrompt>>> = RefCell::new(HashMap::new());
+    static NEW_PATH_QUEUES: RefCell<HashMap<i64, Vec<NewPathPrompt>>> = RefCell::new(HashMap::new());
+}
+
+pub fn ask_path_in(win: i64, files: bool, directories: bool, multiple: bool, prompt: &str) -> i64 {
+    let id = NEXT_ID.with(|next| {
+        let id = next.get();
+        next.set(id + 1);
+        id
+    });
+    PATH_QUEUES.with(|queues| {
+        queues.borrow_mut().entry(win).or_default().push(PathPrompt {
+            id,
+            files,
+            directories,
+            multiple,
+            prompt: prompt.to_string(),
+        })
+    });
+    id
+}
+
+pub fn head_path_in(win: i64) -> Option<PathPrompt> {
+    PATH_QUEUES.with(|queues| {
+        queues.borrow().get(&win).and_then(|q| q.first().cloned())
+    })
+}
+
+pub fn answer_path_in(win: i64, id: i64, paths: Vec<String>) -> bool {
+    let removed = PATH_QUEUES.with(|queues| {
+        let mut queues = queues.borrow_mut();
+        let queue = queues.get_mut(&win)?;
+        let head = queue.first()?;
+        if head.id != id {
+            return None;
+        }
+        Some(queue.remove(0))
+    });
+    if removed.is_some() {
+        crate::store::push_event_with_in(win, "path_prompt", format!("{id}|{}", paths.join(";")));
+        true
+    } else {
+        false
+    }
+}
+
+pub fn ask_new_path_in(win: i64, directory: &str, suggested_name: &str) -> i64 {
+    let id = NEXT_ID.with(|next| {
+        let id = next.get();
+        next.set(id + 1);
+        id
+    });
+    NEW_PATH_QUEUES.with(|queues| {
+        queues.borrow_mut().entry(win).or_default().push(NewPathPrompt {
+            id,
+            directory: directory.to_string(),
+            suggested_name: suggested_name.to_string(),
+        })
+    });
+    id
+}
+
+pub fn head_new_path_in(win: i64) -> Option<NewPathPrompt> {
+    NEW_PATH_QUEUES.with(|queues| {
+        queues.borrow().get(&win).and_then(|q| q.first().cloned())
+    })
+}
+
+pub fn answer_new_path_in(win: i64, id: i64, path: &str) -> bool {
+    let removed = NEW_PATH_QUEUES.with(|queues| {
+        let mut queues = queues.borrow_mut();
+        let queue = queues.get_mut(&win)?;
+        let head = queue.first()?;
+        if head.id != id {
+            return None;
+        }
+        Some(queue.remove(0))
+    });
+    if removed.is_some() {
+        crate::store::push_event_with_in(win, "new_path_prompt", format!("{id}|{path}"));
+        true
+    } else {
+        false
+    }
+}
+
