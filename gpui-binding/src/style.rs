@@ -110,7 +110,7 @@ fn is_known(key: &str) -> bool {
     matches!(
         key,
         // display and flex containers
-        "row" | "col" | "wrap" | "nowrap" | "grid" | "block" | "hidden" | "visible"
+        "row" | "col" | "wrap" | "nowrap" | "col-reverse" | "row-reverse" | "wrap-reverse" | "not-italic" | "no-underline" | "grid" | "block" | "hidden" | "visible"
         | "absolute" | "relative"
         // flex item behaviour
         | "grow" | "shrink" | "flex" 
@@ -578,6 +578,11 @@ fn one<T: Styled>(el: T, key: &str, value: Option<&str>) -> T {
         "col" => el.flex().flex_col(),
         "wrap" => el.flex().flex_wrap(),
         "nowrap" => el.flex().flex_nowrap(),
+        "col-reverse" => el.flex().flex_col_reverse(),
+        "row-reverse" => el.flex().flex_row_reverse(),
+        "wrap-reverse" => el.flex().flex_wrap_reverse(),
+        "not-italic" => el.not_italic(),
+        "no-underline" => el.text_decoration_none(),
         "grid" => el.grid(),
         "block" => el.block(),
         "hidden" => el.invisible(),

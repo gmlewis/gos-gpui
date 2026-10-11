@@ -6,6 +6,7 @@
 //   ./scripts/gen-style-tokens --diff      show unmapped Tailwind tokens from GPUI
 //   ./scripts/gen-style-tokens --emit-rust emit Rust match arms for gpui-binding/src/style.rs
 //   ./scripts/gen-style-tokens --emit-test emit Gossamer tests for tests/mr3_style_tokens_test.gos
+//   ./scripts/gen-style-tokens --apply     apply new tokens directly to style.rs & tests
 //
 // Keeps the style token language in sync with GPUI's Styled helpers.
 
@@ -28,59 +29,43 @@ fn candidate_tokens() -> Vec<TokenInfo> {
     let mut tokens: Vec<TokenInfo> = Vec::from([])
 
     tokens.push(TokenInfo {
-        token: "z",
+        token: "col-reverse",
         category: "layout",
-        gpui_helper: "z_index",
-        takes_value: true,
-        doc: "Z-axis stacking order index (e.g. z=10).",
-    })
-
-    tokens.push(TokenInfo {
-        token: "aspect",
-        category: "layout",
-        gpui_helper: "aspect_ratio",
-        takes_value: true,
-        doc: "Aspect ratio of the element (e.g. aspect=16/9, aspect=1).",
-    })
-
-    tokens.push(TokenInfo {
-        token: "outline",
-        category: "border",
-        gpui_helper: "outline",
-        takes_value: true,
-        doc: "Outline width around the box.",
-    })
-
-    tokens.push(TokenInfo {
-        token: "outlinecolor",
-        category: "border",
-        gpui_helper: "outline_color",
-        takes_value: true,
-        doc: "Outline color (e.g. outlinecolor=#89b4fa).",
-    })
-
-    tokens.push(TokenInfo {
-        token: "blur",
-        category: "filter",
-        gpui_helper: "filter_blur",
-        takes_value: true,
-        doc: "Gaussian blur radius applied to element.",
-    })
-
-    tokens.push(TokenInfo {
-        token: "tabular",
-        category: "type",
-        gpui_helper: "font_variant_numeric",
+        gpui_helper: "flex_col_reverse",
         takes_value: false,
-        doc: "Monospaced numeric figures (tabular nums).",
+        doc: "Flex container with column in reverse order.",
     })
 
     tokens.push(TokenInfo {
-        token: "tracking",
+        token: "row-reverse",
+        category: "layout",
+        gpui_helper: "flex_row_reverse",
+        takes_value: false,
+        doc: "Flex container with row in reverse order.",
+    })
+
+    tokens.push(TokenInfo {
+        token: "wrap-reverse",
+        category: "layout",
+        gpui_helper: "flex_wrap_reverse",
+        takes_value: false,
+        doc: "Flex container with wrap in reverse order.",
+    })
+
+    tokens.push(TokenInfo {
+        token: "not-italic",
         category: "type",
-        gpui_helper: "letter_spacing",
-        takes_value: true,
-        doc: "Letter spacing / tracking (e.g. tracking=0.05).",
+        gpui_helper: "not_italic",
+        takes_value: false,
+        doc: "Reset italic text decoration back to normal font style.",
+    })
+
+    tokens.push(TokenInfo {
+        token: "no-underline",
+        category: "type",
+        gpui_helper: "text_decoration_none",
+        takes_value: false,
+        doc: "Remove underline or strikethrough text decorations.",
     })
 
     tokens
@@ -126,12 +111,67 @@ fn contains_token(list: Vec<String>, needle: String) -> bool {
     false
 }
 
+fn apply_tokens(candidates: Vec<TokenInfo>) {
+    let style_src = match fs::read_to_string(*STYLE_RS) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln(f"gen-style-tokens: could not read {STYLE_RS}")
+            return
+        }
+    }
+
+    if strings::contains(style_src, "\"col-reverse\"") {
+        println("gen-style-tokens: tokens already applied to style.rs.")
+        return
+    }
+
+    // 1. Add to is_known() in style.rs
+    let needle_is_known = "\"row\" | \"col\" | \"wrap\" | \"nowrap\""
+    let replace_is_known = "\"row\" | \"col\" | \"wrap\" | \"nowrap\" | \"col-reverse\" | \"row-reverse\" | \"wrap-reverse\" | \"not-italic\" | \"no-underline\""
+    let style_src_1 = strings::replace(style_src, needle_is_known, replace_is_known)
+
+    // 2. Add to match key in one()
+    let needle_one = "\"nowrap\" => el.flex().flex_nowrap(),"
+    let mut arms = "\"nowrap\" => el.flex().flex_nowrap(),\n"
+    arms = arms + "        \"col-reverse\" => el.flex().flex_col_reverse(),\n"
+    arms = arms + "        \"row-reverse\" => el.flex().flex_row_reverse(),\n"
+    arms = arms + "        \"wrap-reverse\" => el.flex().flex_wrap_reverse(),\n"
+    arms = arms + "        \"not-italic\" => el.not_italic(),\n"
+    arms = arms + "        \"no-underline\" => el.text_decoration_none(),"
+    let style_src_2 = strings::replace(style_src_1, needle_one, arms)
+
+    match fs::write(*STYLE_RS, style_src_2.as_bytes()) {
+        Ok(_) => println(f"  [applied] updated {STYLE_RS} with new tokens"),
+        Err(e) => eprintln(f"gen-style-tokens: failed to write {STYLE_RS}"),
+    }
+
+    // 3. Add test in tests/mr3_style_tokens_test.gos
+    let test_src = match fs::read_to_string(*TEST_GOS) {
+        Ok(t) => t,
+        Err(_) => "",
+    }
+    if !strings::contains(test_src, "flex_reverse_and_decoration_tokens_are_known") {
+        let mut new_test = test_src + "\n"
+        new_test = new_test + "#[test]\n"
+        new_test = new_test + "fn flex_reverse_and_decoration_tokens_are_known() {\n"
+        new_test = new_test + "    let unknown = gpui::unknown_style_tokens(\"col-reverse row-reverse wrap-reverse not-italic no-underline\")\n"
+        new_test = new_test + "    assert(unknown.len() == 0, f\"reverse and decoration tokens are known: {unknown.len()} were refused\")\n"
+        new_test = new_test + "}\n"
+
+        match fs::write(*TEST_GOS, new_test.as_bytes()) {
+            Ok(_) => println(f"  [applied] updated {TEST_GOS} with new verification test"),
+            Err(_) => eprintln(f"gen-style-tokens: failed to write {TEST_GOS}"),
+        }
+    }
+}
+
 fn main() {
     let args = env::args()
     let mut verify = false
     let mut show_diff = false
     let mut emit_rust = false
     let mut emit_test = false
+    let mut apply = false
 
     for arg in args {
         if arg == "--verify" {
@@ -142,11 +182,19 @@ fn main() {
             emit_rust = true
         } else if arg == "--emit-test" {
             emit_test = true
+        } else if arg == "--apply" {
+            apply = true
         }
     }
 
     let known = read_known_tokens()
     let candidates = candidate_tokens()
+
+    if apply {
+        println("gen-style-tokens: applying unmapped tokens directly to repository...")
+        apply_tokens(candidates)
+        return
+    }
 
     if verify {
         println("gen-style-tokens - Verifying known tokens against tests")
@@ -182,6 +230,7 @@ fn main() {
         }
         println("")
         println("Use --emit-rust to generate arms for gpui-binding/src/style.rs.")
+        println("Use --apply to automatically add tokens to style.rs and tests.")
         return
     }
 
@@ -236,4 +285,5 @@ fn main() {
     println("  ./scripts/gen-style-tokens --diff       list unmapped candidates")
     println("  ./scripts/gen-style-tokens --emit-rust  generate Rust arms for style.rs")
     println("  ./scripts/gen-style-tokens --emit-test  generate Gossamer test cases")
+    println("  ./scripts/gen-style-tokens --apply      apply new tokens to style.rs & tests")
 }

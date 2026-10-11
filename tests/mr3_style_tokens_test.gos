@@ -38,3 +38,9 @@ fn focus_is_a_refinement_beside_hover_and_active() {
     assert(gpui::style_refinements("bg=#111111") == "", "a style with no refinement says so")
     assert(gpui::unknown_style_tokens("focussed=bg:#ff0000").len() == 1, "and a misspelt one is refused")
 }
+
+#[test]
+fn flex_reverse_and_decoration_tokens_are_known() {
+    let unknown = gpui::unknown_style_tokens("col-reverse row-reverse wrap-reverse not-italic no-underline")
+    assert(unknown.len() == 0, f"reverse and decoration tokens are known: {unknown.len()} were refused")
+}
