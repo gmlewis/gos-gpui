@@ -71,7 +71,7 @@ fn main() {
             .child(ui::column("flex col size=full justify=around")
                 .child(ui::column("overflow=y h=150 w=full flex=1 justify=center items=center font=xl gap=16")
                     .text("Hello Animation", "")
-                    .icon(ARROW, f"size=80 overflow=hidden color=black rotate={degrees}"))
+                    .icon(*ARROW, f"size=80 overflow=hidden color=black rotate={degrees}"))
                 // `border_t_1()` -- the top edge alone, as upstream asks for; a
                 // plain `border=1` draws the other three sides too, and a 1px
                 // grey seam on three sides is a difference a screenshot shows.

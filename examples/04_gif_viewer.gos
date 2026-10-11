@@ -39,7 +39,7 @@ const GIF: &str = "examples/assets/black-cat-typing.gif"
 fn main() {
     let outcome = gpui::run("", 1536.0, 864.0, || {
         ui::panel("size=full")
-            .image(GIF, "id=gif size=full")
+            .image(*GIF, "id=gif size=full")
             |> ui::root
     })
 

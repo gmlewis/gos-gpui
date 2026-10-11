@@ -51,7 +51,7 @@ fn main() {
             // `.text_xl().whitespace_nowrap().overflow_hidden()`
             .text(f"NOWRAP: {TEXT}", "shrink=0 font=xl ws=nowrap overflow=hidden border=1 bordercolor=black")
             // `div().text_xl().w_full()`, unclipped, wrapped to the window.
-            .text(TEXT, "font=xl w=full")
+            .text(*TEXT, "font=xl w=full")
             |> ui::root
     })
 
