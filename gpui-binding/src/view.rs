@@ -3105,7 +3105,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 .child(label.clone())
                 .on_click(move |_event, _window, cx| {
                     window::with(win, || {
-                        let on = !store::get_flag(&click_id, false);
+                        let on = !store::get_flag(&click_id, checked);
                         store::set_flag(&click_id, on);
                         store::push_event_with(&click_id, if on { "on" } else { "off" });
                     });
