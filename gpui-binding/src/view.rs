@@ -10,7 +10,7 @@
 //! with `.child(...)` methods — lives on the Gossamer side, in `examples/ui`.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use gpui::prelude::*;
@@ -2175,6 +2175,7 @@ thread_local! {
     static FOCUS: RefCell<HashMap<(i64, String), FocusHandle>> = RefCell::new(HashMap::new());
     static SLIDER_BOUNDS: RefCell<HashMap<(i64, String), Bounds<Pixels>>> =
         RefCell::new(HashMap::new());
+    static ACTIVE_SLIDERS: RefCell<HashSet<(i64, String)>> = RefCell::new(HashSet::new());
     static MOUSE_BOUNDS: RefCell<HashMap<(i64, String), Bounds<Pixels>>> =
         RefCell::new(HashMap::new());
     /// The last point the pointer was seen at for an element, in the window's space, with the
@@ -3150,16 +3151,16 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
 
             let track_key = key.clone();
             let down_key = key.clone();
-            let move_key = key.clone();
+            let reg_key = key.clone();
             let fraction = move |key: &str, x: Pixels| {
                 let bounds = SLIDER_BOUNDS.with(|b| b.borrow().get(&(win, key.to_string())).copied());
                 let Some(bounds) = bounds else { return None };
                 let width = f32::from(bounds.size.width).max(1.0);
                 let offset = f32::from(x - bounds.origin.x);
-                Some((offset / width) as f64)
+                Some(((offset / width) as f64).clamp(0.0, 1.0))
             };
             let fraction_down = fraction.clone();
-            let fraction_move = fraction.clone();
+            let fraction_reg = fraction.clone();
             let _ = fraction;
 
             let fill_bar = div()
@@ -3182,6 +3183,63 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
                 .shadow_sm();
             let gutter = div().absolute().left(px(0.0)).top(px(0.0)).size_full();
 
+            let registrar = canvas(
+                move |_bounds, _window, _cx| (),
+                move |_bounds, _state, window, _cx| {
+                    let move_key = reg_key.clone();
+                    let up_key = reg_key.clone();
+                    let fraction_move = fraction_reg.clone();
+                    let fraction_up = fraction_reg.clone();
+
+                    window.on_mouse_event(move |event: &MouseMoveEvent, phase, _w, cx| {
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
+                        let is_active = ACTIVE_SLIDERS.with(|s| s.borrow().contains(&(win, move_key.clone())));
+                        if !is_active {
+                            return;
+                        }
+                        if !event.dragging() {
+                            ACTIVE_SLIDERS.with(|s| s.borrow_mut().remove(&(win, move_key.clone())));
+                            return;
+                        }
+                        if let Some(frac) = fraction_move(&move_key, event.position.x) {
+                            let new_val = min + frac * span;
+                            let old_val = store::get_float(&move_key, min);
+                            if (old_val - new_val).abs() > f64::EPSILON {
+                                window::with(win, || {
+                                    store::set_float(&move_key, new_val);
+                                    store::push_event_with(&move_key, format!("{:.3}", new_val));
+                                });
+                                cx.notify(entity);
+                            }
+                        }
+                    });
+
+                    window.on_mouse_event(move |event: &MouseUpEvent, phase, _w, cx| {
+                        if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                            return;
+                        }
+                        let was_active = ACTIVE_SLIDERS.with(|s| s.borrow_mut().remove(&(win, up_key.clone())));
+                        if was_active {
+                            if let Some(frac) = fraction_up(&up_key, event.position.x) {
+                                let new_val = min + frac * span;
+                                let old_val = store::get_float(&up_key, min);
+                                if (old_val - new_val).abs() > f64::EPSILON {
+                                    window::with(win, || {
+                                        store::set_float(&up_key, new_val);
+                                        store::push_event_with(&up_key, format!("{:.3}", new_val));
+                                    });
+                                }
+                            }
+                            cx.notify(entity);
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_full();
+
             style::apply(
                 div().relative().flex().items_center().h(px(22.0)).w_full().cursor_pointer(),
                 &el.style,
@@ -3196,23 +3254,18 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             .child(gutter)
             .child(fill_bar)
             .child(knob)
+            .child(registrar)
             .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                ACTIVE_SLIDERS.with(|s| {
+                    let mut s = s.borrow_mut();
+                    s.retain(|(w, _)| *w != win);
+                    s.insert((win, down_key.clone()));
+                });
                 if let Some(frac) = fraction_down(&down_key, event.position.x) {
+                    let new_val = min + frac * span;
                     window::with(win, || {
-                        store::set_float(&down_key, min + frac * span);
-                        store::push_event_with(&down_key, format!("{:.3}", min + frac * span));
-                    });
-                    cx.notify(entity);
-                }
-            })
-            .on_mouse_move(move |event, _window, cx| {
-                if !event.dragging() {
-                    return;
-                }
-                if let Some(frac) = fraction_move(&move_key, event.position.x) {
-                    window::with(win, || {
-                        store::set_float(&move_key, min + frac * span);
-                        store::push_event_with(&move_key, format!("{:.3}", min + frac * span));
+                        store::set_float(&down_key, new_val);
+                        store::push_event_with(&down_key, format!("{:.3}", new_val));
                     });
                     cx.notify(entity);
                 }
