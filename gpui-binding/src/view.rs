@@ -1961,19 +1961,20 @@ pub fn finish(root: Option<i64>, window: &mut Window, cx: &mut App, entity: Enti
                     .into(),
             ),
         };
-        return listen_for_keys(element, window, cx);
+        return listen_for_keys(element, window, cx, entity);
     }
 
     let mut column = div().flex().flex_col().size_full();
     for message in errors {
         column = column.child(error_card(message));
     }
-    match root.and_then(snapshot) {
+    let root_el = match root.and_then(snapshot) {
         Some(el) => column.child(render(&el, window, cx, entity)).into_any_element(),
         None => column
             .child(error_card("the view callback answered no root element".into()))
             .into_any_element(),
-    }
+    };
+    listen_for_keys(root_el, window, cx, entity)
 }
 
 thread_local! {
@@ -2051,49 +2052,149 @@ fn modifier_words(m: &gpui::Modifiers) -> String {
     words.join("+")
 }
 
-/// After `gpui::on_keys(true)`, the window itself listens for keystrokes and
-/// raises `"key|<name>"`, so a program can use the keyboard without owning a
-/// GPUI element.
-///
-/// The root takes focus **once, the frame the program enables the keyboard** —
-/// not only in the window's first two frames: a program that turns the keyboard on at
-/// frame 40 would otherwise get the listener and no focus, and focus is what a key
-/// event needs to be delivered at all, so its shortcuts would be silently dead. A click into a text field still moves focus there and keeps
-/// it: this runs on the frame the flag turns on, or when nothing at all is focused,
-/// and never steals focus back afterwards.
-///
-/// The listener is registered in the **capture** phase, and that is the whole of
-/// KM5: gpui dispatches a key to the path from the root down to the focused element
-/// and then back up (`window.rs:3878-3906`), and `cx.stop_propagation()` in an
-/// element's handler ends the *bubble* half — taking the window's
-/// `cx.observe_keystrokes` observers with it (`window.rs:3861-3869`). The text editor
-/// stops propagation for every key it handles, so those keys never reached a program
-/// that was watching. A capture listener on the root runs before any of that and
-/// cannot be stopped by a handler below it.
-fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NavAction {
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    StepUp,
+    StepDown,
+    StepLeft,
+    StepRight,
+}
+
+pub fn classify_nav_key(k: &gpui::Keystroke) -> Option<NavAction> {
+    let key = k.key.to_lowercase();
+    let m = &k.modifiers;
+    if m.control {
+        return None;
+    }
+
+    if key == "home"
+        || (m.platform && (key == "up" || key == "left"))
+        || (m.function && key == "left")
+    {
+        Some(NavAction::Home)
+    } else if key == "end"
+        || (m.platform && (key == "down" || key == "right"))
+        || (m.function && key == "right")
+    {
+        Some(NavAction::End)
+    } else if key == "pageup"
+        || (m.function && key == "up")
+        || (m.alt && key == "up")
+    {
+        Some(NavAction::PageUp)
+    } else if key == "pagedown"
+        || (m.function && key == "down")
+        || (m.alt && key == "down")
+    {
+        Some(NavAction::PageDown)
+    } else if key == "up" && !m.platform && !m.function && !m.alt {
+        Some(NavAction::StepUp)
+    } else if key == "down" && !m.platform && !m.function && !m.alt {
+        Some(NavAction::StepDown)
+    } else if key == "left" && !m.platform && !m.function && !m.alt {
+        Some(NavAction::StepLeft)
+    } else if key == "right" && !m.platform && !m.function && !m.alt {
+        Some(NavAction::StepRight)
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FocusedControl {
+    Slider(String),
+    Scrollable,
+}
+
+fn slider_nav(win: i64, key: &str, nav: NavAction, entity: EntityId, cx: &mut App) -> bool {
+    let range = SLIDERS.with(|s| s.borrow().get(&(win, key.to_string())).copied());
+    let Some((min, max)) = range else {
+        return false;
+    };
+    let span = (max - min).max(f64::EPSILON);
+    let current = store::get_float(key, min);
+    let new_val = match nav {
+        NavAction::Home => min,
+        NavAction::End => max,
+        NavAction::PageUp => (current + span * 0.1).min(max),
+        NavAction::PageDown => (current - span * 0.1).max(min),
+        NavAction::StepUp | NavAction::StepRight => (current + span * 0.02).min(max),
+        NavAction::StepDown | NavAction::StepLeft => (current - span * 0.02).max(min),
+    };
+    if (current - new_val).abs() > f64::EPSILON {
+        window::with(win, || {
+            store::set_float(key, new_val);
+            store::push_event_with(key, format!("{:.3}", new_val));
+        });
+        cx.notify(entity);
+        return true;
+    }
+    false
+}
+
+fn handle_default_nav(win: i64, nav: NavAction, cx: &mut App, entity: EntityId) -> bool {
+    let focus = LAST_FOCUSED_KIND.with(|f| f.borrow().get(&win).cloned());
+
+    if let Some(FocusedControl::Slider(slider_id)) = focus {
+        if slider_nav(win, &slider_id, nav, entity, cx) {
+            return true;
+        }
+    }
+
+    if let Some((list_id, _)) = list::current_list(win) {
+        if list::scroll_nav(win, &list_id, nav) {
+            cx.notify(entity);
+            return true;
+        }
+    }
+
+    if let Some((scroll_id, _)) = scroll::current_scroll(win) {
+        if scroll::scroll_nav(win, &scroll_id, nav) {
+            cx.notify(entity);
+            return true;
+        }
+    }
+
+    if let Some(slider_id) = LAST_ACTIVE_SLIDER.with(|l| l.borrow().get(&win).cloned()) {
+        if slider_nav(win, &slider_id, nav, entity, cx) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// The root window listener that captures keystrokes for the program and drives
+/// default navigation (Home, End, PageUp, PageDown, arrow keys) for sliders and scrollables.
+fn listen_for_keys(
+    element: AnyElement,
+    window: &mut Window,
+    cx: &mut App,
+    entity: EntityId,
+) -> AnyElement {
     let win = window::current();
     let keys = store::get_flag("~keys", false);
     let observers = key_observers(win);
-    if !keys && observers.is_empty() {
-        return element;
-    }
 
     let handle = focus_for(win, "~root", cx);
-    if keys {
-        let armed = KEYS_ARMED.with(|a| a.borrow().contains(&win));
-        if !handle.is_focused(window) && (!armed || window.focused(cx).is_none()) {
-            window.focus(&handle);
-        }
-        KEYS_ARMED.with(|a| {
-            a.borrow_mut().insert(win);
-        });
+    let armed = KEYS_ARMED.with(|a| a.borrow().contains(&win));
+    if !handle.is_focused(window) && (!armed || window.focused(cx).is_none()) {
+        window.focus(&handle);
     }
+    KEYS_ARMED.with(|a| {
+        a.borrow_mut().insert(win);
+    });
 
+    let focus_handle = handle.clone();
     div()
         .size_full()
         .id(ElementId::Name("~root".into()))
         .track_focus(&handle)
-        .capture_key_down(move |event: &KeyDownEvent, window, _cx| {
+        .capture_key_down(move |event: &KeyDownEvent, window, cx| {
             window.refresh();
             window::with(win, || {
                 let unparsed = record_keystroke("~key", &event.keystroke);
@@ -2110,10 +2211,16 @@ fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> An
                     store::push_event_with(id, &unparsed);
                 }
             });
+
+            // Default navigation for sliders, lists, and scroll containers:
+            // active whenever no text input or editor has focus.
+            let is_root_focused = focus_handle.is_focused(window) || window.focused(cx).is_none();
+            if is_root_focused {
+                if let Some(nav) = classify_nav_key(&event.keystroke) {
+                    handle_default_nav(win, nav, cx, entity);
+                }
+            }
         })
-        // The release, on the same element and under the same flag: a program
-        // driving movement from the keyboard needs to know when the key stopped
-        // being held, and this is the only thing that listens for it.
         .capture_key_up(move |event: &KeyUpEvent, window, _cx| {
             window.refresh();
             window::with(win, || {
@@ -2176,6 +2283,9 @@ thread_local! {
     static SLIDER_BOUNDS: RefCell<HashMap<(i64, String), Bounds<Pixels>>> =
         RefCell::new(HashMap::new());
     static ACTIVE_SLIDERS: RefCell<HashSet<(i64, String)>> = RefCell::new(HashSet::new());
+    static SLIDERS: RefCell<HashMap<(i64, String), (f64, f64)>> = RefCell::new(HashMap::new());
+    static LAST_ACTIVE_SLIDER: RefCell<HashMap<i64, String>> = RefCell::new(HashMap::new());
+    static LAST_FOCUSED_KIND: RefCell<HashMap<i64, FocusedControl>> = RefCell::new(HashMap::new());
     static MOUSE_BOUNDS: RefCell<HashMap<(i64, String), Bounds<Pixels>>> =
         RefCell::new(HashMap::new());
     /// The last point the pointer was seen at for an element, in the window's space, with the
@@ -3148,6 +3258,10 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             let value = store::get_float(&el.id, *min);
             let frac = ((value - *min) / span).clamp(0.0, 1.0) as f32;
             let (min, span) = (*min, span);
+            SLIDERS.with(|s| s.borrow_mut().insert((win, key.clone()), (min, *max)));
+            LAST_ACTIVE_SLIDER.with(|l| {
+                l.borrow_mut().entry(win).or_insert_with(|| key.clone());
+            });
 
             let track_key = key.clone();
             let down_key = key.clone();
@@ -3256,6 +3370,8 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             .child(knob)
             .child(registrar)
             .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                LAST_ACTIVE_SLIDER.with(|l| l.borrow_mut().insert(win, down_key.clone()));
+                LAST_FOCUSED_KIND.with(|l| l.borrow_mut().insert(win, FocusedControl::Slider(down_key.clone())));
                 ACTIVE_SLIDERS.with(|s| {
                     let mut s = s.borrow_mut();
                     s.retain(|(w, _)| *w != win);
@@ -3334,6 +3450,10 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             // it while the closure has nothing else to reach for, and so the row
             // builder — one per program — knows which list is asking.
             let list_id = el.id.clone();
+            list::set_count(win, &list_id, count);
+            LAST_FOCUSED_KIND.with(|l| {
+                l.borrow_mut().entry(win).or_insert(FocusedControl::Scrollable);
+            });
             // The builder was handed to `gpui::run_with_rows`, and is invoked
             // here, during layout. That is exactly what a *stored* callback
             // cannot be: `gpui::list` returns before the list lays out, so a
@@ -3871,6 +3991,7 @@ pub fn render(el: &El, window: &mut Window, cx: &mut App, entity: EntityId) -> A
             style::apply(div().child(bar), &el.style)
                 .id(ElementId::Name(format!("~scrollbar|{id}|{axis}").into()))
                 .on_mouse_down(MouseButton::Left, move |event, _window, _cx| {
+                    LAST_FOCUSED_KIND.with(|l| l.borrow_mut().insert(win, FocusedControl::Scrollable));
                     scroll::jump(&down_id, &down_axis, event.position);
                 })
                 .on_mouse_move(move |event, _window, _cx| {

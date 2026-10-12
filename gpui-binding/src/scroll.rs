@@ -213,3 +213,40 @@ pub fn jump(id: &str, axis: &str, position: gpui::Point<gpui::Pixels>) -> bool {
     handle.set_offset(point);
     true
 }
+
+/// The current or first scrolled container handle for window `win`.
+pub fn current_scroll(win: i64) -> Option<(String, gpui::ScrollHandle)> {
+    HANDLES.with(|h| {
+        h.borrow()
+            .iter()
+            .find(|((w, _), _)| *w == win)
+            .map(|((_, id), handle)| (id.clone(), handle.clone()))
+    })
+}
+
+/// Scrolls container `id` in window `win` according to navigation action `nav`.
+pub fn scroll_nav(win: i64, id: &str, nav: crate::view::NavAction) -> bool {
+    let Some(handle) = find(win, id) else {
+        return false;
+    };
+    let offset = handle.offset();
+    let max = handle.max_offset();
+    if max.height <= gpui::px(0.0) && max.width <= gpui::px(0.0) {
+        return false;
+    }
+    let page_step = gpui::px(300.0);
+    let line_step = gpui::px(30.0);
+
+    let (new_x, new_y) = match nav {
+        crate::view::NavAction::Home => (gpui::px(0.0), gpui::px(0.0)),
+        crate::view::NavAction::End => (-max.width, -max.height),
+        crate::view::NavAction::PageUp => (offset.x, (offset.y + page_step).min(gpui::px(0.0))),
+        crate::view::NavAction::PageDown => (offset.x, (offset.y - page_step).max(-max.height)),
+        crate::view::NavAction::StepUp => (offset.x, (offset.y + line_step).min(gpui::px(0.0))),
+        crate::view::NavAction::StepDown => (offset.y, (offset.y - line_step).max(-max.height)),
+        crate::view::NavAction::StepLeft => ((offset.x + line_step).min(gpui::px(0.0)), offset.y),
+        crate::view::NavAction::StepRight => ((offset.x - line_step).max(-max.width), offset.y),
+    };
+    handle.set_offset(gpui::point(new_x, new_y));
+    true
+}

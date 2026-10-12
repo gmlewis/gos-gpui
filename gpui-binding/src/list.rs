@@ -28,6 +28,10 @@ thread_local! {
         RefCell::new(HashMap::new());
     static RANGES: RefCell<HashMap<(i64, String), (usize, usize)>> =
         RefCell::new(HashMap::new());
+    static COUNTS: RefCell<HashMap<(i64, String), usize>> =
+        RefCell::new(HashMap::new());
+    static LAST_ACTIVE: RefCell<HashMap<i64, String>> =
+        RefCell::new(HashMap::new());
 }
 
 /// The handle for `id` in window `win`, created the first time it is asked for.
@@ -80,4 +84,84 @@ pub fn base_handle(win: i64, id: &str) -> Option<ScrollHandle> {
 /// `None` if it has never laid out.
 pub fn range(win: i64, id: &str) -> Option<(usize, usize)> {
     RANGES.with(|r| r.borrow().get(&(win, id.to_string())).copied())
+}
+
+/// Records the total item count of list `id`.
+pub fn set_count(win: i64, id: &str, count: usize) {
+    COUNTS.with(|c| {
+        c.borrow_mut().insert((win, id.to_string()), count);
+    });
+    LAST_ACTIVE.with(|l| {
+        l.borrow_mut().entry(win).or_insert_with(|| id.to_string());
+    });
+}
+
+/// The total item count recorded for list `id`.
+pub fn count(win: i64, id: &str) -> Option<usize> {
+    COUNTS.with(|c| c.borrow().get(&(win, id.to_string())).copied())
+}
+
+/// Records that list `id` was active / interacted with.
+pub fn record_active(win: i64, id: &str) {
+    LAST_ACTIVE.with(|l| {
+        l.borrow_mut().insert(win, id.to_string());
+    });
+}
+
+/// The current or first virtual list for window `win`.
+pub fn current_list(win: i64) -> Option<(String, UniformListScrollHandle)> {
+    if let Some(id) = LAST_ACTIVE.with(|l| l.borrow().get(&win).cloned()) {
+        if let Some(h) = find(win, &id) {
+            return Some((id, h));
+        }
+    }
+    HANDLES.with(|h| {
+        h.borrow()
+            .iter()
+            .find(|((w, _), _)| *w == win)
+            .map(|((_, id), handle)| (id.clone(), handle.clone()))
+    })
+}
+
+/// Scrolls virtual list `id` in window `win` according to navigation action `nav`.
+pub fn scroll_nav(win: i64, id: &str, nav: crate::view::NavAction) -> bool {
+    let Some(handle) = find(win, id) else {
+        return false;
+    };
+    let count = count(win, id).unwrap_or(0);
+    if count == 0 {
+        return false;
+    }
+    let (first, last) = range(win, id).unwrap_or((0, 15));
+    let page_size = if last > first { last - first + 1 } else { 15 };
+
+    match nav {
+        crate::view::NavAction::Home => {
+            handle.scroll_to_item(0, gpui::ScrollStrategy::Top);
+        }
+        crate::view::NavAction::End => {
+            handle.scroll_to_item(count.saturating_sub(1), gpui::ScrollStrategy::Bottom);
+        }
+        crate::view::NavAction::PageUp => {
+            let target = first.saturating_sub(page_size);
+            handle.scroll_to_item(target, gpui::ScrollStrategy::Top);
+        }
+        crate::view::NavAction::PageDown => {
+            if last + 1 < count {
+                handle.scroll_to_item(last + 1, gpui::ScrollStrategy::Top);
+            } else {
+                handle.scroll_to_item(count.saturating_sub(1), gpui::ScrollStrategy::Bottom);
+            }
+        }
+        crate::view::NavAction::StepUp => {
+            let target = first.saturating_sub(1);
+            handle.scroll_to_item(target, gpui::ScrollStrategy::Top);
+        }
+        crate::view::NavAction::StepDown => {
+            let target = (first + 1).min(count.saturating_sub(1));
+            handle.scroll_to_item(target, gpui::ScrollStrategy::Top);
+        }
+        _ => return false,
+    }
+    true
 }
