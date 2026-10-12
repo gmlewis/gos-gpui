@@ -21,15 +21,8 @@
 // Upstream's sub-window "Close" button is `window.remove_window()`, which is
 // `gpui::close_window()` here.
 //
-// Emulated — `window.prompt(..)` is not exposed:
-//
-//   Prompt, Prompt (non-English)
-//   An ordinary in-window dialog stands in for the native modal: a dimmed
-//   overlay with an "Are you sure?" panel and Ok / Cancel (确定 / 取消 — the
-//   labels are upstream's `&["Ok", "Cancel"]` and
-//   `PromptButton::ok("确定") / cancel("取消")`). It prints upstream's exact
-//   lines to stdout. It is NOT a modal: the window behind it stays
-//   interactive and no platform dialog appears. The dialog says so on screen.
+//   Prompt           native modal sheet with "Are you sure?" and Ok/Cancel
+//   Prompt (non-English) native modal sheet with "Are you sure?" and 确定/取消
 //
 // The Hide button is upstream's, and it is a real button:
 //
@@ -99,6 +92,7 @@
 
 use gpui
 use std::process
+use std::strings
 use ui
 
 /// Upstream's `button(text, on_click)`. A frame's clicks arrive as events here,
@@ -203,26 +197,14 @@ fn demo_panel() -> ui::El {
         .child(button("unminimizable", "Unminimizable"))
         .child(button("hide", "Hide Application"))
         .child(button("resize", "Resize"))
-        .child(button("prompt", "Prompt"))
-        .child(button("prompt_zh", "Prompt (non-English)"))
-}
-
-/// The two-button dialog that stands in for `window.prompt(..)`. See the
-/// header: the labels are upstream's, the modality is not.
-fn prompt_dialog(ok: String, cancel: String) -> ui::El {
-    ui::panel("absolute inset=0 flex justify=center items=center bg=#00000040")
-        .child(ui::column("gap=12 p=20 bg=#ffffff border=1 bordercolor=#e0e0e0 rounded=md shadow=lg items=center")
-            .text("Are you sure?", "")
-            .child(ui::row("gap=8")
-                .child(button("prompt_ok", ok))
-                .child(button("prompt_cancel", cancel)))
-            .text("emulated: the binding exposes no window.prompt", "font=xs color=#909090"))
+        .child(button("btn_prompt", "Prompt"))
+        .child(button("btn_prompt_zh", "Prompt (non-English)"))
 }
 
 /// What a frame does before it builds the tree: drain every button event.
 fn handle_events() {
     for event in gpui::take_events() {
-        let id, _data = gpui::event_parts(event)
+        let id, data = gpui::event_parts(event)
         if id == "normal" {
             open_sub("", "", false)
         } else if id == "popup" {
@@ -247,32 +229,27 @@ fn handle_events() {
             let live_w = gpui::window_field("w")
             let live_h = gpui::window_field("h")
             gpui::resize_window(live_h, live_w)
+        } else if id == "btn_prompt" {
+            gpui::prompt("", "Are you sure?", "Ok;Cancel")
+        } else if id == "btn_prompt_zh" {
+            gpui::prompt("", "Are you sure?", "确定;取消")
         } else if id == "prompt" {
-            gpui::set_text("prompt", "en")
-        } else if id == "prompt_zh" {
-            gpui::set_text("prompt", "zh")
-        } else if id == "prompt_ok" {
-            println("You have clicked Ok")
-            gpui::set_text("prompt", "")
-        } else if id == "prompt_cancel" {
-            println("You have clicked Cancel")
-            gpui::set_text("prompt", "")
+            let parts = strings::split(data, "|")
+            if parts.len() >= 2 {
+                if parts[1] == "0" {
+                    println("You have clicked Ok")
+                } else {
+                    println("You have clicked Cancel")
+                }
+            }
         }
     }
 }
 
-/// The main window: upstream's panel, with the emulated prompt over it while
-/// one is open.
+/// The main window: upstream's panel.
 fn window_view() -> ui::El {
     handle_events()
-
-    let mut root = demo_panel()
-    if gpui::state_text("prompt", "") == "zh" {
-        root = ui::stack("size=full").child(root).child(prompt_dialog("确定", "取消"))
-    } else if gpui::state_text("prompt", "") == "en" {
-        root = ui::stack("size=full").child(root).child(prompt_dialog("Ok", "Cancel"))
-    }
-    root
+    demo_panel()
 }
 
 fn main() {

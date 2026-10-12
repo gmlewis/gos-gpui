@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    px, size, AnyElement, App, Application, Context, EntityId, ImgResourceLoader, PromptLevel,
-    Render, Resource, Timer, Window,
+    px, size, AnyElement, App, Application, Context, EntityId, ImgResourceLoader, PromptButton,
+    PromptLevel, Render, Resource, Timer, Window,
 };
 
 use gossamer_binding::{NativeDispatch, PersistentCallback};
@@ -110,13 +110,35 @@ fn pump_prompt(win: i64, window: &mut Window, cx: &mut Context<Root>) {
                 let raised = cx
                     .update(move |window, cx| {
                         let prompt = prompts::head_in(win)?;
-                        let labels: Vec<&str> =
-                            prompt.buttons.iter().map(|label| label.as_str()).collect();
+                        let buttons: Vec<PromptButton> = prompt
+                            .buttons
+                            .iter()
+                            .map(|label| {
+                                let trimmed = label.trim();
+                                if let Some(rest) = trimmed.strip_prefix("ok:") {
+                                    PromptButton::ok(rest.to_string())
+                                } else if let Some(rest) = trimmed.strip_prefix("cancel:") {
+                                    PromptButton::cancel(rest.to_string())
+                                } else if trimmed.eq_ignore_ascii_case("cancel") || trimmed == "取消" {
+                                    PromptButton::cancel(trimmed.to_string())
+                                } else if trimmed.eq_ignore_ascii_case("ok") || trimmed == "确定" {
+                                    PromptButton::ok(trimmed.to_string())
+                                } else {
+                                    PromptButton::new(trimmed.to_string())
+                                }
+                            })
+                            .collect();
+                        let (msg, detail) = match (prompt.message.is_empty(), prompt.title.is_empty()) {
+                            (false, false) => (prompt.message.as_str(), Some(prompt.title.as_str())),
+                            (false, true) => (prompt.message.as_str(), None),
+                            (true, false) => (prompt.title.as_str(), None),
+                            (true, true) => ("", None),
+                        };
                         let asked = window.prompt(
                             PromptLevel::Info,
-                            &prompt.message,
-                            Some(&prompt.title),
-                            &labels,
+                            msg,
+                            detail,
+                            &buttons,
                             cx,
                         );
                         Some((prompt.id, asked))
