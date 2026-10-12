@@ -1,0 +1,145 @@
+// 36 - Theming
+//
+// A palette is just data, so a light/dark switch is an ordinary value the view
+// computes once per frame and interpolates into every style string. Shadows,
+// gradients and borders all read differently on a light background — this is
+// the example to compare the two in.
+//
+//   gos run --main-thread examples/36_theme.gos
+
+use gpui
+use std::process
+use ui
+
+struct Palette {
+    name: String
+    backdrop: String
+    surface: String
+    raised: String
+    line: String
+    text: String
+    dim: String
+    accent: String
+    gradient: String
+}
+
+// Catppuccin Mocha and Latte — a dark set and a light one that share a mood.
+fn mocha() -> Palette {
+    Palette {
+        name: "mocha"
+        backdrop: "#11111b"
+        surface: "#1e1e2e"
+        raised: "#313244"
+        line: "#313244"
+        text: "#cdd6f4"
+        dim: "#7f849c"
+        accent: "#89b4fa"
+        gradient: "135,#89b4fa,#cba6f7"
+    }
+}
+
+fn latte() -> Palette {
+    Palette {
+        name: "latte"
+        backdrop: "#dce0e8"
+        surface: "#eff1f5"
+        raised: "#e6e9ef"
+        line: "#ccd0da"
+        text: "#4c4f69"
+        dim: "#8c8fa1"
+        accent: "#1e66f5"
+        gradient: "135,#1e66f5,#8839ef"
+    }
+}
+
+fn card(title: String, body: String, p: Palette) -> ui::El {
+    let style = f"flex=1 gap=8 bg={p.surface} rounded=14 p=16 border=1 bordercolor={p.line}"
+    ui::column(style)
+        .text(title, f"font=sm semibold color={p.dim}")
+        .text(body, f"font=lg bold color={p.text}")
+}
+
+fn setting(label: String, value: String, p: Palette) -> ui::El {
+    let style = f"w=full justify=between items=center px=14 py=10 bg={p.surface} rounded=9 border=1 bordercolor={p.line}"
+    ui::row(style)
+        .text(label, f"font=sm color={p.text}")
+        .text(value, f"font=sm color={p.dim}")
+}
+
+fn depth(step: i64, p: Palette) -> ui::El {
+    let shadows = ["", "shadow=sm", "shadow=md", "shadow=lg"]
+    let shadow = shadows[step]
+    let label = if shadow == "" { "no shadow" } else { shadow }
+    ui::column("flex=1 gap=8 items=center")
+        .rect(f"w=full h=54 bg={p.surface} rounded=12 {shadow}")
+        .text(label, f"font=xs color={p.dim}")
+}
+
+/// The same panel at four shadow depths.
+fn depths(p: Palette) -> ui::El {
+    ui::row("w=full gap=12").children(#[0, 1, 2, 3].map(|step| depth(step, p)))
+}
+
+fn main() {
+    let outcome = gpui::run("Theming", 700.0, 680.0, || {
+        for event in gpui::take_events() {
+            let id, data = gpui::event_parts(event)
+            if id == "dark" {
+                gpui::set_bool("dark", data == "on")
+            }
+        }
+
+        let dark = gpui::state_bool("dark", true)
+        let p = if dark { mocha() } else { latte() }
+
+        let hero = ui::panel(f"w=full gap=10 rounded=16 p=20 grad={p.gradient}")
+            .text("gradients read very differently", "font=lg semibold color=#ffffff")
+            .text("the same two stops over a light and a dark backdrop", "font=sm color=#ffffffcc")
+            .child(ui::row("w=full gap=10")
+                .rect("flex=1 h=8 rounded=full bg=#ffffff55")
+                .rect("flex=1 h=8 rounded=full bg=#ffffff88")
+                .rect("flex=1 h=8 rounded=full bg=#ffffffcc"))
+
+        ui::scroll(f"size=full bg={p.backdrop} p=22 gap=16")
+            // ---- header with the switch ---------------------------------
+            .child(ui::row("w=full justify=between items=center")
+                .child(ui::column("gap=2")
+                    .text("Theming", f"font=2xl bold color={p.text}")
+                    .text(f"palette: {p.name}", f"font=xs color={p.dim}"))
+                .child(ui::row(f"gap=10 items=center bg={p.surface} rounded=10 px=14 py=10 border=1 bordercolor={p.line}")
+                    .checkbox("dark", "dark", dark, f"font=sm color={p.text}")))
+            // ---- metric cards --------------------------------------------
+            .child(ui::row("w=full gap=12")
+                .child(card("revenue", "$48,120", p))
+                .child(card("orders", "1,204", p))
+                .child(card("refunds", "$310", p)))
+            .child(hero)
+            // ---- shadows and depth -----------------------------------------
+            .child(depths(p))
+            // ---- a settings list --------------------------------------------
+            .child(ui::column("w=full gap=6")
+                .text("preferences", f"font=sm semibold color={p.dim}")
+                .child(setting("appearance", p.name, p))
+                .child(setting("accent", p.accent, p))
+                .child(setting("contrast", if dark { "high" } else { "normal" }, p))
+                .child(setting("backdrop", p.backdrop, p)))
+            // ---- a control that follows the theme -----------------------------
+            .child(ui::column(f"w=full gap=12 bg={p.surface} rounded=14 p=16 border=1 bordercolor={p.line}")
+                .text("accent slider", f"font=sm color={p.dim}")
+                .slider("level", 0.0, 1.0, f"w=full bg={p.raised} rounded=full")
+                .child(ui::row("w=full gap=10 items=center")
+                    .button(
+                        "nothing",
+                        "a button in this palette",
+                        f"px=14 py=8 rounded=9 bg={p.accent} color=#ffffff hover=bg:#ffffff33 active=bg:#ffffff22",
+                    )
+                    .progress(gpui::state_float("level", 0.4), f"flex=1 bg={p.raised}")))
+            .spacer(8.0)
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

@@ -2093,7 +2093,8 @@ fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> An
         .size_full()
         .id(ElementId::Name("~root".into()))
         .track_focus(&handle)
-        .capture_key_down(move |event: &KeyDownEvent, _window, _cx| {
+        .capture_key_down(move |event: &KeyDownEvent, window, _cx| {
+            window.refresh();
             window::with(win, || {
                 let unparsed = record_keystroke("~key", &event.keystroke);
                 store::set_flag("~key.held", event.is_held);
@@ -2113,7 +2114,8 @@ fn listen_for_keys(element: AnyElement, window: &mut Window, cx: &mut App) -> An
         // The release, on the same element and under the same flag: a program
         // driving movement from the keyboard needs to know when the key stopped
         // being held, and this is the only thing that listens for it.
-        .capture_key_up(move |event: &KeyUpEvent, _window, _cx| {
+        .capture_key_up(move |event: &KeyUpEvent, window, _cx| {
+            window.refresh();
             window::with(win, || {
                 let unparsed = record_keystroke("~keyup", &event.keystroke);
                 if keys {

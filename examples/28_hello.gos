@@ -1,0 +1,26 @@
+// 28 - Hello, gpui!
+//
+// The smallest complete program. A frame is a chain: describe the window,
+// then hand the finished tree to it with `|> ui::root`.
+//
+//   gos run --main-thread examples/28_hello.gos
+
+use gpui
+use std::process
+use ui
+
+fn main() {
+    let outcome = gpui::run("Hello, gpui", 460.0, 300.0, || {
+        ui::column("gap=6 p=24 bg=#181825 size=full justify=center items=center")
+            .text("Hello, gpui!", "font=3xl bold color=#cdd6f4")
+            .text("a Gossamer program painting through Zed's UI framework", "font=sm color=#6c7086")
+            .spacer(10.0)
+            .text("close the window to quit", "font=xs color=#45475a")
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

@@ -1,0 +1,140 @@
+// 33 - Long lists
+//
+// `ui::list` builds a real `uniform_list`: GPUI only asks the row builder for
+// the rows that are actually on screen, so twenty thousand of them cost no
+// more to draw than twenty. Scroll with the wheel or keyboard (Home, End,
+// PgUp, PgDn, ↑/↓); the rows are clickable.
+//
+//   gos run --main-thread examples/33_lists.gos
+
+use gpui
+use std::env
+use std::process
+use std::strings
+use ui
+
+const ROWS: i64 = 20_000
+
+/// One row, drawn newest-first.
+fn list_row(_list: String, index: i64) -> ui::El {
+    let rows = gpui::state_int("total_rows", ROWS)
+    let picked = gpui::state_int("selected", -1)
+    let number = rows - 1 - index
+    let selected = number == picked
+    let background = if selected { "#45475a" } else { "#181825" }
+    let marker = if number % 1_000 == 0 { "◆  " } else { "    " }
+    let style = f"w=full h=full px=14 items=center font=sm bg={background} color=#cdd6f4 hover=bg:#313244"
+    ui::button(f"pick-{index}", f"{marker}row {number}", style)
+}
+
+fn describe(selected: i64) -> String {
+    if selected < 0 {
+        "nothing selected — click any row"
+    } else if selected >= 14_000 {
+        f"row {selected}  —  a high number, still instant to reach"
+    } else {
+        f"row {selected}"
+    }
+}
+
+fn handle(events: Vec<String>, rows: i64) {
+    for event in events {
+        let id, data = gpui::event_parts(event)
+        let parts = strings::split(id, "-")
+        if parts.len() == 2 && parts[0] == "pick" {
+            if let Some(index) = strings::to_i64(parts[1]) {
+                // Rows are drawn newest-first, so the row's id counts back.
+                gpui::set_int("selected", rows - 1 - index)
+            }
+        } else {
+            let is_home = id == "home" || (id == "key" && (data == "home" || data.ends_with("-home") || data == "cmd-up" || data == "cmd-left"))
+            let is_end = id == "end" || (id == "key" && (data == "end" || data.ends_with("-end") || data == "cmd-down" || data == "cmd-right"))
+            let is_pageup = id == "pageup" || (id == "key" && (data == "pageup" || data.ends_with("-pageup") || data == "shift-space"))
+            let is_pagedown = id == "pagedown" || (id == "key" && (data == "pagedown" || data.ends_with("-pagedown") || data == "space"))
+            let is_up = id == "up" || (id == "key" && (data == "up" || data.ends_with("-up") || data == "k"))
+            let is_down = id == "down" || (id == "key" && (data == "down" || data.ends_with("-down") || data == "j"))
+
+            if is_home || is_end || is_pageup || is_pagedown || is_up || is_down {
+                let mut first, mut last = gpui::list_range("rows")
+                if first < 0 {
+                    first = 0
+                    last = 15
+                }
+                let page_size = if last > first { last - first } else { 15 }
+
+                if is_home {
+                    gpui::list_scroll_to("rows", 0, "top")
+                } else if is_end {
+                    gpui::list_scroll_to("rows", rows - 1, "bottom")
+                } else if is_pageup {
+                    let target = if first - page_size > 0 { first - page_size } else { 0 }
+                    gpui::list_scroll_to("rows", target, "top")
+                } else if is_pagedown {
+                    if last + 1 < rows {
+                        gpui::list_scroll_to("rows", last + 1, "top")
+                    } else {
+                        gpui::list_scroll_to("rows", rows - 1, "bottom")
+                    }
+                } else if is_up {
+                    let target = if first > 0 { first - 1 } else { 0 }
+                    gpui::list_scroll_to("rows", target, "top")
+                } else if is_down {
+                    if last + 1 < rows {
+                        gpui::list_scroll_to("rows", last + 1, "bottom")
+                    } else {
+                        gpui::list_scroll_to("rows", rows - 1, "bottom")
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn main() {
+    let mut rows = ROWS
+    let args = env::args()
+    if args.len() > 0 {
+        if let Some(parsed) = args[0].to_i64() {
+            rows = parsed
+        }
+    }
+    gpui::set_int("total_rows", rows)
+
+    let outcome = gpui::run_with_rows("Lists", 680.0, 660.0, "", list_row, || {
+        if !gpui::state_bool("keys_bound", false) {
+            gpui::set_bool("keys_bound", true)
+            gpui::bind_keys("home=home; fn-home=home; cmd-up=home; cmd-left=home; end=end; fn-end=end; cmd-down=end; cmd-right=end; pageup=pageup; fn-pageup=pageup; pagedown=pagedown; fn-pagedown=pagedown; up=up; fn-up=up; down=down; fn-down=down; space=pagedown; shift-space=pageup; k=up; j=down")
+        }
+        gpui::on_keys(true)
+        handle(gpui::take_events(), rows)
+
+        let selected = gpui::state_int("selected", -1)
+
+        ui::column("size=full bg=#1e1e2e p=20 gap=14")
+            .child(ui::row("w=full justify=between items=baseline")
+                .text(f"{rows} rows", "font=2xl bold color=#cdd6f4")
+                .text(f"{gpui::frame()} frames painted", "font=xs color=#585b70"))
+            .child(ui::row("w=full justify=between bg=#181825 rounded=10 px=14 py=10")
+                .text("selected", "font=sm color=#9399b2")
+                .text(selected |> describe, "font=sm color=#89b4fa truncate"))
+            // Only the visible slice is built, and the rows are recycled as
+            // you scroll: the builder below is asked for a dozen or so rows,
+            // never for twenty thousand.
+            .list(
+                "rows",
+                rows,
+                28.0,
+                "w=full h=430 bg=#181825 rounded=12 border=1 bordercolor=#313244",
+            )
+            .text(
+                "GPUI asks the row builder for the visible window only, and reuses those rows while you scroll. Navigate with Home, End, PgUp, PgDn, or ↑ / ↓.",
+                "font=sm color=#6c7086",
+            )
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

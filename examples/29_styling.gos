@@ -1,0 +1,105 @@
+// 29 - Styling
+//
+// Everything GPUI's paint and type helpers can do to a box: fills, gradients,
+// corner radii, borders, shadows, opacity, and the type scale.
+//
+//   gos run --main-thread examples/29_styling.gos
+//
+// A style is a flat list of `key=value` tokens — see the README for the full
+// table. `ui::column`, `ui::row` and friends are just containers with a style
+// string; `ui::rect` is an empty styled box.
+
+use gpui
+use std::process
+use ui
+
+struct Hue {
+    name: String
+    hex: String
+}
+
+fn swatch(hue: Hue) -> ui::El {
+    ui::column("gap=6 items=center")
+        .rect(f"size=56 rounded=14 bg={hue.hex} shadow=lg")
+        .text(hue.name, "font=xs color=#9399b2")
+}
+
+fn type_step(step: (String, String)) -> ui::El {
+    let label, style = step
+    ui::row("w=full items=baseline gap=12")
+        .text("The quick brown fox", style)
+        .text(label, "font=xs color=#585b70")
+}
+
+fn main() {
+    // Catppuccin's fourteen accents, ready to be painted with.
+    let hues = #[
+        Hue { name: "rosewater", hex: "#f5e0dc" },
+        Hue { name: "flamingo", hex: "#f2cdcd" },
+        Hue { name: "pink", hex: "#f5c2c7" },
+        Hue { name: "mauve", hex: "#cba6f7" },
+        Hue { name: "red", hex: "#f38ba8" },
+        Hue { name: "maroon", hex: "#eba0ac" },
+        Hue { name: "peach", hex: "#fab387" },
+        Hue { name: "yellow", hex: "#f9e2af" },
+        Hue { name: "green", hex: "#a6e3a1" },
+        Hue { name: "teal", hex: "#94e2d5" },
+        Hue { name: "sky", hex: "#89dceb" },
+        Hue { name: "sapphire", hex: "#74c7ec" },
+        Hue { name: "blue", hex: "#89b4fa" },
+        Hue { name: "lavender", hex: "#b4befe" },
+    ]
+
+    let type_scale = #[
+        ("xs", "font=xs color=#cdd6f4"),
+        ("sm", "font=sm color=#cdd6f4"),
+        ("base", "font=base color=#cdd6f4"),
+        ("lg", "font=lg color=#cdd6f4"),
+        ("xl", "font=xl color=#cdd6f4"),
+        ("2xl", "font=2xl color=#cdd6f4"),
+        ("3xl", "font=3xl color=#cdd6f4"),
+        ("18px weight 300", "fs=18 weight=300 color=#a6adc8"),
+        ("18px weight 700", "fs=18 weight=700 color=#a6adc8"),
+        ("italic", "fs=18 italic color=#a6adc8"),
+        ("underline", "fs=18 underline color=#a6adc8"),
+        ("strike", "fs=18 strike color=#a6adc8"),
+    ]
+
+    let outcome = gpui::run("Styling", 760.0, 680.0, || {
+        // A run of children hangs off a container in one step: `map` builds
+        // them, `children` links them.
+        let palette = ui::row("gap=14 wrap").children(hues.map(swatch))
+        let scale = ui::column("gap=4").children(type_scale.map(type_step))
+
+        ui::scroll("size=full bg=#1e1e2e p=24 gap=22")
+            .text("Painting", "font=2xl bold color=#cdd6f4")
+            .child(palette)
+            .divider("")
+            .text("Gradients, shadows, opacity", "font=lg semibold color=#cdd6f4")
+            .child(ui::row("gap=16 items=center")
+                .rect("w=180 h=72 rounded=16 grad=135,#89b4fa,#cba6f7 shadow=lg")
+                .rect("w=180 h=72 rounded=16 grad=#f38ba8,#fab387 shadow=xl")
+                .rect("w=180 h=72 rounded=16 bg=#313244 border=2 bordercolor=#89b4fa shadow=none")
+                .rect("w=180 h=72 rounded=16 bg=#a6e3a1 opacity=0.35"))
+            .text("Corners and borders", "font=lg semibold color=#cdd6f4")
+            .child(ui::row("gap=12 items=end")
+                .rect("w=64 h=64 bg=#89b4fa rounded=none")
+                .rect("w=64 h=64 bg=#89b4fa rounded=4")
+                .rect("w=64 h=64 bg=#89b4fa rounded=12")
+                .rect("w=64 h=64 bg=#89b4fa rounded=24")
+                .rect("w=64 h=64 bg=#89b4fa rounded=full")
+                .rect("w=64 h=64 bg=#00000000 border=2 bordercolor=#f38ba8 rounded=12")
+                .rect("w=64 h=64 bg=#00000000 border=2 dashed bordercolor=#a6e3a1 rounded=12")
+                .rect("w=64 h=64 bg=#00000000 border=2 bordercolor=#f9e2af rounded=12 shadow=lg"))
+            .divider("")
+            .text("Type", "font=lg semibold color=#cdd6f4")
+            .child(scale)
+            .spacer(8.0)
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

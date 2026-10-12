@@ -1,0 +1,121 @@
+// 30 - Layout
+//
+// GPUI lays out with flexbox (through taffy). This tours the pieces you reach
+// for most: direction, gap, padding, growth, alignment, wrapping, and stacking
+// children on top of one another.
+//
+//   gos run --main-thread examples/30_layout.gos
+
+use gpui
+use std::process
+use ui
+
+fn block(label: String, style: String) -> ui::El {
+    ui::panel(style).text(label, "font=sm color=#11111b")
+}
+
+fn caption(content: String) -> ui::El {
+    ui::text(content, "font=sm semibold color=#9399b2")
+}
+
+/// One row per `justify` value, so they can be compared at a glance.
+fn justified(mode: String) -> ui::El {
+    let style = f"w=full h=40 bg=#181825 rounded=8 justify={mode}"
+    let cell = "size=64 h=full bg=#89b4fa justify=center items=center"
+    ui::row(style).child(block(mode, cell))
+}
+
+/// One panel per `items` value.
+fn aligned(mode: String, colour: String) -> ui::El {
+    let style = f"flex=1 bg=#181825 rounded=8 items={mode} justify=center"
+    ui::panel(style).text(f"items={mode}", f"font=sm color={colour}")
+}
+
+fn nested(depth: i64) -> ui::El {
+    if depth == 0 {
+        ui::text("nested padding", "font=sm color=#11111b")
+    } else {
+        let inner = nested(depth - 1)
+        let style = if depth == 3 { "p=2 bg=#181825 rounded=8" } else { "p=8 bg=#f9e2af rounded=6" }
+        let wrapper = if depth == 2 { "p=8 bg=#fab387 rounded=4" } else { style }
+        ui::panel(wrapper).child(inner)
+    }
+}
+
+fn chip(index: i64) -> ui::El {
+    ui::text(f"chip {index}", "font=xs color=#cdd6f4 px=10 py=4 bg=#45475a rounded=full")
+}
+
+/// A run of chips, wrapped.
+fn chips(count: i64) -> ui::El {
+    ui::row("gap=8 w=full wrap bg=#181825 rounded=8 p=12").children((0..count).map(chip).collect())
+}
+
+fn gap_cell(step: i64, colour: String) -> Fn(i64) -> ui::El {
+    |i| block(f"gap {step} · {i}", f"w=90 h=26 bg={colour} justify=center items=center")
+}
+
+/// The same three boxes at two different gaps.
+fn gapped(step: i64, colour: String) -> ui::El {
+    ui::row(f"gap={step} p=16 bg=#181825 rounded=8")
+        .children((0..3).map(gap_cell(step, colour)).collect())
+}
+
+fn main() {
+    let outcome = gpui::run("Layout", 780.0, 700.0, || {
+        let justifications = #["start", "center", "end", "between", "around"].fold(
+            ui::column("gap=8"),
+            |column, mode| column.child(justified(mode)),
+        )
+
+        ui::scroll("size=full bg=#1e1e2e p=24 gap=20")
+            // ---- a header / body / footer column ------------------------
+            .child(caption("column with a flexible middle"))
+            .child(ui::column("w=full h=240 bg=#181825 rounded=12 overflow=hidden")
+                .child(block("header · h=44", "h=44 w=full bg=#89b4fa justify=center items=center"))
+                .child(block("body · flex=1", "flex=1 w=full bg=#313244 justify=center items=center color=#cdd6f4"))
+                .child(block("footer · h=32", "h=32 w=full bg=#a6e3a1 justify=center items=center")))
+
+            // ---- alignment ---------------------------------------------
+            .child(caption("justify — along the main axis"))
+            .child(justifications)
+            .child(ui::row("gap=12 w=full items=stretch h=120")
+                .child(aligned("center", "#89b4fa"))
+                .child(aligned("end", "#a6e3a1"))
+                .child(aligned("start", "#f9e2af")))
+
+            // ---- gap and padding ---------------------------------------
+            .child(caption("gap and padding"))
+            .child(ui::row("gap=16")
+                .child(gapped(4, "#cba6f7"))
+                .child(gapped(12, "#f38ba8"))
+                .child(ui::panel("p=2 bg=#181825 rounded=8").child(nested(3))))
+
+            // ---- growing -------------------------------------------------
+            .child(caption("flex=1 shares the leftover space"))
+            .child(ui::row("gap=8 w=full h=40")
+                .child(block("flex=1", "flex=1 h=full bg=#89b4fa justify=center items=center"))
+                .child(block("flex=2", "flex=2 h=full bg=#74c7ec justify=center items=center"))
+                .child(block("w=120", "w=120 h=full bg=#94e2d5 justify=center items=center")))
+
+            // ---- wrapping -------------------------------------------------
+            .child(caption("wrap"))
+            .child(chips(12))
+
+            // ---- stacking -------------------------------------------------
+            .child(caption("stack — children positioned absolutely"))
+            .child(ui::stack("w=full h=140 bg=#181825 rounded=12")
+                .rect("absolute left=20 top=20 size=90 bg=#f38ba8 rounded=10 opacity=0.9")
+                .rect("absolute left=70 top=50 size=110 bg=#89b4fa rounded=10 opacity=0.75")
+                .rect("absolute left=140 top=20 size=70 bg=#a6e3a1 rounded=full opacity=0.85")
+                .text("top=50 left=70", "absolute left=250 top=60 font=sm color=#9399b2")
+                .rect("absolute left=10 top=100 w=40 h=30 grad=135,#f9e2af,#fab387 rounded=6"))
+            .spacer(8.0)
+            |> ui::root
+    })
+
+    if let Err(problem) = outcome {
+        eprintln(f"gpui::run stopped with an error: {problem}")
+        process::exit(1)
+    }
+}

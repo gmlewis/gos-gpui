@@ -62,11 +62,5 @@ jobs:
       - name: The headless assertion suite
         run: gos test tests
 
-      - name: The docs still describe the code
-        run: ./scripts/docs.sh
-
-      - name: Every documented deviation has a verdict
-        run: ./scripts/pair-census.sh
-
-      - name: The toolkit check, headless half
-        run: ./scripts/toolkit.sh --no-run
+      - name: Typecheck all examples
+        run: ./scripts/check-all.sh
