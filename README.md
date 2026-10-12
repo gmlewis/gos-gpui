@@ -29,7 +29,7 @@ GPU-accelerated desktop GUI applications in [Gossamer](https://github.com/gossam
   ```bash
   sudo apt-get install build-essential pkg-config \
     libx11-dev libxcb1-dev libxext-dev libxrender-dev \
-    libxcursor-dev libxinput-dev libfreetype-dev
+    libxcursor-dev libxi-dev libxkbcommon-x11-dev libfreetype-dev
   ```
 
 ---
