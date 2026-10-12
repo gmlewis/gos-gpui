@@ -20,6 +20,9 @@ struct Palette {
     text: String
     dim: String
     accent: String
+    accent_text: String
+    accent_hover: String
+    accent_active: String
     gradient: String
 }
 
@@ -34,6 +37,9 @@ fn mocha() -> Palette {
         text: "#cdd6f4"
         dim: "#7f849c"
         accent: "#89b4fa"
+        accent_text: "#11111b"
+        accent_hover: "#a6e3fa"
+        accent_active: "#74c7ec"
         gradient: "135,#89b4fa,#cba6f7"
     }
 }
@@ -48,6 +54,9 @@ fn latte() -> Palette {
         text: "#4c4f69"
         dim: "#8c8fa1"
         accent: "#1e66f5"
+        accent_text: "#ffffff"
+        accent_hover: "#2a75ff"
+        accent_active: "#1855d0"
         gradient: "135,#1e66f5,#8839ef"
     }
 }
@@ -131,7 +140,7 @@ fn main() {
                     .button(
                         "nothing",
                         "a button in this palette",
-                        f"px=14 py=8 rounded=9 bg={p.accent} color=#ffffff hover=bg:#ffffff33 active=bg:#ffffff22",
+                        f"px=14 py=8 rounded=9 bg={p.accent} color={p.accent_text} hover=bg:{p.accent_hover} active=bg:{p.accent_active}",
                     )
                     .progress(gpui::state_float("level", 0.4), f"flex=1 bg={p.raised}")))
             .spacer(8.0)
