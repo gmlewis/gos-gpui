@@ -179,7 +179,8 @@ fn wave() -> i64 {
 /// quadratic, `3, x, y, c1x, c1y, c2x, c2y` a cubic, `4` a close. The logo's outlines are
 /// cubics — `relative_cubic_bezier_to` throughout — which is why the binding grew
 /// `gpui::path_cubic_to` for this example and could not have drawn it before.
-const LOGO: Vec<f64> = #[
+fn logo_data() -> Vec<f64> {
+    #[
     0.0, 119.3679, 242.7444, 1.0, 115.4133, 240.2964,
     3.0, 115.3008, 239.14441, 115.38, 239.9112, 115.34219, 239.5269,
     1.0, 118.699196, 235.97461, 3.0, 119.106, 234.7137, 119.0448, 235.6524, 119.1996, 235.1754,
@@ -361,39 +362,41 @@ const LOGO: Vec<f64> = #[
     3.0, 108.6894, 234.52649, 108.6786, 231.4566, 109.315796, 233.1126,
     3.0, 104.9985, 235.9521, 108.063896, 235.9413, 106.4115, 236.57939,
     3.0, 103.5765, 232.2549, 103.588196, 235.3257, 102.951, 233.6706, 4.0,
-]
+    ]
+}
 
-/// Walk `LOGO` and describe it. The run is flat and its commands are not all the same
+/// Walk `logo_data()` and describe it. The run is flat and its commands are not all the same
 /// length, so the cursor advances by however many numbers the command just read used.
 fn logo() -> i64 {
     let handle = gpui::path_fill()
+    let data = logo_data()
     let mut i = 0
     let mut commands = 0
-    while i < LOGO.len() {
-        let op = LOGO[i] as i64
+    while i < data.len() {
+        let op = data[i] as i64
         commands = commands + 1
         if op == 0 {
-            gpui::path_move_to(handle, LOGO[i + 1], LOGO[i + 2])
+            gpui::path_move_to(handle, data[i + 1], data[i + 2])
             i = i + 3
         } else if op == 1 {
-            gpui::path_line_to(handle, LOGO[i + 1], LOGO[i + 2])
+            gpui::path_line_to(handle, data[i + 1], data[i + 2])
             i = i + 3
         } else if op == 2 {
-            gpui::path_curve_to(handle, LOGO[i + 1], LOGO[i + 2], LOGO[i + 3], LOGO[i + 4])
+            gpui::path_curve_to(handle, data[i + 1], data[i + 2], data[i + 3], data[i + 4])
             i = i + 5
         } else if op == 3 {
             gpui::path_cubic_to(
                 handle,
-                LOGO[i + 1], LOGO[i + 2],
-                LOGO[i + 3], LOGO[i + 4],
-                LOGO[i + 5], LOGO[i + 6],
+                data[i + 1], data[i + 2],
+                data[i + 3], data[i + 4],
+                data[i + 5], data[i + 6],
             )
             i = i + 7
         } else if op == 4 {
             gpui::path_close(handle)
             i = i + 1
         } else {
-            // Not a command: `LOGO` is opaque data, so say so rather than read the next number
+            // Not a command: `logo_data` is opaque data, so say so rather than read the next number
             // as though the run were still lined up. The walk then ends off the end and the
             // check below reports a second time.
             println(f"FAIL LOGO unknown command {op} at {i}")
@@ -403,10 +406,10 @@ fn logo() -> i64 {
     // The walk reads the run by stride, and a stride one number out would drift and describe
     // a different shape without complaining. So it says whether it landed exactly on the end
     // having read exactly 255 commands — lyon's own count for this path — and every one of
-    // them a command it knows. A mis-transcribed number in `LOGO` cannot fail this, but a
+    // them a command it knows. A mis-transcribed number in `logo_data` cannot fail this, but a
     // mistyped *stride* cannot pass it.
-    if i != LOGO.len() || commands != 255 {
-        println(f"FAIL LOGO the walk ended at {i} of {LOGO.len()} after {commands} commands, not at the end after 255")
+    if i != data.len() || commands != 255 {
+        println(f"FAIL LOGO the walk ended at {i} of {data.len()} after {commands} commands, not at the end after 255")
     }
     finish(handle)
 }
