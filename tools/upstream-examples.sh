@@ -34,6 +34,7 @@ fi
 skip="image_gallery"
 
 sync() {
+  local gpui_line src crate file ex_name dir
   mkdir -p "$UPSTREAM"
 
   if [ "$(uname -s)" = "Darwin" ]; then
@@ -85,8 +86,8 @@ EOF
   rm -rf "$UPSTREAM/examples"
   mkdir -p "$UPSTREAM/examples"
   for file in "$src"/examples/*.rs; do
-    name=$(basename "$file" .rs)
-    case " $skip " in *" $name "*) continue ;; esac
+    ex_name=$(basename "$file" .rs)
+    case " $skip " in *" $ex_name "*) continue ;; esac
     cp "$file" "$UPSTREAM/examples/"
   done
   # Some examples load images or SVGs from beside themselves.
