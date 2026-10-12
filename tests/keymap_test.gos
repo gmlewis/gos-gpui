@@ -1,0 +1,71 @@
+// Unit tests for keyboard bindings, action dispatch, and application menus.
+
+use gpui
+use ui
+
+#[test]
+fn keymap_plan_parsing() {
+    let plan = gpui::keymap_plan("cmd-s=save; cmd-shift-z=redo; home=home; end=end")
+    assert(plan.len() == 4, f"expected 4 pairs, got {plan.len()}")
+    assert(plan[0] == "cmd-s:save", f"first pair: {plan[0]}")
+    assert(plan[1] == "cmd-shift-z:redo", f"second pair: {plan[1]}")
+    assert(plan[2] == "home:home", f"third pair: {plan[2]}")
+    assert(plan[3] == "end:end", f"fourth pair: {plan[3]}")
+}
+
+#[test]
+fn action_registration_and_dispatch() {
+    ui::register_action("app:save", "cmd-s")
+    ui::register_action("app:open", "cmd-o")
+
+    let resolved = ui::resolve_action("cmd-s")
+    assert(resolved == "app:save", f"expected app:save, got {resolved}")
+
+    let dispatched = ui::dispatch_action("app:save")
+    assert(dispatched, "dispatching registered action should return true")
+
+    let unknown_dispatched = ui::dispatch_action("app:unknown_action")
+    assert(!unknown_dispatched, "dispatching unknown action should return false")
+}
+
+#[test]
+fn menu_tree_and_submenu_nesting() {
+    let tree = gpui::menu_tree(#[
+        "submenu:File",
+        ">events:Open:cmd-o",
+        ">submenu:Recent",
+        ">>events:Recent One",
+        ">separator",
+        "events:Quit",
+    ])
+    assert(tree.len() == 6, f"six entries, got {tree.len()}")
+    assert(tree[0] == "0:submenu:File", f"submenu at depth 0: {tree[0]}")
+    assert(tree[1] == "1:events:Open", f"item at depth 1: {tree[1]}")
+    assert(tree[2] == "1:submenu:Recent", f"nested submenu: {tree[2]}")
+    assert(tree[3] == "2:events:Recent One", f"item at depth 2: {tree[3]}")
+    assert(tree[4] == "1:separator:", f"separator at depth 1: {tree[4]}")
+    assert(tree[5] == "0:events:Quit", f"item at depth 0: {tree[5]}")
+}
+
+#[test]
+fn menu_slots_and_accelerators() {
+    let slots = gpui::menu_slots(#[
+        "submenu:File",
+        ">events:Open:cmd-o",
+        ">events:Save:cmd-s",
+        "events:Quit:cmd-q",
+    ])
+    assert(slots.len() == 3, f"three clickable items, got {slots.len()}")
+    assert(slots[0] == "0:Open", f"first slot: {slots[0]}")
+    assert(slots[1] == "1:Save", f"second slot: {slots[1]}")
+    assert(slots[2] == "2:Quit", f"third slot: {slots[2]}")
+
+    let accels = gpui::menu_accelerators(#[
+        "submenu:File",
+        ">events:Open:cmd-o",
+        ">events:Save:cmd-s",
+    ])
+    assert(accels.len() == 2, f"two accelerators: {accels.len()}")
+    assert(accels[0] == "0:cmd-o", f"first accel: {accels[0]}")
+    assert(accels[1] == "1:cmd-s", f"second accel: {accels[1]}")
+}

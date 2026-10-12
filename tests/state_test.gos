@@ -1,0 +1,145 @@
+// Unit tests for state management, reactive stores, history (undo/redo), and pub/sub.
+
+use gpui
+use ui
+
+struct CounterState {
+    count: i64,
+}
+
+#[test]
+fn state_is_scoped_to_a_window() {
+    gpui::set_int_in(1, "count", 7)
+    gpui::set_int_in(2, "count", 9)
+
+    assert(gpui::state_int_in(1, "count", 0) == 7, "window 1 keeps its own count")
+    assert(gpui::state_int_in(2, "count", 0) == 9, "window 2 keeps its own count")
+    assert(
+        gpui::state_int_in(3, "count", -1) == -1,
+        "a window that never wrote the key answers the default",
+    )
+}
+
+#[test]
+fn every_type_is_scoped_to_a_window() {
+    gpui::set_float_in(1, "ratio", 0.25)
+    gpui::set_float_in(2, "ratio", 0.75)
+    assert(gpui::state_float_in(1, "ratio", 0.0) == 0.25, "window 1 keeps its float")
+    assert(gpui::state_float_in(2, "ratio", 0.0) == 0.75, "window 2 keeps its float")
+
+    gpui::set_bool_in(1, "open", true)
+    gpui::set_bool_in(2, "open", false)
+    assert(gpui::state_bool_in(1, "open", false), "window 1 keeps its flag")
+    assert(!gpui::state_bool_in(2, "open", true), "window 2 keeps its flag")
+
+    gpui::set_text_in(1, "name", "one")
+    gpui::set_text_in(2, "name", "two")
+    assert(gpui::state_text_in(1, "name", "") == "one", "window 1 keeps its text")
+    assert(gpui::state_text_in(2, "name", "") == "two", "window 2 keeps its text")
+}
+
+#[test]
+fn forgetting_a_key_forgets_it_in_one_window_only() {
+    gpui::set_int_in(1, "temp", 11)
+    gpui::set_int_in(2, "temp", 22)
+    gpui::forget_in(1, "temp")
+
+    assert(gpui::state_int_in(1, "temp", -1) == -1, "window 1 forgot the key")
+    assert(gpui::state_int_in(2, "temp", -1) == 22, "window 2 still has it")
+}
+
+#[test]
+fn outside_a_frame_there_is_no_window() {
+    assert(gpui::window_id() == 0, "a program outside a frame has no window")
+
+    gpui::set_int("plain", 5)
+    assert(gpui::state_int("plain", 0) == 5, "the plain accessors use window 0")
+    assert(
+        gpui::state_int_in(1, "plain", -1) == -1,
+        "and window 1 does not see window 0's key",
+    )
+}
+
+#[test]
+fn model_reactive_updates_and_subscription() {
+    let mut model = ui::create_model(CounterState { count: 10 })
+    assert(model.read().count == 10, "initial count should be 10")
+
+    let mut subscriber_calls = 0
+    let mut observed_count = 0
+
+    model.subscribe(|state: CounterState| {
+        subscriber_calls += 1
+        observed_count = state.count
+    })
+
+    model.update(|s: CounterState| CounterState { count: s.count + 5 })
+
+    assert(subscriber_calls == 1, f"expected 1 subscriber call, got {subscriber_calls}")
+    assert(observed_count == 15, f"expected observed_count == 15, got {observed_count}")
+    assert(model.read().count == 15, f"model state mismatch: {model.read().count}")
+
+    model.set(CounterState { count: 100 })
+    assert(subscriber_calls == 2, f"expected 2 subscriber calls, got {subscriber_calls}")
+    assert(observed_count == 100, f"expected observed_count == 100, got {observed_count}")
+    assert(model.read().count == 100, f"model state mismatch: {model.read().count}")
+}
+
+#[test]
+fn window_repaint_trigger_on_model_notification() {
+    let window_id = 99
+    let _ = gpui::clear_window_invalidation(window_id)
+    assert(!gpui::is_window_invalidated(window_id), "window should initially not be invalidated")
+
+    let mut model = ui::create_model_for_window(CounterState { count: 0 }, window_id)
+    model.set(CounterState { count: 1 })
+
+    assert(gpui::is_window_invalidated(window_id), "model notification should invalidate window")
+
+    let cleared = gpui::clear_window_invalidation(window_id)
+    assert(cleared, "clear_window_invalidation should return true")
+    assert(!gpui::is_window_invalidated(window_id), "window should no longer be invalidated")
+}
+
+#[test]
+fn history_coalescing_and_undo_redo() {
+    gpui::set_text("hist.a", "")
+    gpui::history_watch("hist.a")
+
+    gpui::set_text("hist.a", "a")
+    gpui::set_text("hist.a", "ab")
+    gpui::set_text("hist.a", "abc")
+    assert(gpui::history_depth("hist.a") == 1, f"three keystrokes, one step: {gpui::history_depth("hist.a")}")
+
+    assert(gpui::history_undo("hist.a"), "there is a step to undo")
+    assert(gpui::state_text("hist.a", "") == "", "takes the whole run back")
+    assert(gpui::history_redo("hist.a"), "redo puts it back")
+    assert(gpui::state_text("hist.a", "") == "abc", "all of it restored")
+
+    let _ = gpui::history_unwatch("hist.a")
+}
+
+#[test]
+fn history_unwatched_key_keeps_no_history() {
+    gpui::set_text("hist.unwatched", "")
+    gpui::set_text("hist.unwatched", "typed")
+    assert(gpui::history_depth("hist.unwatched") == 0, "nothing was watching")
+    assert(!gpui::history_undo("hist.unwatched"), "so there is nothing to undo")
+    assert(gpui::state_text("hist.unwatched", "") == "typed", "and text is untouched")
+}
+
+#[test]
+fn pub_sub_observables() {
+    let heard = gpui::publish_in(1, "save", "ok")
+    assert(heard == 0, "nobody has subscribed yet")
+    assert(gpui::take_events_in(1).len() == 0, "so nothing was raised")
+
+    assert(gpui::subscribe_in(1, "save", "saved"), "the first subscription is new")
+    assert(gpui::publish_in(1, "save", "ok") == 1, "and now one subscriber hears it")
+
+    let events = gpui::take_events_in(1)
+    assert(events.len() == 1, f"one event, got {events.len()}")
+    assert(events[0] == "saved|ok", f"raised under subscriber's id: {events[0]}")
+
+    let _ = gpui::unsubscribe_in(1, "save", "saved")
+}

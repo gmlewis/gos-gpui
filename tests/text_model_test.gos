@@ -1,0 +1,26 @@
+// Unit tests for multi-line text metrics, caret movements, word boundaries, and editor chrome tokens.
+
+use gpui
+
+#[test]
+fn text_lines_and_bounds() {
+    let text = "ab\ncd\nef"
+    assert(gpui::text_lines(text) == 3, f"three lines expected: {gpui::text_lines(text)}")
+    assert(gpui::text_line(text, 0) == 0, "first byte on line 0")
+    assert(gpui::text_line(text, 3) == 1, "after first break is line 1")
+    assert(gpui::text_line(text, 6) == 2, "after second break is line 2")
+    assert(gpui::text_line(text, 99) == 2, "past end clamps to last line")
+
+    assert(gpui::text_lines("single line") == 1, "single line text")
+    assert(gpui::text_line_bounds(text, 0) == "0,2", "first line bounds")
+    assert(gpui::text_line_bounds(text, 4) == "3,5", "second line bounds")
+}
+
+#[test]
+fn editor_chrome_style_tokens() {
+    let unknown = gpui::unknown_style_tokens("gutter softwrap caret=#ff0000ff sel=#00ff0080 gutterbg=#22000000 gutterfg=#ffcc00ff")
+    assert(unknown.len() == 0, f"editor chrome tokens should be recognized: {unknown}")
+
+    let invalid = gpui::unknown_style_tokens("caretcolour=#ff0000ff gutter=wide")
+    assert(invalid.len() == 2, f"misspelled chrome tokens should be rejected: {invalid}")
+}

@@ -1,7 +1,0 @@
---- tests/tmp_ex22_red.gos, container run: `tests/gui/ex22_text_menu.gos` with its `set_menus` call removed,
---- which is what `examples/22_text.gos` did until round 101:
-$ ./scripts/gosbox.sh run tests/tmp_ex22_red.gos
-FAIL   tests/tmp_ex22_red.gos: exited 0 — no verdict
-       FAIL EX22 the platform was handed 0 line(s) of menu bar, not the one empty menu upstream installs: #[]
-
---- and the same probe with the call, on all five tiers — `EX22.after.txt`.

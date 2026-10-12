@@ -1,0 +1,83 @@
+// Unit tests for window options, window geometry, display queries, and settings persistence.
+
+use gpui
+use std::fs
+use ui
+
+#[test]
+fn window_options_parsing() {
+    let valid_options = "titlebar=none kind=popup place=center minsize=400,300"
+    let unknown = gpui::unknown_window_tokens(valid_options)
+    assert(unknown.len() == 0, f"all window tokens should be accepted: {unknown}")
+
+    let invalid_options = "titlebar=none invalid_opt=999"
+    let rejected = gpui::unknown_window_tokens(invalid_options)
+    assert(rejected.len() == 1, f"invalid option should be rejected: {rejected}")
+}
+
+#[test]
+fn window_bounds_and_geometry_helpers() {
+    let win = ui::window()
+
+    let new_bounds = ui::rect_new(50.0, 60.0, 800.0, 600.0)
+    win.set_bounds(new_bounds)
+
+    let b = win.bounds()
+    assert(b.origin.x == 50.0, f"expected x=50.0, got {b.origin.x}")
+    assert(b.origin.y == 60.0, f"expected y=60.0, got {b.origin.y}")
+    assert(b.size.width == 800.0, f"expected w=800.0, got {b.size.width}")
+    assert(b.size.height == 600.0, f"expected h=600.0, got {b.size.height}")
+
+    assert(ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 100.0, 100.0), "point (100,100) should be inside")
+    assert(!ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 10.0, 10.0), "point (10,10) should be outside")
+    assert(!ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 900.0, 700.0), "point (900,700) should be outside")
+
+    let center = ui::bounds_center(50.0, 60.0, 800.0, 600.0)
+    assert(center.x == 450.0, f"expected center x=450.0, got {center.x}")
+    assert(center.y == 360.0, f"expected center y=360.0, got {center.y}")
+}
+
+#[test]
+fn window_state_accessors() {
+    let win = ui::window()
+
+    win.set_title("Test Window Title")
+    assert(win.title() == "Test Window Title", f"title mismatch: {win.title()}")
+
+    win.set_maximized(true)
+    assert(win.is_maximized(), "window should be maximized")
+    win.set_maximized(false)
+    assert(!win.is_maximized(), "window should not be maximized")
+
+    win.set_minimized(true)
+    assert(win.is_minimized(), "window should be minimized")
+    win.set_minimized(false)
+    assert(!win.is_minimized(), "window should not be minimized")
+}
+
+#[test]
+fn display_queries() {
+    let all_displays = ui::displays()
+    assert(all_displays.len() >= 1, "at least one display should be detected")
+
+    let primary = ui::primary_display()
+    assert(primary.id >= 0, "primary display id should be non-negative")
+    assert(primary.bounds.size.width > 0.0, "primary display should have positive width")
+    assert(primary.bounds.size.height > 0.0, "primary display should have positive height")
+}
+
+#[test]
+fn settings_persistence_round_trip() {
+    let temp_dir = "/tmp/gpui-settings-test"
+    let temp_file = "/tmp/gpui-settings-test/settings.txt"
+    let _ = fs::remove_dir_all(temp_dir)
+
+    assert(gpui::settings_set(temp_file, "ui.font_size", "14"), "write setting should succeed")
+    assert(gpui::settings_set(temp_file, "ui.theme", "catppuccin-mocha"), "second setting")
+
+    assert(gpui::settings_get(temp_file, "ui.font_size") == "14", "first setting read back")
+    assert(gpui::settings_get(temp_file, "ui.theme") == "catppuccin-mocha", "second setting read back")
+    assert(gpui::settings_get(temp_file, "nonexistent") == "", "missing key returns empty")
+
+    let _ = fs::remove_dir_all(temp_dir)
+}

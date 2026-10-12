@@ -1,5 +1,0 @@
-CL6 — the save-file picker.
-
-BEFORE THE WORK. **Argued, not transcribed**, for the same reason as CL5: the mechanism landed in round 71 and
-nothing ran until round 74. The red would have been `error[GX0002]: name gpui::save_file is not bound in this
-scope` on the check tier.

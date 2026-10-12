@@ -1,0 +1,56 @@
+// Unit tests for vector canvas drawing, Bézier paths, and paint operations.
+
+use gpui
+use ui
+
+#[test]
+fn vector_path_builder_raw_ffi() {
+    gpui::path_reset()
+
+    let stroke_h = gpui::path_stroke(3.0)
+    assert(stroke_h >= 0, f"expected valid stroke handle, got {stroke_h}")
+
+    gpui::path_move_to(stroke_h, 10.0, 10.0)
+    gpui::path_line_to(stroke_h, 100.0, 50.0)
+    gpui::path_curve_to(stroke_h, 150.0, 100.0, 120.0, 80.0)
+    gpui::path_cubic_to(stroke_h, 200.0, 150.0, 160.0, 110.0, 180.0, 140.0)
+    gpui::path_arc_to(stroke_h, 8.0, 8.0, 0.0, false, true, 10.0, 10.0)
+    gpui::path_close(stroke_h)
+
+    let built_stroke = gpui::path_build(stroke_h)
+    assert(built_stroke.is_ok(), "stroke path build should succeed")
+
+    let fill_h = gpui::path_fill()
+    assert(fill_h >= 0, f"expected valid fill handle, got {fill_h}")
+
+    gpui::path_move_to(fill_h, 0.0, 0.0)
+    gpui::path_polygon(fill_h, #[0.0, 0.0, 50.0, 0.0, 50.0, 50.0, 0.0, 50.0], true)
+    gpui::path_close(fill_h)
+
+    let built_fill = gpui::path_build(fill_h)
+    assert(built_fill.is_ok(), "fill path build should succeed")
+
+    let el = gpui::paint_paths(#[stroke_h, fill_h], #["#ff5555", "#00ff00"], "w=400 h=300")
+    assert(el > 0, f"expected valid painted element handle, got {el}")
+}
+
+#[test]
+fn fluent_canvas_builder() {
+    gpui::path_reset()
+
+    let c = ui::canvas(|cx| {
+        let _ = cx.begin_stroke(2.5, "#89b4fa")
+            .move_to(20.0, 20.0)
+            .line_to(120.0, 80.0)
+            .cubic_to(200.0, 150.0, 140.0, 90.0, 170.0, 130.0)
+            .close()
+
+        let _ = cx.begin_fill("#a6e3a1")
+            .move_to(50.0, 50.0)
+            .line_to(100.0, 50.0)
+            .line_to(75.0, 10.0)
+            .close()
+    })
+
+    assert(ui::handle_of(c) != 0, "canvas handle should be valid")
+}

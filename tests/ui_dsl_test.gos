@@ -1,0 +1,106 @@
+// Unit tests for the declarative UI DSL, fluent chaining, layout, modal overlays, and style tokens.
+
+use gpui
+use ui
+
+#[test]
+fn element_tree_construction_and_hierarchy() {
+    let col = ui::column("gap=10 p=20")
+        .text("Header", "font=2xl bold color=#ffffff")
+        .child(
+            ui::row("gap=8 items=center")
+                .button("btn1", "Action", "px=14 py=8 bg=#89b4fa")
+                .input("query", "Search...", "w=200 bg=#313244")
+                .checkbox("check1", "Enable", true, "color=#cdd6f4")
+        )
+
+    let handle = ui::handle_of(col)
+    assert(handle != 0, "root element handle should be non-zero")
+    assert(ui::style_of(col) != "", "style of root element should not be empty")
+}
+
+#[test]
+fn fluent_chaining_all_categories() {
+    let card = ui::div()
+        .flex_col()
+        .items_center()
+        .justify_between()
+        .w(400.0)
+        .h(300.0)
+        .p(24.0)
+        .gap(16.0)
+        .bg("#1e1e2e")
+        .border(1.0, "#313244")
+        .rounded(12.0)
+        .shadow_lg()
+        .opacity(0.95)
+        .z(5)
+
+    let style = ui::style_of(card)
+    assert(ui::handle_of(card) != 0, "card handle is valid")
+    assert(style != "", "style string is populated")
+    assert(gpui::unknown_style_tokens(style).len() == 0, f"all chained tokens should be valid style tokens: {style}")
+}
+
+#[test]
+fn layout_elements_and_helpers() {
+    let panel = ui::panel("w=full h=200")
+        .child(ui::rect("w=full h=1 bg=#45475a"))
+        .child(ui::divider("h=1 bg=#585b70"))
+        .child(ui::spacer(16.0))
+        .child(ui::progress(0.75, "w=full h=8 bg=#89b4fa"))
+
+    assert(ui::handle_of(panel) != 0, "panel handle should be valid")
+}
+
+#[test]
+fn anchored_element_corners_and_offsets() {
+    let tooltip = ui::label("Tooltip content").bg("#313244").p(8.0)
+
+    let a_tl = ui::anchored(ui::ANCHOR_TOP_LEFT, 100.0, 50.0, tooltip)
+    assert(a_tl.handle > 0, f"expected valid anchored handle, got {a_tl.handle}")
+
+    let a_tr = ui::anchored_with_offset(ui::ANCHOR_TOP_RIGHT, 200.0, 100.0, 10.0, 5.0, tooltip)
+    assert(a_tr.handle > 0, f"expected valid anchored with offset handle, got {a_tr.handle}")
+
+    let a_bl = ui::anchored(ui::ANCHOR_BOTTOM_LEFT, 50.0, 300.0, tooltip)
+    assert(a_bl.handle > 0, f"expected valid anchored handle, got {a_bl.handle}")
+
+    let a_br = ui::anchored(ui::ANCHOR_BOTTOM_RIGHT, 400.0, 300.0, tooltip)
+    assert(a_br.handle > 0, f"expected valid anchored handle, got {a_br.handle}")
+}
+
+#[test]
+fn deferred_element_and_modal() {
+    let dialog_content = ui::div()
+        .flex_col()
+        .w(300.0)
+        .h(200.0)
+        .bg("#181825")
+        .p(16.0)
+        .child(ui::label("Modal Title"))
+
+    let def_el = ui::deferred(100, dialog_content)
+    assert(def_el.handle > 0, f"expected valid deferred handle, got {def_el.handle}")
+
+    let modal_el = ui::modal(dialog_content)
+    assert(modal_el.handle > 0, f"expected valid modal handle, got {modal_el.handle}")
+
+    let root = ui::div()
+        .w(800.0)
+        .h(600.0)
+        .child(ui::label("Main page"))
+        .child(modal_el)
+
+    assert(root.handle > 0, f"expected valid root handle, got {root.handle}")
+}
+
+#[test]
+fn style_token_validation() {
+    let valid_tokens = "w=full h=48 bg=#1e1e2e color=#cdd6f4 font=xl bold rounded=8 p=16 items=center"
+    assert(gpui::unknown_style_tokens(valid_tokens).len() == 0, "standard style tokens should be valid")
+
+    let invalid_tokens = "w=full unknown_random_property=123"
+    let unknown = gpui::unknown_style_tokens(invalid_tokens)
+    assert(unknown.len() == 1, f"invalid tokens should be detected: {unknown}")
+}

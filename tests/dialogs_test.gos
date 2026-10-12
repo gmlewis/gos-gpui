@@ -1,0 +1,64 @@
+// Unit tests for modal prompt queues and native file dialog options.
+
+use gpui
+use ui
+
+#[test]
+fn prompt_queue_and_answers() {
+    gpui::prompts_clear()
+
+    let id = gpui::prompt("Confirm Action", "Do you wish to proceed?", "Yes;No;Cancel")
+    assert(id > 0, f"prompt should receive positive id: {id}")
+    assert(
+        gpui::prompt_current() == f"{id}|Confirm Action|Do you wish to proceed?",
+        f"current prompt mismatch: {gpui::prompt_current()}",
+    )
+    assert(
+        gpui::prompt_buttons() == #["Yes", "No", "Cancel"],
+        f"buttons mismatch: {gpui::prompt_buttons()}",
+    )
+
+    let answered = gpui::prompt_answer(id, 0)
+    assert(answered, "answering current prompt should succeed")
+    assert(gpui::prompt_current() == "", "queue should be empty after answer")
+
+    let _ = gpui::prompts_clear()
+}
+
+#[test]
+fn file_picker_prompt_options() {
+    let opts = ui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: true,
+        prompt: "Select files to open",
+    }
+    let id = ui::prompt_for_paths(opts)
+    assert(id > 0, f"expected positive prompt id, got {id}")
+
+    let head_info = ui::prompt_for_paths_current()
+    assert(head_info != "", f"expected prompt info at head of queue: {head_info}")
+
+    let answered = ui::prompt_for_paths_answer(id, #["/path/to/file1.txt", "/path/to/file2.txt"])
+    assert(answered, "prompt_for_paths_answer should succeed for head prompt")
+
+    let save_opts = ui::NewPathPromptOptions {
+        directory: "/tmp/docs",
+        suggested_name: "untitled.txt",
+    }
+    let save_id = ui::prompt_for_new_path(save_opts)
+    assert(save_id > 0, f"expected positive save prompt id, got {save_id}")
+
+    let answered_save = ui::prompt_for_new_path_answer(save_id, "/tmp/docs/untitled.txt")
+    assert(answered_save, "prompt_for_new_path_answer should succeed")
+}
+
+#[test]
+fn clipboard_read_and_write() {
+    ui::write_clipboard("Gossamer GPUI Clipboard Test")
+    let read_back = ui::read_clipboard()
+    assert(read_back == "Gossamer GPUI Clipboard Test", f"clipboard mismatch: {read_back}")
+
+    ui::write_clipboard("Updated Clipboard Text")
+    assert(ui::read_clipboard() == "Updated Clipboard Text", "updated clipboard text mismatch")
+}

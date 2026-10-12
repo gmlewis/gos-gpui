@@ -1,7 +1,0 @@
-CL5 — the open-file picker.
-
-BEFORE THE WORK. **Argued, not transcribed.** The mechanism landed in round 71 with its probe; nothing was run
-until round 74, so no transcript of the probe failing exists. The red would have been an unresolved symbol — the
-probe names `gpui::open_files`, which the binding did not have — the check tier answering
-`error[GX0002]: name gpui::open_files is not bound in this scope`. Recording that as an argument rather than a
-recording, as MN4's file does for the same reason.

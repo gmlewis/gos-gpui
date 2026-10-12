@@ -1,0 +1,33 @@
+// Unit tests for animation easing curves, task results, and scrollbar thumb geometry.
+
+use gpui
+
+#[test]
+fn animation_easings_and_endpoints() {
+    let names = gpui::animation_easings()
+    assert(names.len() >= 4, f"expected at least 4 easings, got {names.len()}")
+    assert(names[0] == "linear", "linear is the first easing")
+
+    for name in names {
+        assert(gpui::easing_at(name, 0.0) == 0.0, f"{name} must start at 0.0")
+        assert(gpui::easing_at(name, 1.0) == 1.0, f"{name} must end at 1.0")
+    }
+
+    assert(gpui::easing_at("linear", 0.5) == 0.5, "linear is the identity")
+    assert(gpui::easing_at("unknown_curve", 0.3) == 0.3, "unknown curve falls back to linear")
+}
+
+#[test]
+fn background_task_results() {
+    gpui::set_text("task1.result", "success: 42 records processed")
+    assert(gpui::task_result("task1") == "success: 42 records processed", "task result read back")
+    assert(gpui::task_result("nonexistent_task") == "", "unrun task has empty result")
+}
+
+#[test]
+fn scrollbar_thumb_geometry() {
+    assert(gpui::thumb_geometry(0.0, 0.0, 200.0, 24.0) == "", "content that fits has no thumb")
+    assert(gpui::thumb_geometry(0.0, 400.0, 200.0, 24.0) == "0,67", "top offset puts thumb at top")
+    assert(gpui::thumb_geometry(-400.0, 400.0, 200.0, 24.0) == "133,67", "bottom offset puts thumb at bottom")
+    assert(gpui::thumb_geometry(-200.0, 400.0, 200.0, 24.0) == "67,67", "halfway offset puts thumb halfway")
+}

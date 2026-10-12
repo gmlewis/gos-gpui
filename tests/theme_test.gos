@@ -1,0 +1,19 @@
+// Unit tests for theme color tokens and platform color palettes.
+
+use gpui
+
+#[test]
+fn theme_color_tokens_and_palette() {
+    let unknown = gpui::unknown_style_tokens("bg=theme:background color=theme:text")
+    assert(unknown.len() == 0, f"theme tokens should be recognized: {unknown}")
+
+    let invalid = gpui::unknown_style_tokens("bg=theme:nosuch_color")
+    assert(invalid.len() == 1, f"unrecognized theme color should be reported: {invalid}")
+
+    let names = gpui::colour_names()
+    assert(names.len() == 8, f"expected 8 platform colors, got {names.len()}")
+    for name in names {
+        let u = gpui::unknown_style_tokens(f"bg=theme:{name}")
+        assert(u.len() == 0, f"{name} should be accepted: {u}")
+    }
+}
