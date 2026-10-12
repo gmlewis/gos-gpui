@@ -62,7 +62,7 @@ fn main() {
         ui::panel("flex row size=full bg=#e0e0e0 font=xl")
             .child(ui::panel("flex size=full justify=center items=center border=1 color=blue")
                 .child(ui::panel("").text("This is background text.", "")))
-            .child(ui::panel(f"absolute top=32 left=32 right=32 bottom=32 opacity={opacity} flex justify=center items=center bg=white border=3 bordercolor=red color=yellow")
+            .child(ui::panel(f"absolute top=32 left=32 right=32 bottom=32 opacity={opacity} flex justify=center items=center bg=white border=3 bordercolor=red color=yellow cursor=pointer")
                 .child(ui::panel("flex col gap=8 justify=center items=center size=300 bg=blue border=3 bordercolor=black shadow=#00000080,10,10,1,5")
                     .image(*APP_ICON, "size=32")
                     .text("Opacity Panel (Click to test)", "")
@@ -71,7 +71,8 @@ fn main() {
                     .icon(*ARROW, "color=black font=2xl size=32")
                     .child(ui::row("flex")
                         .children(#["🎊", "✈️", "🎉", "🎈", "🎁", "🎂"].map(emoji)))
-                    .image(*CAT, "size=48")))
+                    .image(*CAT, "size=48"))
+                .on_mouse("click", "panel"))
             |> ui::root
     })
 
