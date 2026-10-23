@@ -1,7 +1,7 @@
 [project]
 id = "github.com/gmlewis/gos-gpui"
 version = "0.1.0"
-gossamer-version = "^v0.71.1"
+gossamer-version = "^v0.75.0"
 license = "Apache-2.0"
 authors = ["Glenn Lewis"]
 

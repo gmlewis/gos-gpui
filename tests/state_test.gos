@@ -24,8 +24,8 @@ fn state_is_scoped_to_a_window() {
 fn every_type_is_scoped_to_a_window() {
     gpui::set_float_in(1, "ratio", 0.25)
     gpui::set_float_in(2, "ratio", 0.75)
-    assert(gpui::state_float_in(1, "ratio", 0.0) == 0.25, "window 1 keeps its float")
-    assert(gpui::state_float_in(2, "ratio", 0.0) == 0.75, "window 2 keeps its float")
+    assert((gpui::state_float_in(1, "ratio", 0.0) - 0.25).abs() < 1e-9, "window 1 keeps its float")
+    assert((gpui::state_float_in(2, "ratio", 0.0) - 0.75).abs() < 1e-9, "window 2 keeps its float")
 
     gpui::set_bool_in(1, "open", true)
     gpui::set_bool_in(2, "open", false)

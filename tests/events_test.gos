@@ -63,13 +63,13 @@ fn pointer_event_carries_position_and_modifiers() {
     assert(kind == "down", f"kind extracted correctly: {kind}")
 
     let x, y = gpui::pointer_xy(event)
-    assert(x == 12.5, f"expected x=12.5, got {x}")
-    assert(y == 30.25, f"expected y=30.25, got {y}")
+    assert((x - 12.5).abs() < 1e-9, f"expected x=12.5, got {x}")
+    assert((y - 30.25).abs() < 1e-9, f"expected y=30.25, got {y}")
     assert(gpui::pointer_mods(event) == "", "no modifiers held")
 
     let event_with_mods = "canvas|move\u{1}1.0\u{1}2.0\u{1}ctrl-platform-shift"
     let mx, my = gpui::pointer_xy(event_with_mods)
-    assert(mx == 1.0 && my == 2.0, "position parsed correctly")
+    assert((mx - 1.0).abs() < 1e-9 && (my - 2.0).abs() < 1e-9, "position parsed correctly")
     assert(gpui::pointer_mods(event_with_mods) == "ctrl-platform-shift", "modifiers parsed correctly")
 }
 

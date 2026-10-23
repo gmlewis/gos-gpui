@@ -491,17 +491,15 @@ fn main() {
                     }
                 } else if kind == "up" {
                     gpui::set_bool("thumb.held", false)
-                } else if kind == "move" {
-                    if gpui::state_bool("thumb.held", false) && table_h > 0.0 {
-                        let grab = gpui::state_float("thumb.grab", 0.0)
-                        let percentage = clamp01((py - table_y + grab) / table_h)
-                        // Upstream's `scroll_height - table_height` is `max`, so the
-                        // upper clamp is `max + table_h - THUMB_HEIGHT`. The list parks
-                        // the offset it is given at the end of the range, which is the
-                        // same clamp `max`.
-                        let span = (max + table_h) - (THUMB_HEIGHT as f64)
-                        gpui::scroll_to("items", 0.0, -clamp(max * percentage, 0.0, span))
-                    }
+                } else if kind == "move" && gpui::state_bool("thumb.held", false) && table_h > 0.0 {
+                    let grab = gpui::state_float("thumb.grab", 0.0)
+                    let percentage = clamp01((py - table_y + grab) / table_h)
+                    // Upstream's `scroll_height - table_height` is `max`, so the
+                    // upper clamp is `max + table_h - THUMB_HEIGHT`. The list parks
+                    // the offset it is given at the end of the range, which is the
+                    // same clamp `max`.
+                    let span = (max + table_h) - (THUMB_HEIGHT as f64)
+                    gpui::scroll_to("items", 0.0, -clamp(max * percentage, 0.0, span))
                 }
             }
         }

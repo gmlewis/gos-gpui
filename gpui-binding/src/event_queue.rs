@@ -79,11 +79,13 @@ pub fn clear_window_invalidation(window_id: i64) -> bool {
 }
 
 /// Whether target_id has a recorded notification.
+#[allow(dead_code)]
 pub fn is_notified(target_id: i64) -> bool {
     NOTIFICATIONS.lock().unwrap().contains(&target_id)
 }
 
 /// Clears all recorded target notifications.
+#[allow(dead_code)]
 pub fn clear_notifications() {
     NOTIFICATIONS.lock().unwrap().clear();
 }

@@ -19,7 +19,7 @@ jobs:
   headless:
     runs-on: ubuntu-latest
     env:
-      GOSSAMER_VERSION: v0.71.1
+      GOSSAMER_VERSION: v0.75.0
       GOSSAMER_ROOT: ${{ github.workspace }}/gossamer
       CARGO_TERM_COLOR: never
     steps:

@@ -1062,6 +1062,7 @@ pub fn image_state(win: i64, id: &str) -> String {
 }
 
 /// Forgets every image's pending-since stamp, so a program that wants a load re-timed can say so.
+#[allow(dead_code)]
 pub fn forget_image_timings(win: i64) {
     IMAGE_PENDING.with(|m| m.borrow_mut().retain(|(w, _), _| *w != win));
 }
@@ -2494,7 +2495,7 @@ fn round3(v: f32) -> f64 {
 /// of the three and registered nothing at all.
 fn register_window_mouse(
     window: &mut Window,
-    cx: &mut App,
+    _cx: &mut App,
     entity: EntityId,
     win: i64,
     id: &str,

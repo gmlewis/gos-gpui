@@ -102,6 +102,7 @@ pub fn count(win: i64, id: &str) -> Option<usize> {
 }
 
 /// Records that list `id` was active / interacted with.
+#[allow(dead_code)]
 pub fn record_active(win: i64, id: &str) {
     LAST_ACTIVE.with(|l| {
         l.borrow_mut().insert(win, id.to_string());

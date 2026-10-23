@@ -23,18 +23,18 @@ fn window_bounds_and_geometry_helpers() {
     win.set_bounds(new_bounds)
 
     let b = win.bounds()
-    assert(b.origin.x == 50.0, f"expected x=50.0, got {b.origin.x}")
-    assert(b.origin.y == 60.0, f"expected y=60.0, got {b.origin.y}")
-    assert(b.size.width == 800.0, f"expected w=800.0, got {b.size.width}")
-    assert(b.size.height == 600.0, f"expected h=600.0, got {b.size.height}")
+    assert((b.origin.x - 50.0).abs() < 1e-9, f"expected x=50.0, got {b.origin.x}")
+    assert((b.origin.y - 60.0).abs() < 1e-9, f"expected y=60.0, got {b.origin.y}")
+    assert((b.size.width - 800.0).abs() < 1e-9, f"expected w=800.0, got {b.size.width}")
+    assert((b.size.height - 600.0).abs() < 1e-9, f"expected h=600.0, got {b.size.height}")
 
     assert(ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 100.0, 100.0), "point (100,100) should be inside")
     assert(!ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 10.0, 10.0), "point (10,10) should be outside")
     assert(!ui::bounds_contains(50.0, 60.0, 800.0, 600.0, 900.0, 700.0), "point (900,700) should be outside")
 
     let center = ui::bounds_center(50.0, 60.0, 800.0, 600.0)
-    assert(center.x == 450.0, f"expected center x=450.0, got {center.x}")
-    assert(center.y == 360.0, f"expected center y=360.0, got {center.y}")
+    assert((center.x - 450.0).abs() < 1e-9, f"expected center x=450.0, got {center.x}")
+    assert((center.y - 360.0).abs() < 1e-9, f"expected center y=360.0, got {center.y}")
 }
 
 #[test]

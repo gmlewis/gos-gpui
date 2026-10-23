@@ -10,11 +10,11 @@ fn animation_easings_and_endpoints() {
 
     for name in names {
         assert(gpui::easing_at(name, 0.0) == 0.0, f"{name} must start at 0.0")
-        assert(gpui::easing_at(name, 1.0) == 1.0, f"{name} must end at 1.0")
+        assert((gpui::easing_at(name, 1.0) - 1.0).abs() < 1e-9, f"{name} must end at 1.0")
     }
 
-    assert(gpui::easing_at("linear", 0.5) == 0.5, "linear is the identity")
-    assert(gpui::easing_at("unknown_curve", 0.3) == 0.3, "unknown curve falls back to linear")
+    assert((gpui::easing_at("linear", 0.5) - 0.5).abs() < 1e-9, "linear is the identity")
+    assert((gpui::easing_at("unknown_curve", 0.3) - 0.3).abs() < 1e-9, "unknown curve falls back to linear")
 }
 
 #[test]
