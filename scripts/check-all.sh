@@ -9,6 +9,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "Linting all sources..."
+gos lint .
+echo
+
 echo "Typechecking all examples..."
 failed=0
 count=0

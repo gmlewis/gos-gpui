@@ -83,6 +83,6 @@ if [ "$print_only" = 1 ]; then
   exit 0
 fi
 
-# The first run against this project builds a runner with Cargo, which
-# compiles GPUI and takes a while. Later runs reuse it.
+# The first run against this project builds the Rust binding library with Cargo,
+# which compiles GPUI and takes a while. Later runs reuse the cached library.
 exec gos run --main-thread "$file" "$@"

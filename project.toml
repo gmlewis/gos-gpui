@@ -14,7 +14,7 @@ name = "ui"
 path = "src/lib.gos"
 
 # The framework underneath. A depending project's own toolchain builds this
-# crate as part of its runner, so `use gpui` works for it too — one dependency
-# declaration brings both modules.
+# crate into its shared binding library, so `use gpui` works for it too — one
+# dependency declaration brings both modules.
 [rust-bindings]
 gpui-binding = { path = "gpui-binding" }

@@ -11,8 +11,7 @@
 # windowing libraries (Linux) into that link line, so a GPUI binary comes out
 # with those symbols undefined. `gos build` does read $CC, so tools/cc-gpui.sh
 # supplies them on the way past and the wrapper below is what makes the link
-# succeed. Whether the linked binary then runs is a separate matter — see
-# "Building a native binary" in README.md.
+# succeed.
 
 set -euo pipefail
 

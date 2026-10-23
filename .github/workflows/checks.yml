@@ -38,7 +38,7 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo and the runner
+      - name: Cache Cargo and the bindings
         uses: actions/cache@v4
         with:
           path: |
@@ -58,6 +58,9 @@ jobs:
             https://github.com/gossamer-lang/gossamer "$GOSSAMER_ROOT"
           cargo build --manifest-path "$GOSSAMER_ROOT/Cargo.toml" --workspace --release
           echo "$GOSSAMER_ROOT/target/release" >> "$GITHUB_PATH"
+
+      - name: Lint all sources
+        run: gos lint .
 
       - name: The headless assertion suite
         run: gos test tests

@@ -7,18 +7,13 @@
 # and the manifest has no key for linker arguments, so a GPUI binary would
 # otherwise come out with the windowing and rendering symbols undefined. It
 # does read `$CC`, so this wrapper supplies them on the way past.
-#
-# NOTE: `gos build` currently miscompiles this program shape — the binary links
-# but aborts at startup with a misaligned-pointer panic in the runtime. Use
-# `./run.sh` instead. This script is kept because the linker half of the
-# problem is real and will need solving once the codegen half is fixed.
 
 set -e
 
 case "$(uname -s)" in
 Darwin)
   # Named by GPUI or its dependencies: AppKit for the window,
-  # CoreText/CoreGraphics for glyph rasterisation, Metal for the renderer.
+  # CoreText/CoreGraphics for glyph rasterization, Metal for the renderer.
   exec cc \
     -framework AppKit \
     -framework Foundation \
