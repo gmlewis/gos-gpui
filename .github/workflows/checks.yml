@@ -38,6 +38,15 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Gossamer publishes no prebuilt binaries yet; the documented install is a
+      # source build. This has to come before the cache step: restoring
+      # `gossamer/target` recreates `gossamer/` as a side effect, and `git
+      # clone` then refuses the non-empty destination it was pointed at.
+      - name: Check out gossamer
+        run: |
+          git clone --depth 1 --branch "$GOSSAMER_VERSION" \
+            https://github.com/gossamer-lang/gossamer "$GOSSAMER_ROOT"
+
       - name: Cache Cargo and the bindings
         uses: actions/cache@v4
         with:
@@ -50,12 +59,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ env.GOSSAMER_VERSION }}-
 
-      # Gossamer publishes no prebuilt binaries yet; the documented install is a
-      # source build. `gos` is self-contained, so its release dir goes on PATH.
+      # The restored `target` lands inside the fresh checkout above, so only a
+      # changed dependency actually rebuilds. `gos` is self-contained, so its
+      # release dir goes on PATH.
       - name: Build gos
         run: |
-          git clone --depth 1 --branch "$GOSSAMER_VERSION" \
-            https://github.com/gossamer-lang/gossamer "$GOSSAMER_ROOT"
           cargo build --manifest-path "$GOSSAMER_ROOT/Cargo.toml" --workspace --release
           echo "$GOSSAMER_ROOT/target/release" >> "$GITHUB_PATH"
 
