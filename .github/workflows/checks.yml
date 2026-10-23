@@ -20,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOSSAMER_VERSION: v0.75.0
-      GOSSAMER_ROOT: ${{ github.workspace }}/gossamer
       CARGO_TERM_COLOR: never
     steps:
       - uses: actions/checkout@v4
@@ -39,13 +38,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       # Gossamer publishes no prebuilt binaries yet; the documented install is a
-      # source build. This has to come before the cache step: restoring
-      # `gossamer/target` recreates `gossamer/` as a side effect, and `git
-      # clone` then refuses the non-empty destination it was pointed at.
+      # source build. It is cloned below the runner's temp dir, outside the
+      # checkout on purpose: `gos lint .`, `gos test tests` and
+      # `scripts/check-all.sh` walk the working tree, and the compiler's own
+      # tree holds deliberately-invalid fuzz corpus and old-syntax examples that
+      # the lint suite rejects.
+      #
+      # This has to come before the cache step: restoring the cached `target`
+      # recreates the clone directory as a side effect, and `git clone` then
+      # refuses the non-empty destination it was pointed at.
       - name: Check out gossamer
         run: |
           git clone --depth 1 --branch "$GOSSAMER_VERSION" \
-            https://github.com/gossamer-lang/gossamer "$GOSSAMER_ROOT"
+            https://github.com/gossamer-lang/gossamer "${{ runner.temp }}/gossamer"
 
       - name: Cache Cargo and the bindings
         uses: actions/cache@v4
@@ -53,19 +58,23 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            gossamer/target
+            ${{ runner.temp }}/gossamer/target
             ~/.cache/gossamer
-          key: ${{ runner.os }}-${{ env.GOSSAMER_VERSION }}-${{ hashFiles('gpui-binding/Cargo.toml') }}
+          # `v2` retires entries saved under the old in-tree path: a cache
+          # archive restores to the absolute paths it was saved from, and a
+          # primary-key hit would otherwise skip saving the out-of-tree one.
+          key: ${{ runner.os }}-${{ env.GOSSAMER_VERSION }}-v2-${{ hashFiles('gpui-binding/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-${{ env.GOSSAMER_VERSION }}-
+            ${{ runner.os }}-${{ env.GOSSAMER_VERSION }}-v2-
 
-      # The restored `target` lands inside the fresh checkout above, so only a
+      # The restored `target` lands inside the fresh clone above, so only a
       # changed dependency actually rebuilds. `gos` is self-contained, so its
       # release dir goes on PATH.
       - name: Build gos
         run: |
-          cargo build --manifest-path "$GOSSAMER_ROOT/Cargo.toml" --workspace --release
-          echo "$GOSSAMER_ROOT/target/release" >> "$GITHUB_PATH"
+          cargo build --manifest-path "${{ runner.temp }}/gossamer/Cargo.toml" \
+            --workspace --release
+          echo "${{ runner.temp }}/gossamer/target/release" >> "$GITHUB_PATH"
 
       - name: Lint all sources
         run: gos lint .
